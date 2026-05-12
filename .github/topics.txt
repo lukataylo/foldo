@@ -1,0 +1,19 @@
+# Suggested GitHub repository topics (set via the UI or `gh repo edit --add-topic`)
+ai-code-review
+claude-code
+mcp-server
+model-context-protocol
+multiplayer-canvas
+figma-for-code
+code-review-tool
+agent-code-review
+pull-request-review
+llm-code-review
+developer-tools
+react
+typescript
+fastify
+chrome-extension
+manifest-v3
+websocket
+real-time

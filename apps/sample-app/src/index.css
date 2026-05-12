@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #ffffff;
+  color: #0c0d10;
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* When the parent (Foldo canvas) flags review mode, kill text-selection
+   highlighting so clicks feel like element-selection, not page-interaction. */
+body[data-foldo-review-mode='1'] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body[data-foldo-review-mode='1'] *[data-foldo-element] {
+  cursor: default;
+}
+
+/* Foldo hover indicator (only when not embedded — when embedded the parent
+   canvas renders its own highlight overlay). */
+body:not([data-foldo-embedded='1']) [data-foldo-element]:hover {
+  outline: 1px dashed rgba(139, 92, 246, 0.45);
+  outline-offset: 2px;
+}

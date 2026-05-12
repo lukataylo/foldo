@@ -1,0 +1,216 @@
+import type { FastifyInstance } from 'fastify';
+import type { WebSocket } from 'ws';
+import type {
+  ClientMessage,
+  PresenceUser,
+  ServerMessage,
+} from '@foldo/protocol';
+import { resolveUserFromToken } from '../auth.ts';
+import { getBoardById } from '../repo/boards.ts';
+import { hub, type BrowserConn } from './hub.ts';
+import { nowIso } from '../util.ts';
+import { isMcpConnected } from './mcp.ts';
+
+const CURSOR_MIN_INTERVAL_MS = 33; // ~30Hz
+
+export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
+  app.get('/ws', { websocket: true }, (socket, req) => {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const boardId = url.searchParams.get('boardId');
+    const userId = url.searchParams.get('userId');
+    const token = url.searchParams.get('token');
+
+    const user = resolveUserFromToken(token);
+    const board = boardId ? getBoardById(boardId) : null;
+
+    if (!user || !board || !userId) {
+      sendSafe(socket, {
+        type: 'error',
+        code: 'UNAUTHORIZED',
+        message: 'invalid token, board, or userId',
+      });
+      socket.close(1008, 'unauthorized');
+      return;
+    }
+
+    // We trust that userId matches the token's user.
+    if (user.id !== userId) {
+      sendSafe(socket, {
+        type: 'error',
+        code: 'UNAUTHORIZED',
+        message: 'userId/token mismatch',
+      });
+      socket.close(1008, 'mismatch');
+      return;
+    }
+
+    const presence: PresenceUser = {
+      userId: user.id,
+      name: user.name,
+      initial: user.initial,
+      color: user.color,
+      online: true,
+      lastSeenAt: nowIso(),
+    };
+
+    const conn: BrowserConn = {
+      socket,
+      boardId: board.id,
+      userId: user.id,
+      presence,
+      lastCursorBroadcastAt: 0,
+    };
+
+    let helloReceived = false;
+    let disconnectTimer: NodeJS.Timeout | null = null;
+
+    socket.on('message', (raw: Buffer) => {
+      let msg: ClientMessage;
+      try {
+        msg = JSON.parse(raw.toString()) as ClientMessage;
+      } catch {
+        return;
+      }
+
+      if (!helloReceived) {
+        if (msg.type !== 'hello') {
+          sendSafe(socket, {
+            type: 'error',
+            code: 'PROTOCOL',
+            message: 'expected hello first',
+          });
+          socket.close(1008, 'expected hello');
+          return;
+        }
+        if (msg.boardId !== board.id || msg.userId !== user.id) {
+          sendSafe(socket, {
+            type: 'error',
+            code: 'PROTOCOL',
+            message: 'hello does not match handshake',
+          });
+          socket.close(1008, 'hello mismatch');
+          return;
+        }
+        helloReceived = true;
+
+        // Register with hub
+        hub.subscribe(conn);
+
+        // Build presence users for welcome — start with everyone currently connected on this board
+        const others = hub
+          .connectionsOnBoard(board.id)
+          .map((c) => c.presence);
+
+        sendSafe(socket, {
+          type: 'welcome',
+          boardId: board.id,
+          youUserId: user.id,
+          board,
+          users: others,
+        });
+
+        // Tell others we joined
+        hub.broadcast(board.id, { type: 'presence.join', user: presence }, user.id);
+
+        // Tell us about MCP status
+        if (isMcpConnected(board.id)) {
+          sendSafe(socket, {
+            type: 'mcp.online',
+            boardId: board.id,
+            agentName: 'Claude Code',
+          });
+        }
+        return;
+      }
+
+      switch (msg.type) {
+        case 'cursor.move': {
+          const now = Date.now();
+          if (now - conn.lastCursorBroadcastAt < CURSOR_MIN_INTERVAL_MS) break;
+          conn.lastCursorBroadcastAt = now;
+          conn.presence.cursor = msg.cursor;
+          conn.presence.lastSeenAt = nowIso();
+          hub.broadcast(
+            board.id,
+            { type: 'presence.cursor', userId: user.id, cursor: msg.cursor },
+            user.id,
+          );
+          break;
+        }
+        case 'selection.update': {
+          conn.presence.selection = msg.selection ?? undefined;
+          hub.broadcast(
+            board.id,
+            { type: 'presence.selection', userId: user.id, selection: msg.selection },
+            user.id,
+          );
+          break;
+        }
+        case 'viewport.update': {
+          // Single broadcast — followers receive it through the standard
+          // `presence.viewport` event like everyone else.
+          hub.broadcast(
+            board.id,
+            {
+              type: 'presence.viewport',
+              userId: user.id,
+              x: msg.x,
+              y: msg.y,
+              zoom: msg.zoom,
+            },
+            user.id,
+          );
+          break;
+        }
+        case 'follow.start': {
+          conn.followingUserId = msg.targetUserId;
+          conn.presence.followingUserId = msg.targetUserId;
+          break;
+        }
+        case 'follow.stop': {
+          conn.followingUserId = undefined;
+          conn.presence.followingUserId = undefined;
+          break;
+        }
+        case 'ping': {
+          sendSafe(socket, { type: 'pong', ts: msg.ts });
+          break;
+        }
+        default:
+          break;
+      }
+    });
+
+    const boardIdLocal = board.id;
+    const userIdLocal = user.id;
+
+    function handleDisconnect(): void {
+      hub.unsubscribe(conn);
+      // Delay presence.leave by 5s in case of flaky reconnect.
+      disconnectTimer = setTimeout(() => {
+        // Only fire leave if no other connection for this user has come up
+        const stillThere = hub.findConn(boardIdLocal, userIdLocal);
+        if (!stillThere) {
+          hub.broadcast(boardIdLocal, {
+            type: 'presence.leave',
+            userId: userIdLocal,
+          });
+        }
+      }, 5000);
+    }
+
+    socket.on('close', handleDisconnect);
+    socket.on('error', () => {
+      // Let close handle cleanup; ensure timer is cleared if explicit close follows
+      if (disconnectTimer) clearTimeout(disconnectTimer);
+    });
+  });
+}
+
+function sendSafe(socket: WebSocket, msg: ServerMessage): void {
+  try {
+    socket.send(JSON.stringify(msg));
+  } catch {
+    // ignore
+  }
+}

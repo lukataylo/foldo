@@ -2,6 +2,16 @@ import SimplePage from './SimplePage';
 
 const ENTRIES = [
   {
+    date: '2026-05-14',
+    title: 'User Tests · real users, on the canvas',
+    items: [
+      'New: publish a `foldo.dev/t/:token` test link — app URL, task instructions, and an optional questionnaire.',
+      'Testers record screen + voice (or voice-only) against your tasks. Three delivery modes auto-detected: embedded iframe, new-tab handoff, or a frozen DOM snapshot for local apps.',
+      'Results stream back as frames: a scrubbable recording player, per-task pass/skip stats, questionnaire answers, transcript, and an AI synthesis (summary + extracted issues).',
+      'Every synthesised issue gets a "Make this an edit" button — raw user feedback to a Claude Code edit without leaving the board.',
+    ],
+  },
+  {
     date: '2026-05-13',
     title: 'Inline PRD editor + author tints',
     items: [

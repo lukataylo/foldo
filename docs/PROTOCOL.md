@@ -68,9 +68,79 @@ Base URL: `http://localhost:4000/api`. Auth: `Authorization: Bearer <userId>` (d
 
 Currently no signature verification — see [DEPLOYMENT.md](DEPLOYMENT.md) for the production checklist.
 
+### Tests — creator side (authed, board-membership checked)
+
+The User Tests surface. Domain types (`Test`, `TestTask`, `TestQuestion`, `TestSession`, `TestTaskResult`, `TestSessionSynthesis`, `TranscriptCue`, …) live in `domain.ts`; request/response shapes in `rest.ts`. See [ARCHITECTURE.md §12](ARCHITECTURE.md) and [UX_TESTS.md](UX_TESTS.md) for the design.
+
+| Verb | Path | Body | Returns |
+| --- | --- | --- | --- |
+| POST | `/tests` | `CreateTestRequest` | `CreateTestResponse` (test + `shareUrl`) |
+| GET | `/tests?boardId=` | — | `ListTestsResponse` (each item: test + `TestSessionCounts`) |
+| GET | `/tests/:id` | — | `GetTestResponse` (test + `tasks[]` + `shareUrl`) |
+| PATCH | `/tests/:id` | `UpdateTestRequest` | `{ test }` — `status` transitions `draft → live → closed` |
+| DELETE | `/tests/:id` | — | `SuccessResponse` |
+| POST | `/tests/:id/duplicate` | — | `DuplicateTestResponse` |
+| PUT | `/tests/:id/tasks` | `ReplaceTestTasksRequest` | `{ tasks: TestTask[] }` |
+| GET | `/tests/:id/sessions` | — | `ListTestSessionsResponse` |
+
+On create / target-URL change the server runs `probeFrameable()` (inspects `X-Frame-Options` + CSP `frame-ancestors`) and caches the result on `tests.frameable` — that decides the delivery mode (`iframe` / `handoff` / `dom_snapshot`) testers resolve to.
+
+### Tests — public tester side (no auth, token-scoped)
+
+Mirrors the `board_shares` pattern. The test's base62 `shareToken` is the only credential for `GET /api/t/:token`; per-session writes are authorised by a **session-scoped token** returned from session start and sent in the `x-foldo-session-token` header (or in the body for `sendBeacon`). Guarded by an in-memory fixed-window rate limiter.
+
+| Verb | Path | Body | Returns |
+| --- | --- | --- | --- |
+| GET | `/t/:token` | — | `PublicTestResponse` — intro, tasks, allowed recording modes, resolved `deliveryMode`, questionnaire. `404` unless `live`; `410 TEST_CLOSED` if `responseLimit` reached |
+| POST | `/t/:token/sessions` | `StartTestSessionRequest` | `StartTestSessionResponse` — `sessionId` + `sessionToken` + `testerLabel` |
+| POST | `/t/:token/sessions/:id/recording` | raw binary (`application/octet-stream`); `?durationMs=` | `UploadRecordingResponse` — the finished `MediaRecorder` blob, stored via the `Storage` adapter under `recordings/{testId}/{sessionId}.webm` |
+| POST | `/t/:token/sessions/:id/complete` | `CompleteTestSessionRequest` | `CompleteTestSessionResponse` — finalises the session, creates the `test_session` frame, enqueues transcription → synthesis |
+| POST | `/t/:token/sessions/:id/abandon` | `AbandonTestSessionRequest` | `SuccessResponse` — tab-close recovery, usually via `navigator.sendBeacon`; always `200`s, mutates only on a valid token |
+
+Recording **playback** is served by `GET /api/recordings/*` (public — the key is unguessable): object storage 302-redirects to a presigned URL (S3 handles ranges); local disk streams the bytes with `Range:` / `206 Partial Content` support so `<video>` can seek.
+
 ---
 
-## 2. Browser WebSocket — `/ws`
+## 2. Frame kinds & content
+
+A `Frame.content` is a discriminated union keyed by `kind` (`packages/protocol/src/domain.ts`): `app`, `markdown`, `sticky`, `arrow`, `image`, and the two User Tests kinds:
+
+### `test_summary` — `TestSummaryFrameContent`
+
+The hub frame for a test on the canvas; session frames cluster beneath it via `parentFrameId`. Created when the test goes `live`, refreshed in place as sessions complete.
+
+```ts
+{
+  kind: 'test_summary';
+  testId; testName; shareToken;
+  status;                       // 'draft' | 'live' | 'closed'
+  totalSessions; completedSessions;
+  taskStats: TestTaskStat[];    // per-task completed / skipped / gaveUp + median time-on-task
+}
+```
+
+### `test_session` — `TestSessionFrameContent`
+
+One completed tester run, rendered as a frame.
+
+```ts
+{
+  kind: 'test_session';
+  testId; sessionId; testerLabel;
+  recordingMode;                // 'screen_voice' | 'voice_only' | 'screen_only'
+  recordingUrl?; recordingDurationMs?;
+  taskResults: TestTaskResult[];      // per-task outcome ('completed' | 'skipped' | 'gave_up') + recordingOffsetMs
+  responses?: TestResponseAnswer[];   // questionnaire answers
+  transcript?: TranscriptCue[];       // [{ startMs, endMs, text }]
+  transcriptStatus;                   // 'pending' | 'processing' | 'done' | 'failed' | 'skipped'
+  synthesis?: TestSessionSynthesis;   // AI summary + issues[] (severity, taskId?, atMs?), generatedBy
+  completedAt?;
+}
+```
+
+`recordingOffsetMs` on each task result, and `atMs` on each synthesis issue, let the canvas deep-link the player to a moment. A synthesis issue's "Make this an edit" drops a comment that flows into the normal dispatch pipeline.
+
+## 3. Browser WebSocket — `/ws`
 
 Connect: `ws://localhost:4000/ws?boardId=&userId=&token=`. First message **must** be `{ type: 'hello' }`. Server replies with `welcome` and broadcasts `presence.join`.
 
@@ -110,9 +180,16 @@ Connect: `ws://localhost:4000/ws?boardId=&userId=&token=`. First message **must*
 | { type: 'branch.updated'; branch }
 | { type: 'mcp.online'; boardId; agentName }
 | { type: 'mcp.offline'; boardId }
+| { type: 'test.created'; test }
+| { type: 'test.updated'; test }
+| { type: 'test.deleted'; testId }
+| { type: 'test.session.started'; testId; sessionId }
+| { type: 'test.session.completed'; testId; session }
 | { type: 'pong'; ts }
 | { type: 'error'; code; message }
 ```
+
+The `test.*` messages are how the User Tests surface stays live: `test.created` / `updated` / `deleted` keep the creator's `TestsPanel` in sync, `test.session.started` is the "someone is testing now" indicator, and `test.session.completed` lands the new session. The actual `test_summary` / `test_session` **frames** still arrive over the ordinary `frame.added` / `frame.updated` path — async transcription and synthesis jobs refresh the session frame in place as they finish.
 
 ### Throttling
 
@@ -123,7 +200,7 @@ Connect: `ws://localhost:4000/ws?boardId=&userId=&token=`. First message **must*
 
 ---
 
-## 3. MCP WebSocket — `/ws/mcp`
+## 4. MCP WebSocket — `/ws/mcp`
 
 Connect: `ws://localhost:4000/ws/mcp?token=&boardId=&agentName=`. First message **must** be `mcp.hello`.
 
@@ -156,7 +233,7 @@ The cloud:
 
 ---
 
-## 4. MCP tools (stdio)
+## 5. MCP tools (stdio)
 
 Tool names (from `packages/protocol/src/mcp.ts`):
 
@@ -180,7 +257,7 @@ Full Zod schemas in `apps/mcp/src/mcp/tools/*.ts`.
 
 ---
 
-## 5. postMessage bridge (canvas ↔ iframe)
+## 6. postMessage bridge (canvas ↔ iframe)
 
 Defined in both [`apps/sample-app/src/bridge/messages.ts`](../apps/sample-app/src/bridge/messages.ts) and mirrored in [`apps/web/src/iframe/messages.ts`](../apps/web/src/iframe/messages.ts).
 

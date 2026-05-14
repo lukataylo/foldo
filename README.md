@@ -50,10 +50,14 @@ The name comes from **fold** — the point where two things meet (branches foldi
 
 Foldo turns the linear shuffle into a **spatial canvas with live, interactive frames** — so any reviewer can pin a comment, request a change in natural language, and watch the agent ship a new commit.
 
+And every reviewer on the canvas is still a *proxy* for the real user — so Foldo now also gathers evidence from **real users**, not just internal eyes. With **User Tests**, real people record screen+voice sessions against your build and the results land as frames you can comment on: the **build → real users → evidence → fix** loop, closed without leaving the canvas.
+
 ---
 
 ## ✨ Features
 
+- 🎬 **User Tests** — publish a short `foldo.dev/t/:token` link, real users record screen+voice sessions completing your tasks, and the results — recording, per-task outcomes, questionnaire answers, transcript, AI synthesis — stream back onto the board as frames. Three auto-detected delivery modes (`iframe`, `handoff`, `dom_snapshot`) cover everything from an embedded app to a localhost-only build.
+- 🎙️ **Evidence, not proxies** — each session lands as a scrubbable `test_session` frame clustered under a `test_summary` with per-task completion stats; Claude synthesizes a summary + extracted issues, and every issue carries a **"Make this an edit"** button straight into the dispatch pipeline.
 - 🖼️ **Live app frames** — every frame is an iframe of the actual running app at a specific commit, navigated to a specific reproducible state (modal open, form half-filled, recipe-replayed).
 - 📄 **Markdown frames** — PRDs, ADRs, READMEs render side-by-side with the code that implements them.
 - 💬 **Pinned comments** with replies, resolve, and **"Make this an edit"** → turn any thread into a structured Claude Code prompt.
@@ -255,6 +259,9 @@ foldo/
 
 ## 🧭 Roadmap
 
+- [x] **User Tests (Phases 1–4)** — *shipped 2026-05-14.* Unmoderated UX testing folded into the canvas: public `foldo.dev/t/:token` links, three delivery modes, screen+voice recording, results-as-frames, pluggable transcription + Claude synthesis, S3/R2 storage, range playback, rate-limited public endpoints. Design doc: [docs/UX_TESTS.md](docs/UX_TESTS.md)
+- [ ] **Real transcription provider** — swap the honest stub for a real speech-to-text provider behind the existing env-var hook
+- [ ] **Production object-storage wiring** — promote the S3/R2 recording path from config-ready to deployed (buckets, lifecycle rules, signed URLs)
 - [ ] **Real Claude Code dispatch** — shell out to the `claude` CLI from `apps/mcp/src/runner/editSim.ts` instead of inferring overrides
 - [ ] **Headless Playwright frame capture** — real screenshots + DOM at a commit via `apps/mcp/src/runner/playwright.ts`
 - [ ] **Postgres + Redis** for multi-instance — `apps/server/src/db.ts` (Postgres) + `apps/server/src/ws/hub.ts` (Redis pub/sub)
@@ -280,7 +287,7 @@ Issues and PRs welcome. Each workspace owns its `dev`, `build`, and `typecheck` 
 
 ## 🔎 Keywords
 
-`ai code review` · `claude code` · `multiplayer canvas` · `figma for code` · `agent code review` · `mcp server` · `model context protocol` · `pr review tool` · `pull request review` · `visual git diff` · `branch comparison` · `llm code review` · `developer collaboration` · `code review platform` · `live preview review` · `chrome extension capture` · `figma-style review` · `real-time review` · `pair programming with ai`
+`ai code review` · `claude code` · `multiplayer canvas` · `figma for code` · `agent code review` · `mcp server` · `model context protocol` · `pr review tool` · `pull request review` · `visual git diff` · `branch comparison` · `llm code review` · `developer collaboration` · `code review platform` · `live preview review` · `chrome extension capture` · `figma-style review` · `real-time review` · `pair programming with ai` · `unmoderated ux testing` · `user testing` · `usability testing` · `session recording` · `screen recording` · `user research`
 
 ---
 

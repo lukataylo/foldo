@@ -264,6 +264,119 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ============== USER TESTS ============== */}
+      <section
+        id="user-tests"
+        style={{ maxWidth: 1240, margin: '0 auto', padding: '64px 32px 24px' }}
+      >
+        <div className="section-label" style={{ marginBottom: 36 }}>
+          NEW · USER TESTS
+        </div>
+        <div
+          className="stack-mobile"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1.05fr',
+            gap: 48,
+            alignItems: 'center',
+          }}
+        >
+          <div>
+            <span className="chip">
+              <span style={{ fontSize: 14 }}>✦</span> Shipped May 14
+            </span>
+            <h2
+              className="display h-display"
+              style={{
+                fontSize: 52,
+                lineHeight: 1.04,
+                margin: '20px 0 18px',
+                color: INK,
+              }}
+            >
+              Now let{' '}
+              <span style={{ color: YELLOW }}>real users</span>
+              <br />
+              onto the canvas.
+            </h2>
+            <p
+              style={{
+                fontSize: 17,
+                lineHeight: 1.55,
+                color: '#3b3b3b',
+                maxWidth: 480,
+                margin: '0 0 24px',
+              }}
+            >
+              Every reviewer is a proxy for the real user. User Tests closes the
+              last loop: <strong>build → real users try it → evidence → fix</strong>.
+              Publish a <code className="mono" style={{ fontSize: 14 }}>foldo.dev/t/:token</code>{' '}
+              link and unmoderated screen + voice sessions stream straight back
+              onto your board.
+            </p>
+            <ul
+              style={{
+                listStyle: 'none',
+                padding: 0,
+                margin: '0 0 28px',
+                display: 'grid',
+                gap: 12,
+              }}
+            >
+              {[
+                'Testers record screen + voice against your tasks — three delivery modes auto-detected.',
+                'Results land as frames: scrubbable recording, per-task pass/skip stats, transcript, AI synthesis.',
+                'Each synthesised issue has a “Make this an edit” button — feedback to a Claude Code commit, in one surface.',
+              ].map((line) => (
+                <li
+                  key={line}
+                  style={{
+                    display: 'flex',
+                    gap: 10,
+                    alignItems: 'flex-start',
+                    fontSize: 15,
+                    lineHeight: 1.5,
+                    color: '#2a2a2a',
+                  }}
+                >
+                  <span style={{ flex: 'none', marginTop: 1 }}>
+                    <CheckCircle />
+                  </span>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+            <a href="/signup" className="btn-primary">
+              <PromptCaret /> Run your first test
+            </a>
+          </div>
+          <div className="card">
+            <img
+              src="/marketing/step-2-review.png"
+              alt="A User Test session replaying on a Foldo board"
+              style={{
+                width: '100%',
+                aspectRatio: '4 / 3',
+                objectFit: 'cover',
+                borderRadius: 14,
+              }}
+            />
+            <p
+              style={{
+                fontSize: 14,
+                lineHeight: 1.5,
+                color: '#666',
+                margin: '16px 0 0',
+              }}
+            >
+              Recording, per-task outcomes, questionnaire answers, transcript,
+              and an AI synthesis — all streaming in live as frames you can
+              comment on.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* ============== BIG CTA ============== */}
       <section style={{ maxWidth: 1240, margin: '0 auto', padding: '40px 32px 60px' }}>
         <div

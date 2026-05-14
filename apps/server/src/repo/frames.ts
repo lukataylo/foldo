@@ -1,5 +1,5 @@
 import type { Frame, FrameContent, FrameKind } from '@foldo/protocol';
-import { db } from '../db.ts';
+import { query, queryOne, exec } from '../db.ts';
 import { nowIso, parseJson } from '../util.ts';
 
 interface FrameRow {
@@ -31,8 +31,8 @@ function rowToFrame(r: FrameRow): Frame {
     commitSha: r.commit_sha,
     commitMessage: r.commit_message,
     age: r.age,
-    position: { x: r.position_x, y: r.position_y },
-    size: { width: r.width, height: r.height },
+    position: { x: Number(r.position_x), y: Number(r.position_y) },
+    size: { width: Number(r.width), height: Number(r.height) },
     content: parseJson<FrameContent>(r.content_json, {
       kind: 'markdown',
       docPath: '',
@@ -46,47 +46,45 @@ function rowToFrame(r: FrameRow): Frame {
   };
 }
 
-export function listFramesForBoard(boardId: string): Frame[] {
-  const rows = db
-    .prepare(`SELECT * FROM frames WHERE board_id = ? ORDER BY created_at`)
-    .all(boardId) as FrameRow[];
+export async function listFramesForBoard(boardId: string): Promise<Frame[]> {
+  const rows = await query<FrameRow>(
+    `SELECT * FROM frames WHERE board_id = $1 ORDER BY created_at`,
+    [boardId],
+  );
   return rows.map(rowToFrame);
 }
 
-export function getFrameById(id: string): Frame | null {
-  const r = db.prepare(`SELECT * FROM frames WHERE id = ?`).get(id) as
-    | FrameRow
-    | undefined;
+export async function getFrameById(id: string): Promise<Frame | null> {
+  const r = await queryOne<FrameRow>(`SELECT * FROM frames WHERE id = $1`, [id]);
   return r ? rowToFrame(r) : null;
 }
 
-export function insertFrame(f: Frame): Frame {
-  db.prepare(
+export async function insertFrame(f: Frame): Promise<Frame> {
+  await exec(
     `INSERT INTO frames (id, board_id, kind, branch_id, commit_sha, commit_message, age,
        position_x, position_y, width, height, content_json, parent_frame_id,
        generated_by_dispatch_id, captured_from_url, created_at, updated_at)
-     VALUES (@id, @board_id, @kind, @branch_id, @commit_sha, @commit_message, @age,
-       @position_x, @position_y, @width, @height, @content_json, @parent_frame_id,
-       @generated_by_dispatch_id, @captured_from_url, @created_at, @updated_at)`,
-  ).run({
-    id: f.id,
-    board_id: f.boardId,
-    kind: f.kind,
-    branch_id: f.branchId,
-    commit_sha: f.commitSha,
-    commit_message: f.commitMessage,
-    age: f.age,
-    position_x: f.position.x,
-    position_y: f.position.y,
-    width: f.size.width,
-    height: f.size.height,
-    content_json: JSON.stringify(f.content),
-    parent_frame_id: f.parentFrameId ?? null,
-    generated_by_dispatch_id: f.generatedByDispatchId ?? null,
-    captured_from_url: f.capturedFromUrl ?? null,
-    created_at: f.createdAt,
-    updated_at: f.updatedAt,
-  });
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+    [
+      f.id,
+      f.boardId,
+      f.kind,
+      f.branchId,
+      f.commitSha,
+      f.commitMessage,
+      f.age,
+      f.position.x,
+      f.position.y,
+      f.size.width,
+      f.size.height,
+      JSON.stringify(f.content),
+      f.parentFrameId ?? null,
+      f.generatedByDispatchId ?? null,
+      f.capturedFromUrl ?? null,
+      f.createdAt,
+      f.updatedAt,
+    ],
+  );
   return f;
 }
 
@@ -96,8 +94,8 @@ export interface FrameUpdate {
   content?: FrameContent;
 }
 
-export function updateFrame(id: string, patch: FrameUpdate): Frame | null {
-  const existing = getFrameById(id);
+export async function updateFrame(id: string, patch: FrameUpdate): Promise<Frame | null> {
+  const existing = await getFrameById(id);
   if (!existing) return null;
   const next: Frame = {
     ...existing,
@@ -106,37 +104,42 @@ export function updateFrame(id: string, patch: FrameUpdate): Frame | null {
     content: patch.content ?? existing.content,
     updatedAt: nowIso(),
   };
-  db.prepare(
+  await exec(
     `UPDATE frames SET
-       position_x = @position_x,
-       position_y = @position_y,
-       width = @width,
-       height = @height,
-       content_json = @content_json,
-       updated_at = @updated_at
-     WHERE id = @id`,
-  ).run({
-    id,
-    position_x: next.position.x,
-    position_y: next.position.y,
-    width: next.size.width,
-    height: next.size.height,
-    content_json: JSON.stringify(next.content),
-    updated_at: next.updatedAt,
-  });
+       position_x = $1,
+       position_y = $2,
+       width = $3,
+       height = $4,
+       content_json = $5,
+       updated_at = $6
+     WHERE id = $7`,
+    [
+      next.position.x,
+      next.position.y,
+      next.size.width,
+      next.size.height,
+      JSON.stringify(next.content),
+      next.updatedAt,
+      id,
+    ],
+  );
   return next;
 }
 
-export function moveFrame(id: string, pos: { x: number; y: number }): Frame | null {
-  const existing = getFrameById(id);
+export async function moveFrame(
+  id: string,
+  pos: { x: number; y: number },
+): Promise<Frame | null> {
+  const existing = await getFrameById(id);
   if (!existing) return null;
-  db.prepare(
-    `UPDATE frames SET position_x = ?, position_y = ?, updated_at = ? WHERE id = ?`,
-  ).run(pos.x, pos.y, nowIso(), id);
+  await exec(
+    `UPDATE frames SET position_x = $1, position_y = $2, updated_at = $3 WHERE id = $4`,
+    [pos.x, pos.y, nowIso(), id],
+  );
   return getFrameById(id);
 }
 
-export function deleteFrame(id: string): boolean {
-  const info = db.prepare(`DELETE FROM frames WHERE id = ?`).run(id);
-  return info.changes > 0;
+export async function deleteFrame(id: string): Promise<boolean> {
+  const changes = await exec(`DELETE FROM frames WHERE id = $1`, [id]);
+  return changes > 0;
 }

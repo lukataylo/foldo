@@ -16,6 +16,12 @@ export interface MarkdownLine {
   /** 1-based index within its section (for line-range comment anchoring) */
   indexInSection: number;
   sectionId: string;
+  /**
+   * 0-based body line index of the source line that produced this output line.
+   * For multi-line paragraphs this is the FIRST source line in the buffer.
+   * Used by per-line authorship tinting (the line-author map keys body lines).
+   */
+  bodyLineIndex: number;
 }
 
 function slug(s: string) {
@@ -31,7 +37,8 @@ export function parseMarkdown(body: string): MarkdownLine[] {
   let currentSection = 'top';
   let sectionLineCounter: Record<string, number> = { top: 0 };
   let buf: string[] = [];
-  let listBuf: string[] = [];
+  let bufBodyLineStart = 0;
+  let listBuf: Array<{ text: string; bodyLineIndex: number }> = [];
   let listKind: 'ul' | 'ol' | null = null;
 
   const flushParagraph = () => {
@@ -42,6 +49,7 @@ export function parseMarkdown(body: string): MarkdownLine[] {
       text: buf.join(' '),
       indexInSection: sectionLineCounter[currentSection],
       sectionId: currentSection,
+      bodyLineIndex: bufBodyLineStart,
     });
     buf = [];
   };
@@ -52,17 +60,19 @@ export function parseMarkdown(body: string): MarkdownLine[] {
     for (const item of listBuf) {
       sectionLineCounter[currentSection] = (sectionLineCounter[currentSection] ?? 0) + 1;
       out.push({
-        block: { kind: listKind!, items: [item], sectionId: currentSection },
-        text: item,
+        block: { kind: listKind!, items: [item.text], sectionId: currentSection },
+        text: item.text,
         indexInSection: sectionLineCounter[currentSection],
         sectionId: currentSection,
+        bodyLineIndex: item.bodyLineIndex,
       });
     }
     listBuf = [];
     listKind = null;
   };
 
-  for (let raw of lines) {
+  for (let bi = 0; bi < lines.length; bi++) {
+    const raw = lines[bi];
     const line = raw.trimEnd();
     if (!line.trim()) {
       flushParagraph();
@@ -84,6 +94,7 @@ export function parseMarkdown(body: string): MarkdownLine[] {
         text: h1[1],
         indexInSection: sectionLineCounter[s],
         sectionId: s,
+        bodyLineIndex: bi,
       });
       continue;
     }
@@ -99,6 +110,7 @@ export function parseMarkdown(body: string): MarkdownLine[] {
         text: h2[1],
         indexInSection: sectionLineCounter[s],
         sectionId: s,
+        bodyLineIndex: bi,
       });
       continue;
     }
@@ -114,6 +126,7 @@ export function parseMarkdown(body: string): MarkdownLine[] {
         text: h3[1],
         indexInSection: sectionLineCounter[s],
         sectionId: s,
+        bodyLineIndex: bi,
       });
       continue;
     }
@@ -123,18 +136,19 @@ export function parseMarkdown(body: string): MarkdownLine[] {
       flushParagraph();
       if (listKind && listKind !== 'ul') flushList();
       listKind = 'ul';
-      listBuf.push(ul[1]);
+      listBuf.push({ text: ul[1], bodyLineIndex: bi });
       continue;
     }
     if (ol) {
       flushParagraph();
       if (listKind && listKind !== 'ol') flushList();
       listKind = 'ol';
-      listBuf.push(ol[1]);
+      listBuf.push({ text: ol[1], bodyLineIndex: bi });
       continue;
     }
     // paragraph line
     flushList();
+    if (!buf.length) bufBodyLineStart = bi;
     buf.push(line.trim());
   }
   flushParagraph();
@@ -182,14 +196,50 @@ function renderInline(text: string): ReactNode {
   return out;
 }
 
+interface LineAuthorEntry {
+  authorUserId: string;
+  editedAt: string;
+}
+
 interface RenderProps {
   body: string;
   onLineClick?: (line: MarkdownLine, e: React.MouseEvent) => void;
   highlightedAnchors?: Array<{ sectionId: string; lineStart?: number; lineEnd?: number }>;
+  /** Body-line-index keyed map (string keys) of who last edited each line. */
+  lineAuthors?: Record<string, LineAuthorEntry>;
+  /** Resolve a userId to a brand colour for the gutter tint. */
+  colorForUser?: (userId: string) => string;
+  /** Resolve a userId to a display name for the gutter tooltip. */
+  nameForUser?: (userId: string) => string;
 }
 
-export function MarkdownView({ body, onLineClick, highlightedAnchors }: RenderProps) {
+export function MarkdownView({
+  body,
+  onLineClick,
+  highlightedAnchors,
+  lineAuthors,
+  colorForUser,
+  nameForUser,
+}: RenderProps) {
   const lines = parseMarkdown(body);
+  const lineWrap = (ln: MarkdownLine, children: ReactNode) => {
+    const entry = lineAuthors?.[String(ln.bodyLineIndex)];
+    if (!entry || !colorForUser) return children;
+    const color = colorForUser(entry.authorUserId);
+    const name = nameForUser?.(entry.authorUserId) ?? 'someone';
+    return (
+      <div
+        title={`Edited by ${name}`}
+        style={{
+          borderLeft: `3px solid ${color}`,
+          paddingLeft: 8,
+          marginLeft: -8,
+        }}
+      >
+        {children}
+      </div>
+    );
+  };
   return (
     <div className="markdown-body text-markdownInk">
       {lines.map((ln, idx) => {
@@ -203,57 +253,58 @@ export function MarkdownView({ body, onLineClick, highlightedAnchors }: RenderPr
           ? 'relative -mx-2 rounded-md bg-[#fff5e3] px-2 transition-colors'
           : 'transition-colors hover:bg-black/[0.025]';
         const onClick = (e: React.MouseEvent) => onLineClick?.(ln, e);
+        const wrap = (node: ReactNode) => lineWrap(ln, node);
         switch (ln.block.kind) {
           case 'h1':
-            return (
+            return wrap(
               <h1
                 key={idx}
                 onClick={onClick}
                 className={`mb-1 mt-0 text-[22px] font-semibold ${baseClass}`}
               >
                 {renderInline(ln.block.text!)}
-              </h1>
+              </h1>,
             );
           case 'h2':
-            return (
+            return wrap(
               <h2
                 key={idx}
                 onClick={onClick}
                 className={`mb-1.5 mt-4 text-[15px] font-semibold ${baseClass}`}
               >
                 {renderInline(ln.block.text!)}
-              </h2>
+              </h2>,
             );
           case 'h3':
-            return (
+            return wrap(
               <h3
                 key={idx}
                 onClick={onClick}
                 className={`mb-1 mt-3 text-[13px] font-semibold ${baseClass}`}
               >
                 {renderInline(ln.block.text!)}
-              </h3>
+              </h3>,
             );
           case 'p':
-            return (
+            return wrap(
               <p
                 key={idx}
                 onClick={onClick}
                 className={`mb-1.5 text-[13px] ${baseClass}`}
               >
                 {renderInline(ln.block.text!)}
-              </p>
+              </p>,
             );
           case 'ul':
-            return (
+            return wrap(
               <ul key={idx} className="-my-0.5 list-disc pl-5 text-[13px]">
                 <li onClick={onClick} className={baseClass}>
                   {renderInline(ln.block.items![0])}
                 </li>
-              </ul>
+              </ul>,
             );
           case 'ol':
-            return (
+            return wrap(
               <ol
                 key={idx}
                 start={ln.indexInSection}
@@ -262,7 +313,7 @@ export function MarkdownView({ body, onLineClick, highlightedAnchors }: RenderPr
                 <li onClick={onClick} className={baseClass}>
                   {renderInline(ln.block.items![0])}
                 </li>
-              </ol>
+              </ol>,
             );
         }
       })}

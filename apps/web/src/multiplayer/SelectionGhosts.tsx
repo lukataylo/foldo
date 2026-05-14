@@ -1,6 +1,6 @@
 // Translucent dashed outlines around the frames other users have selected.
 // We don't (yet) know the in-frame element bounds for remote selections, so we
-// outline the entire selected frame as a soft cue — same color as the user.
+// outline the entire selected frame as a soft cue, same color as the user.
 
 import { memo } from 'react';
 import type { UserId } from '@foldo/protocol';

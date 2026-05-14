@@ -34,7 +34,7 @@ function post(message: SampleAppOutbound) {
   try {
     window.parent.postMessage(message, PARENT_ORIGIN);
   } catch {
-    // ignore — origin mismatch or detached parent
+    // ignore, origin mismatch or detached parent
   }
 }
 

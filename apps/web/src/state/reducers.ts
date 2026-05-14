@@ -1,5 +1,5 @@
 // Apply a ServerMessage to the BoardStore.
-// Pure patches into the store — no fetch, no DOM.
+// Pure patches into the store, no fetch, no DOM.
 
 import type { ServerMessage } from '@foldo/protocol';
 import { boardStore } from './BoardStore';
@@ -127,6 +127,14 @@ export function applyServerMessage(msg: ServerMessage) {
       return;
     case 'mcp.offline':
       boardStore.patch({ mcpConnected: false });
+      return;
+    case 'test.session.started':
+      // Transient "someone is testing now" signal. The completed session's
+      // frame still arrives via the normal `frame.added` path below.
+      boardStore.markTestSessionActive(msg.testId);
+      return;
+    case 'test.session.completed':
+      boardStore.markTestSessionInactive(msg.testId);
       return;
     case 'error':
       console.warn('[foldo-ws] server error', msg);

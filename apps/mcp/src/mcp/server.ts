@@ -97,7 +97,7 @@ export async function startMcpStdioServer(deps: McpServerDeps): Promise<{
           const result = await runApplyEdit(parsed, { config, cloud }, {
             emitProgress: (line) => log(`[apply_edit] ${line}`),
           });
-          // Strip the internal `resultFrame` before returning to the caller —
+          // Strip the internal `resultFrame` before returning to the caller , 
           // the public ApplyEditResult shape doesn't include it.
           const { resultFrame: _resultFrame, ...publicResult } = result;
           return toolJsonResult(publicResult);

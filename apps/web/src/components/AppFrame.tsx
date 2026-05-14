@@ -1,4 +1,4 @@
-// App frame — renders the sample app inside an iframe and forwards element
+// App frame, renders the sample app inside an iframe and forwards element
 // click/hover events from the sample app's postMessage bridge.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -28,7 +28,7 @@ interface Props {
   onSelectElement: (sel: SelectedElement | null) => void;
   onDropPin: (frameId: string, x: number, y: number) => void;
   onCommentClick: (frameId: string, comment: Comment) => void;
-  /** When false the frame is far from the camera — render a static placeholder. */
+  /** When false the frame is far from the camera, render a static placeholder. */
   inViewport: boolean;
   zoom: number;
 }
@@ -36,6 +36,7 @@ interface Props {
 const SAMPLE_APP_BASE =
   (typeof window !== 'undefined' &&
     (window as unknown as { __FOLDO_SAMPLE__?: string }).__FOLDO_SAMPLE__) ||
+  (import.meta.env.VITE_SAMPLE_URL as string | undefined) ||
   'http://localhost:5174';
 
 export function AppFrame({
@@ -128,13 +129,27 @@ export function AppFrame({
         case 'foldo.sample.element.hover.clear':
           setHoverRect(null);
           return;
+        case 'foldo.sample.recipe.completed':
+          // Sample app finished replaying its recipe (initial state set up).
+          // For now we just log; future: surface a "ready to dispatch" chip.
+          // eslint-disable-next-line no-console
+          console.info('[foldo] sample recipe completed', frame.id);
+          return;
+        case 'foldo.sample.recipe.failed':
+          // eslint-disable-next-line no-console
+          console.warn('[foldo] sample recipe failed', frame.id, msg.message);
+          return;
+        case 'foldo.sample.scroll':
+          // Scroll position from the iframe, currently informational only.
+          // Future: sync follow-me cursors to the embedded sample-app scroll.
+          return;
         default:
           return;
       }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-    // intentionally exclude reviewMode/content/tool — handler reads latest via closure refs
+    // intentionally exclude reviewMode/content/tool, handler reads latest via closure refs
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inViewport, frame.id, reviewMode, tool, content.overrides, content.recipe]);
 
@@ -172,7 +187,7 @@ export function AppFrame({
         height: frame.size.height,
       }}
     >
-      <FrameMeta frame={frame} branch={branch} />
+      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
 
       <div
         className="relative h-full w-full overflow-hidden rounded-md border border-black/15 bg-white frame-shadow"
@@ -192,7 +207,7 @@ export function AppFrame({
           <FramePlaceholder content={content} />
         )}
 
-        {/* Review overlay — when in comment/select tool, captures pointer events
+        {/* Review overlay, when in comment/select tool, captures pointer events
             so we can drop pins on top of the iframe; otherwise pointer-events
             pass through to the iframe (test mode). */}
         <div

@@ -107,7 +107,7 @@ export function createCloudClient(
         });
         break;
       default: {
-        // Exhaustiveness — unknown message types are ignored.
+        // Exhaustiveness, unknown message types are ignored.
         const _exhaustive: never = msg;
         void _exhaustive;
       }
@@ -128,7 +128,7 @@ export function createCloudClient(
     ws = socket;
 
     // Only reset the backoff if the connection stays open long enough
-    // to look "stable" — protects against tight flap loops where the
+    // to look "stable", protects against tight flap loops where the
     // remote accepts then immediately closes.
     let stableTimer: NodeJS.Timeout | null = null;
     socket.on('open', () => {

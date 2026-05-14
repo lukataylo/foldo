@@ -1,6 +1,6 @@
 import { defineManifest } from '@crxjs/vite-plugin';
 
-// Manifest V3 — the extension's only job is to freeze the current state of any
+// Manifest V3, the extension's only job is to freeze the current state of any
 // URL into a Foldo capture frame on the cloud. It cannot receive edit
 // dispatches (those flow only through the in-directory MCP).
 export const manifest = defineManifest({

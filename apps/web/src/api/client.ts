@@ -6,6 +6,7 @@ import type { ApiError } from '@foldo/protocol';
 export const API_BASE =
   (typeof window !== 'undefined' &&
     (window as unknown as { __FOLDO_API__?: string }).__FOLDO_API__) ||
+  (import.meta.env.VITE_API_URL as string | undefined) ||
   'http://localhost:4000';
 
 let authToken: string | null = null;
@@ -37,6 +38,8 @@ export interface ApiOptions {
   body?: unknown;
   signal?: AbortSignal;
   query?: Record<string, string | number | undefined>;
+  /** Extra request headers, merged over the defaults. */
+  headers?: Record<string, string>;
 }
 
 export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
@@ -47,10 +50,14 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     }
   }
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     Accept: 'application/json',
   };
+  // Only declare a JSON content-type when we're actually sending a body —
+  // Fastify rejects `Content-Type: application/json` with an empty body, which
+  // would otherwise break every body-less request (DELETE, some POSTs).
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  if (opts.headers) Object.assign(headers, opts.headers);
 
   const res = await fetch(url.toString(), {
     method: opts.method ?? 'GET',

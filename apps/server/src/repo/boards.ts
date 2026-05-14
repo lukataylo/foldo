@@ -1,5 +1,5 @@
 import type { Board } from '@foldo/protocol';
-import { db } from '../db.ts';
+import { query, queryOne, exec } from '../db.ts';
 import { nowIso } from '../util.ts';
 
 interface BoardRow {
@@ -20,37 +20,30 @@ function rowToBoard(r: BoardRow): Board {
   };
 }
 
-export function listBoards(): Board[] {
-  const rows = db.prepare(`SELECT * FROM boards ORDER BY created_at`).all() as BoardRow[];
+export async function listBoards(): Promise<Board[]> {
+  const rows = await query<BoardRow>(`SELECT * FROM boards ORDER BY created_at`);
   return rows.map(rowToBoard);
 }
 
-export function getBoardById(id: string): Board | null {
-  const r = db.prepare(`SELECT * FROM boards WHERE id = ?`).get(id) as BoardRow | undefined;
+export async function getBoardById(id: string): Promise<Board | null> {
+  const r = await queryOne<BoardRow>(`SELECT * FROM boards WHERE id = $1`, [id]);
   return r ? rowToBoard(r) : null;
 }
 
-export function getBoardByRepoSlug(slug: string): Board | null {
-  const r = db
-    .prepare(`SELECT * FROM boards WHERE repo_slug = ?`)
-    .get(slug) as BoardRow | undefined;
+export async function getBoardByRepoSlug(slug: string): Promise<Board | null> {
+  const r = await queryOne<BoardRow>(`SELECT * FROM boards WHERE repo_slug = $1`, [slug]);
   return r ? rowToBoard(r) : null;
 }
 
-export function upsertBoard(b: Board): Board {
-  db.prepare(
+export async function upsertBoard(b: Board): Promise<Board> {
+  await exec(
     `INSERT INTO boards (id, name, repo_slug, dev_url, created_at)
-     VALUES (@id, @name, @repo_slug, @dev_url, @created_at)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT(id) DO UPDATE SET
-       name = excluded.name,
-       repo_slug = excluded.repo_slug,
-       dev_url = excluded.dev_url`,
-  ).run({
-    id: b.id,
-    name: b.name,
-    repo_slug: b.repoSlug,
-    dev_url: b.devUrl ?? null,
-    created_at: b.createdAt ?? nowIso(),
-  });
+       name = EXCLUDED.name,
+       repo_slug = EXCLUDED.repo_slug,
+       dev_url = EXCLUDED.dev_url`,
+    [b.id, b.name, b.repoSlug, b.devUrl ?? null, b.createdAt ?? nowIso()],
+  );
   return b;
 }

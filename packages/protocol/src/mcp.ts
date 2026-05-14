@@ -1,4 +1,4 @@
-// MCP tool schemas — the JSON shape of tools the MCP server exposes to Claude Code.
+// MCP tool schemas, the JSON shape of tools the MCP server exposes to Claude Code.
 
 import type {
   CommentTarget,
@@ -9,7 +9,7 @@ import type {
   Branch,
 } from './domain.ts';
 
-/** Tool: freeze_current_state — capture a new frame from a running app */
+/** Tool: freeze_current_state, capture a new frame from a running app */
 export interface FreezeArgs {
   boardId: string;
   branchId: string;
@@ -22,7 +22,7 @@ export interface FreezeArgs {
 
 export type FreezeResult = { frame: Frame };
 
-/** Tool: replay_recipe — replay a recipe and return whether it succeeded */
+/** Tool: replay_recipe, replay a recipe and return whether it succeeded */
 export interface ReplayArgs {
   commitSha: CommitSha;
   recipe: RecipeStep[];
@@ -35,7 +35,7 @@ export type ReplayResult = {
   error?: string;
 };
 
-/** Tool: apply_edit_prompt — edit code per a structured prompt and push */
+/** Tool: apply_edit_prompt, edit code per a structured prompt and push */
 export interface ApplyEditArgs {
   boardId: string;
   branchId: string;
@@ -55,7 +55,7 @@ export type ApplyEditResult = {
   error?: string;
 };
 
-/** Tool: list_branches — query branches known to the local repo */
+/** Tool: list_branches, query branches known to the local repo */
 export type ListBranchesArgs = Record<string, never>;
 export type ListBranchesResult = { branches: Branch[] };
 

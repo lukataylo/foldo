@@ -1,4 +1,4 @@
-// @foldo/protocol — shared types used by web, server, mcp, and extension.
+// @foldo/protocol, shared types used by web, server, mcp, and extension.
 // Single source of truth for the Foldo data model and wire protocol.
 
 export * from './domain.ts';

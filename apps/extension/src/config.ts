@@ -1,5 +1,5 @@
 // Static defaults for the extension. Anything user-tweakable lives in
-// chrome.storage.local under the same keys — see shared/settings.ts.
+// chrome.storage.local under the same keys, see shared/settings.ts.
 
 export const DEFAULTS = {
   cloudUrl: 'http://localhost:4000',

@@ -45,7 +45,7 @@ function pickMode(argv: string[]): Mode {
   return 'both';
 }
 
-/** Log helper that NEVER writes to stdout — stdout is reserved for the MCP
+/** Log helper that NEVER writes to stdout, stdout is reserved for the MCP
  *  JSON-RPC transport. Everything else goes to stderr. */
 function makeLogger(prefix: string): (line: string) => void {
   return (line: string) => {

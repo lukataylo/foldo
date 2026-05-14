@@ -22,7 +22,7 @@ export interface User {
 export interface Board {
   id: BoardId;
   name: string;
-  /** "owner/repo" — the GitHub repo this board mirrors */
+  /** "owner/repo", the GitHub repo this board mirrors */
   repoSlug: string;
   /** Where the in-directory MCP for this repo serves the dev preview, if connected */
   devUrl?: string;
@@ -56,7 +56,14 @@ export interface Commit {
 }
 
 // ---------- Frames ----------
-export type FrameKind = 'app' | 'markdown';
+export type FrameKind =
+  | 'app'
+  | 'markdown'
+  | 'sticky'
+  | 'arrow'
+  | 'image'
+  | 'test_summary'
+  | 'test_session';
 
 export type Variant = 'baseline' | 'cta-revamp' | 'pro-highlight';
 
@@ -80,7 +87,7 @@ export interface AppFrameContent {
   recipe?: RecipeStep[];
   stateLabel?: string;
   overrides?: VariantOverrides;
-  /** URL the iframe should load — usually the sample app with query params */
+  /** URL the iframe should load, usually the sample app with query params */
   iframeUrl?: string;
 }
 
@@ -90,9 +97,98 @@ export interface MarkdownFrameContent {
   title: string;
   /** Inline body, used when not loading from /api/sources */
   body?: string;
+  /**
+   * Per-line authorship. Indexed by line number (0-based) of the body.
+   * Stored sparsely, only lines that have been edited from their seeded
+   * state carry an entry. Used by the canvas to draw a coloured gutter
+   * marker next to each line in the author's brand colour.
+   */
+  lineAuthors?: Record<string, { authorUserId: string; editedAt: string }>;
+  /** ISO timestamp of the last edit. Surfaced as "edited Xm ago". */
+  lastEditedAt?: string;
+  /** User id of the most recent editor. */
+  lastEditedBy?: string;
 }
 
-export type FrameContent = AppFrameContent | MarkdownFrameContent;
+/**
+ * A free-text post-it the user can drop anywhere on the canvas. Five colours,
+ * chosen to feel like physical Post-its over a kraft-paper background.
+ */
+export type StickyColor = 'yellow' | 'pink' | 'green' | 'blue' | 'lilac';
+
+export interface StickyFrameContent {
+  kind: 'sticky';
+  body: string;
+  color?: StickyColor;
+}
+
+/**
+ * A simple straight arrow. `from`/`to` are world coordinates relative to the
+ * frame's `position` (which is the top-left of the arrow's bounding box).
+ * The frame's `size` is the bounding box.
+ */
+export interface ArrowFrameContent {
+  kind: 'arrow';
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  color?: string;
+  thickness?: number;
+}
+
+/**
+ * An uploaded image. The MVP stores the bytes as a base64 data URL inside the
+ * frame's content_json. Production-grade storage (S3 / Railway volume) can
+ * replace `dataUrl` with `url` later without changing call sites; readers
+ * should prefer `url` if both are set.
+ */
+export interface ImageFrameContent {
+  kind: 'image';
+  dataUrl?: string;
+  url?: string;
+  alt?: string;
+  caption?: string;
+}
+
+/**
+ * The hub frame for an unmoderated test on the canvas — aggregate stats that
+ * session frames cluster beneath. Defined in full in the "Tests" section.
+ */
+export interface TestSummaryFrameContent {
+  kind: 'test_summary';
+  testId: TestId;
+  testName: string;
+  shareToken: string;
+  status: TestStatus;
+  totalSessions: number;
+  completedSessions: number;
+  taskStats: TestTaskStat[];
+}
+
+/** One recorded session, rendered as a frame on the canvas. */
+export interface TestSessionFrameContent {
+  kind: 'test_session';
+  testId: TestId;
+  sessionId: TestSessionId;
+  testerLabel: string;
+  recordingMode: RecordingMode;
+  recordingUrl?: string;
+  recordingDurationMs?: number;
+  taskResults: TestTaskResult[];
+  responses?: TestResponseAnswer[];
+  transcript?: TranscriptCue[];
+  transcriptStatus: TranscriptStatus;
+  synthesis?: TestSessionSynthesis;
+  completedAt?: string;
+}
+
+export type FrameContent =
+  | AppFrameContent
+  | MarkdownFrameContent
+  | StickyFrameContent
+  | ArrowFrameContent
+  | ImageFrameContent
+  | TestSummaryFrameContent
+  | TestSessionFrameContent;
 
 export interface Frame {
   id: FrameId;
@@ -217,7 +313,7 @@ export interface PresenceUser {
   selection?: PresenceSelection;
   /** When following another user's viewport */
   followingUserId?: UserId;
-  /** Most-recently-broadcast viewport — used by follow-me to mirror */
+  /** Most-recently-broadcast viewport, used by follow-me to mirror */
   viewport?: { x: number; y: number; zoom: number };
 }
 
@@ -255,6 +351,183 @@ export interface CaptureRequest {
   domSnapshot?: string;
   capturedByUserId: UserId;
   boardId: BoardId;
+}
+
+// ---------- Tests (unmoderated UX testing) ----------
+export type TestId = string;
+export type TestTaskId = string;
+export type TestSessionId = string;
+
+export type TestStatus = 'draft' | 'live' | 'closed';
+
+/**
+ * How a tester reaches the app under test.
+ *   - `auto`         , server probes the target and resolves to iframe/handoff per session
+ *   - `iframe`       , target is embedded in an iframe with the task banner around it
+ *   - `handoff`      , target opens in a new tab; screen recording spans both
+ *   - `dom_snapshot` , a frozen DOM snapshot is served (local-only apps a tester can't reach)
+ */
+export type TestTargetMode = 'auto' | 'iframe' | 'handoff' | 'dom_snapshot';
+
+/** Resolved mode for a given session (never `auto`). */
+export type TestDeliveryMode = 'iframe' | 'handoff' | 'dom_snapshot';
+
+/** What a tester is asked to capture. The creator allows a subset; the tester picks. */
+export type RecordingMode = 'screen_voice' | 'voice_only' | 'screen_only';
+
+export interface TestTask {
+  id: TestTaskId;
+  testId: TestId;
+  /** 0-based position in the task list */
+  orderIndex: number;
+  title: string;
+  /** Banner text shown to the tester while doing this task */
+  instruction: string;
+  /** Optional , what "done" looks like, a creator analysis aid */
+  successHint?: string;
+  /** Optional per-task starting route */
+  startUrl?: string;
+  /** Optional , reuses the recipe system to set up starting state */
+  startRecipe?: RecipeStep[];
+}
+
+export type TestQuestionKind =
+  | 'short_text'
+  | 'long_text'
+  | 'single_choice'
+  | 'multi_choice'
+  | 'rating';
+
+export interface TestQuestion {
+  id: string;
+  kind: TestQuestionKind;
+  prompt: string;
+  /** For single_choice / multi_choice */
+  choices?: string[];
+  required?: boolean;
+}
+
+export interface Test {
+  id: TestId;
+  boardId: BoardId;
+  name: string;
+  /** The deployed app URL; absent for `dom_snapshot` mode */
+  targetUrl?: string;
+  targetMode: TestTargetMode;
+  /** Probe result , whether the target allows being iframed. null = unknown/not probed */
+  frameable?: boolean | null;
+  /** Object-storage key of the frozen DOM (dom_snapshot mode) */
+  domSnapshotKey?: string;
+  /** Welcome / context shown to the tester before the task loop */
+  intro: string;
+  /** Recording modes the tester may choose from */
+  recordingModes: RecordingMode[];
+  questionnaire?: TestQuestion[];
+  status: TestStatus;
+  /** Short base62 token , foldo.dev/t/:token */
+  shareToken: string;
+  /** Optional cap on sessions; auto-closes when reached */
+  responseLimit?: number;
+  /** The hub frame on the canvas that results cluster under */
+  summaryFrameId?: FrameId;
+  createdByUserId: UserId;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TestSessionCounts {
+  total: number;
+  completed: number;
+}
+
+export type TestSessionStatus =
+  | 'started'
+  | 'recording'
+  | 'completed'
+  | 'abandoned';
+
+export type TestTaskOutcome = 'completed' | 'skipped' | 'gave_up';
+
+export interface TestTaskResult {
+  taskId: TestTaskId;
+  outcome: TestTaskOutcome;
+  durationMs: number;
+  /** Offset into the recording where this task starts */
+  recordingOffsetMs: number;
+}
+
+/** Aggregate outcome of one task across every completed session of a test. */
+export interface TestTaskStat {
+  taskId: TestTaskId;
+  title: string;
+  completed: number;
+  skipped: number;
+  gaveUp: number;
+  /** Median time-on-task across sessions, ms. 0 when there's no data. */
+  medianDurationMs: number;
+}
+
+export interface TranscriptCue {
+  startMs: number;
+  endMs: number;
+  text: string;
+}
+
+export interface TestResponseAnswer {
+  questionId: string;
+  /** string for text/rating, string[] for multi_choice */
+  value: string | string[];
+}
+
+export type TranscriptStatus =
+  | 'pending'
+  | 'processing'
+  | 'done'
+  | 'failed'
+  | 'skipped';
+
+export type IssueSeverity = 'low' | 'medium' | 'high';
+
+/** One problem an AI pass extracted from a session, anchored to the recording. */
+export interface TestSessionIssue {
+  severity: IssueSeverity;
+  text: string;
+  taskId?: TestTaskId;
+  /** Offset into the recording the issue refers to, ms. */
+  atMs?: number;
+}
+
+/** AI-generated synthesis of a single session. */
+export interface TestSessionSynthesis {
+  summary: string;
+  issues: TestSessionIssue[];
+  /** Provider/model that produced this, or 'stub' when no provider is configured. */
+  generatedBy: string;
+  generatedAt: string;
+}
+
+export interface TestSession {
+  id: TestSessionId;
+  testId: TestId;
+  status: TestSessionStatus;
+  recordingMode: RecordingMode;
+  /** Anonymous label , "Tester 4" , or an optional self-entered name */
+  testerLabel: string;
+  /** UA / viewport / locale / referrer. No PII unless volunteered */
+  testerMeta?: Record<string, unknown>;
+  consentAt?: string;
+  /** Playback URL for the recording (signed); absent until upload completes */
+  recordingUrl?: string;
+  recordingDurationMs?: number;
+  transcript?: TranscriptCue[];
+  transcriptStatus: TranscriptStatus;
+  responses?: TestResponseAnswer[];
+  taskResults?: TestTaskResult[];
+  /** AI synthesis of this session, once a synthesis pass has run. */
+  synthesis?: TestSessionSynthesis;
+  resultFrameId?: FrameId;
+  startedAt: string;
+  completedAt?: string;
 }
 
 // ---------- API errors ----------

@@ -1,5 +1,5 @@
 import type { SourceFile } from '@foldo/protocol';
-import { db } from '../db.ts';
+import { queryOne, exec } from '../db.ts';
 import { nowIso } from '../util.ts';
 
 interface SourceRow {
@@ -22,35 +22,28 @@ function rowToSource(r: SourceRow): SourceFile {
   };
 }
 
-export function getSource(
+export async function getSource(
   repoSlug: string,
   commitSha: string,
   path: string,
-): SourceFile | null {
-  const r = db
-    .prepare(
-      `SELECT * FROM sources WHERE repo_slug = ? AND commit_sha = ? AND path = ?`,
-    )
-    .get(repoSlug, commitSha, path) as SourceRow | undefined;
+): Promise<SourceFile | null> {
+  const r = await queryOne<SourceRow>(
+    `SELECT * FROM sources WHERE repo_slug = $1 AND commit_sha = $2 AND path = $3`,
+    [repoSlug, commitSha, path],
+  );
   return r ? rowToSource(r) : null;
 }
 
-export function upsertSource(s: SourceFile): SourceFile {
-  db.prepare(
+export async function upsertSource(s: SourceFile): Promise<SourceFile> {
+  await exec(
     `INSERT INTO sources (repo_slug, commit_sha, path, body, content_type, updated_at)
-     VALUES (@repo_slug, @commit_sha, @path, @body, @content_type, @updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT(repo_slug, commit_sha, path) DO UPDATE SET
-       body = excluded.body,
-       content_type = excluded.content_type,
-       updated_at = excluded.updated_at`,
-  ).run({
-    repo_slug: s.repoSlug,
-    commit_sha: s.commitSha,
-    path: s.path,
-    body: s.body,
-    content_type: s.contentType,
-    updated_at: s.updatedAt ?? nowIso(),
-  });
+       body = EXCLUDED.body,
+       content_type = EXCLUDED.content_type,
+       updated_at = EXCLUDED.updated_at`,
+    [s.repoSlug, s.commitSha, s.path, s.body, s.contentType, s.updatedAt ?? nowIso()],
+  );
   return s;
 }
 

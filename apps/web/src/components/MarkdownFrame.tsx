@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Board,
   Branch,
@@ -9,6 +9,9 @@ import type {
 import { FrameMeta } from './FrameMeta';
 import { MarkdownView, parseMarkdown } from './Markdown';
 import { getSource } from '../api/sources';
+import { updateFrame as apiUpdateFrame } from '../api/frames';
+import { boardStore } from '../state/BoardStore';
+import { useBoardSelector } from '../state/useBoardStore';
 import type { Tool } from '../types';
 
 interface Props {
@@ -18,6 +21,7 @@ interface Props {
   comments: Comment[];
   tool: Tool;
   inViewport: boolean;
+  zoom?: number;
   onSelectMdLine: (
     frameId: string,
     sectionId: string,
@@ -34,6 +38,7 @@ export function MarkdownFrame({
   comments,
   tool,
   inViewport,
+  zoom = 1,
   onSelectMdLine,
   onCommentClick,
 }: Props) {
@@ -41,8 +46,24 @@ export function MarkdownFrame({
   const containerRef = useRef<HTMLDivElement>(null);
   const [remoteBody, setRemoteBody] = useState<string | null>(null);
 
+  // Edit state
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+  const [showTints, setShowTints] = useState(true);
+
+  // Resolve user → colour / name for tint rendering.
+  const users = useBoardSelector((s) => s.users);
+  const colorForUser = useCallback(
+    (id: string) => users.get(id)?.color ?? '#9a9a9a',
+    [users],
+  );
+  const nameForUser = useCallback(
+    (id: string) => users.get(id)?.name ?? id,
+    [users],
+  );
+
   // Lazy-fetch the source from /api/sources when this frame becomes visible.
-  // Falls back to `content.body` (if present) on error or until the fetch lands.
   useEffect(() => {
     if (!inViewport) return;
     if (remoteBody !== null) return;
@@ -57,7 +78,7 @@ export function MarkdownFrame({
         });
         if (!cancelled) setRemoteBody(src.body);
       } catch {
-        // ignore — fall back to inline body
+        // ignore, fall back to inline body
       }
     })();
     return () => {
@@ -66,6 +87,42 @@ export function MarkdownFrame({
   }, [inViewport, board, frame.commitSha, content.docPath, remoteBody]);
 
   const body = remoteBody ?? content.body ?? '';
+
+  const startEdit = (): void => {
+    setDraft(body);
+    setEditing(true);
+  };
+
+  const cancelEdit = (): void => {
+    setEditing(false);
+    setDraft('');
+  };
+
+  const saveEdit = async (): Promise<void> => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const nextContent: MarkdownFrameContent = {
+        ...content,
+        body: draft,
+      };
+      // Optimistic local update so the UX feels snappy.
+      boardStore.upsertFrame({
+        ...frame,
+        content: nextContent,
+        updatedAt: new Date().toISOString(),
+      });
+      const updated = await apiUpdateFrame(frame.id, { content: nextContent });
+      // Server returns the canonical frame with lineAuthors stamped.
+      boardStore.upsertFrame(updated);
+      setEditing(false);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[foldo] save markdown failed', err);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div
@@ -77,12 +134,24 @@ export function MarkdownFrame({
         height: frame.size.height,
       }}
     >
-      <FrameMeta frame={frame} branch={branch} />
+      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
       <div
         className="relative h-full w-full overflow-hidden rounded-md border border-black/15 bg-markdown frame-shadow"
         style={{ pointerEvents: 'auto' }}
       >
-        <DocHeader path={content.docPath} title={content.title} />
+        <DocHeader
+          path={content.docPath}
+          title={content.title}
+          lastEditedAt={content.lastEditedAt}
+          lastEditedByName={content.lastEditedBy ? nameForUser(content.lastEditedBy) : undefined}
+          editing={editing}
+          showTints={showTints}
+          saving={saving}
+          onToggleTints={() => setShowTints((v) => !v)}
+          onStartEdit={startEdit}
+          onCancel={cancelEdit}
+          onSave={() => void saveEdit()}
+        />
         <div
           ref={containerRef}
           className="h-[calc(100%-44px)] overflow-y-auto px-8 py-5"
@@ -90,10 +159,38 @@ export function MarkdownFrame({
             background: '#f6f1ea',
             color: '#2a2622',
           }}
+          onDoubleClick={(e) => {
+            // Double-click anywhere in the body enters edit mode (Figma-ish).
+            if (editing) return;
+            const target = e.target as HTMLElement;
+            if (target.closest('button, a, textarea, [data-no-edit]')) return;
+            startEdit();
+          }}
         >
-          {body ? (
+          {editing ? (
+            <textarea
+              autoFocus
+              spellCheck
+              className="block h-full w-full resize-none rounded-md border border-black/10 bg-white px-3 py-2 font-mono text-[12.5px] leading-[1.6] text-[#2a2622] outline-none focus:border-accent/60"
+              style={{ minHeight: 240 }}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  void saveEdit();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  cancelEdit();
+                }
+              }}
+            />
+          ) : body ? (
             <MarkdownView
               body={body}
+              lineAuthors={showTints ? content.lineAuthors : undefined}
+              colorForUser={colorForUser}
+              nameForUser={nameForUser}
               highlightedAnchors={comments
                 .filter((c) => c.anchor)
                 .map((c) => c.anchor!)}
@@ -114,26 +211,111 @@ export function MarkdownFrame({
         </div>
 
         {/* anchor pins on left gutter */}
-        <MarkdownAnchors
-          frame={frame}
-          comments={comments}
-          body={body}
-          onCommentClick={onCommentClick}
-        />
+        {!editing && (
+          <MarkdownAnchors
+            frame={frame}
+            comments={comments}
+            body={body}
+            onCommentClick={onCommentClick}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function DocHeader({ path, title }: { path: string; title: string }) {
+interface DocHeaderProps {
+  path: string;
+  title: string;
+  lastEditedAt?: string;
+  lastEditedByName?: string;
+  editing: boolean;
+  showTints: boolean;
+  saving: boolean;
+  onToggleTints: () => void;
+  onStartEdit: () => void;
+  onCancel: () => void;
+  onSave: () => void;
+}
+
+function DocHeader({
+  path,
+  title,
+  lastEditedAt,
+  lastEditedByName,
+  editing,
+  showTints,
+  saving,
+  onToggleTints,
+  onStartEdit,
+  onCancel,
+  onSave,
+}: DocHeaderProps) {
   return (
     <div className="flex items-center justify-between border-b border-black/10 bg-[#efe8dc] px-4 py-2.5">
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 items-center gap-2">
         <FileIcon />
         <span className="font-mono text-[11.5px] text-[#5a4f3e]">{path}</span>
+        {lastEditedAt && lastEditedByName && (
+          <span
+            className="ml-1 truncate text-[10.5px] text-[#857a68]"
+            title={lastEditedAt}
+          >
+            · last edit by {lastEditedByName.split(' ')[0]} {formatRelative(lastEditedAt)}
+          </span>
+        )}
       </div>
-      <div className="text-[11px] uppercase tracking-[0.1em] text-[#857a68]">
-        {title.endsWith('.md') ? 'markdown' : 'doc'}
+      <div className="flex items-center gap-2">
+        {!editing && (
+          <button
+            type="button"
+            data-no-edit
+            onClick={onToggleTints}
+            className={
+              'rounded-md border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.06em] ' +
+              (showTints
+                ? 'border-accent/40 bg-accent/10 text-accent'
+                : 'border-black/15 bg-white/60 text-[#857a68] hover:bg-white')
+            }
+            title="Toggle author colour tints on each edited line"
+          >
+            tints {showTints ? 'on' : 'off'}
+          </button>
+        )}
+        {!editing ? (
+          <button
+            type="button"
+            data-no-edit
+            onClick={onStartEdit}
+            className="rounded-md border border-black/15 bg-white/60 px-2 py-0.5 text-[11px] font-medium text-[#5a4f3e] hover:bg-white"
+          >
+            Edit
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              data-no-edit
+              onClick={onCancel}
+              disabled={saving}
+              className="rounded-md border border-black/15 bg-white/60 px-2 py-0.5 text-[11px] font-medium text-[#5a4f3e] hover:bg-white disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              data-no-edit
+              onClick={onSave}
+              disabled={saving}
+              className="rounded-md bg-[#5a4f3e] px-2 py-0.5 text-[11px] font-medium text-white hover:bg-[#3e372b] disabled:opacity-60"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        )}
+        <div className="text-[11px] uppercase tracking-[0.1em] text-[#857a68]">
+          {title.endsWith('.md') ? 'markdown' : 'doc'}
+        </div>
       </div>
     </div>
   );
@@ -214,4 +396,18 @@ function FileIcon() {
       <path d="M9.5 2.5V6H13" stroke="#5a4f3e" strokeWidth="1.2" />
     </svg>
   );
+}
+
+function formatRelative(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const diff = Date.now() - t;
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
 }

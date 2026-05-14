@@ -95,7 +95,7 @@ async function runCapture(port: chrome.runtime.Port): Promise<void> {
     };
   } catch (err) {
     // Some pages (e.g. cross-origin iframes you don't own) refuse injection.
-    // Fall back to tab metadata only — we can still ship the screenshot.
+    // Fall back to tab metadata only, we can still ship the screenshot.
     probe = {
       url: tab.url ?? '',
       title: tab.title ?? '',
@@ -111,7 +111,7 @@ async function runCapture(port: chrome.runtime.Port): Promise<void> {
       tab.windowId ?? chrome.windows.WINDOW_ID_CURRENT,
       { format: 'png' },
     );
-    // strip the "data:image/png;base64," prefix — the CaptureRequest contract
+    // strip the "data:image/png;base64," prefix, the CaptureRequest contract
     // is the raw base64 payload.
     screenshot = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
   } catch (err) {
@@ -144,7 +144,7 @@ async function runCapture(port: chrome.runtime.Port): Promise<void> {
 
   const viewUrl = buildViewUrl(settings, response.frame.boardId, response.frame.id);
 
-  // Fire-and-forget banner — the capture is already done; if injection
+  // Fire-and-forget banner, the capture is already done; if injection
   // fails (e.g. the user navigated away) we don't fail the whole flow.
   try {
     const logoUrl = chrome.runtime.getURL('public/logo.png');

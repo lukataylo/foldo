@@ -8,13 +8,14 @@ import type {
 import { requireUser } from '../auth.ts';
 import { insertFrame, listFramesForBoard } from '../repo/frames.ts';
 import { getBranchById, upsertBranch } from '../repo/branches.ts';
+import { canEditBoard } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { newCommitSha, newId, nowIso } from '../util.ts';
 
 const CAPTURES_BRANCH_ID = 'captures';
 
-function ensureCapturesBranch(boardId: string, userId: string): Branch {
-  const existing = getBranchById(CAPTURES_BRANCH_ID);
+async function ensureCapturesBranch(boardId: string, userId: string): Promise<Branch> {
+  const existing = await getBranchById(CAPTURES_BRANCH_ID);
   if (existing) return existing;
   const now = nowIso();
   const branch: Branch = {
@@ -28,7 +29,7 @@ function ensureCapturesBranch(boardId: string, userId: string): Branch {
     createdAt: now,
     updatedAt: now,
   };
-  upsertBranch(branch);
+  await upsertBranch(branch);
   hub.broadcast(boardId, { type: 'branch.added', branch });
   return branch;
 }
@@ -40,8 +41,10 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
     if (!body?.boardId || !body?.url || !body?.viewport) {
       return reply.code(400).send({ error: 'Invalid capture body', code: 'BAD_REQUEST' });
     }
+    if (!(await canEditBoard(body.boardId, user.id))) {
+      return reply.code(403).send({ error: 'Not a member of this board', code: 'FORBIDDEN' });
+    }
 
-    // Light URL validation — must parse.
     try {
       new URL(body.url);
     } catch {
@@ -50,10 +53,9 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
         .send({ error: 'url is not a valid absolute URL', code: 'BAD_REQUEST' });
     }
 
-    ensureCapturesBranch(body.boardId, user.id);
+    await ensureCapturesBranch(body.boardId, user.id);
 
-    // Place new captures in their own lane to the right of the existing ones.
-    const existing = listFramesForBoard(body.boardId);
+    const existing = await listFramesForBoard(body.boardId);
     const captureSiblings = existing.filter(
       (f) => f.branchId === CAPTURES_BRANCH_ID,
     );
@@ -91,7 +93,7 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
       createdAt: now,
       updatedAt: now,
     };
-    insertFrame(frame);
+    await insertFrame(frame);
     hub.broadcast(frame.boardId, { type: 'frame.added', frame });
     return reply.send({ frame } satisfies CreateCaptureResponse);
   });

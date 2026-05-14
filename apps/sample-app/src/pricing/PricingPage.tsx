@@ -14,7 +14,7 @@ interface Props {
   onOpenModal?: () => void;
 }
 
-// One pricing page component that branches on variant — keeps the three
+// One pricing page component that branches on variant, keeps the three
 // variants visually consistent except for the parts the agent changed.
 // Renders at 920x700 frame interior in the canvas, but here it fills the
 // viewport so reviewers see the same pixels Foldo sees.

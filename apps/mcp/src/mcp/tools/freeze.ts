@@ -1,4 +1,4 @@
-// Tool: foldo_freeze_current_state — capture a frame from a running app and
+// Tool: foldo_freeze_current_state, capture a frame from a running app and
 // emit a `freeze.captured` event to the cloud over WS.
 
 import { nanoid } from 'nanoid';
@@ -127,8 +127,8 @@ export async function runFreeze(
       url: frame.content.iframeUrl,
       viewport: args.viewport,
     });
-    // We discard the screenshot in the prototype — the cloud renders an
-    // iframe — but a real impl would upload it and attach a thumbnail URL.
+    // We discard the screenshot in the prototype, the cloud renders an
+    // iframe, but a real impl would upload it and attach a thumbnail URL.
   }
 
   if (deps.cloud) {

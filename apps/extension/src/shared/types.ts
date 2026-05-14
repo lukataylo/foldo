@@ -1,5 +1,5 @@
 // Message contracts between the popup, the service worker, and content scripts.
-// All payloads are plain JSON-serialisable values — Chrome's runtime APIs only
+// All payloads are plain JSON-serialisable values, Chrome's runtime APIs only
 // marshal structured-clonable data.
 
 import type { CreateCaptureResponse } from '@foldo/protocol';

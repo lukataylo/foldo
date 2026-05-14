@@ -6,6 +6,7 @@ import type {
   Frame,
 } from '@foldo/protocol';
 import type { SelectedElement } from '../types';
+import { useBoardSelector } from '../state/useBoardStore';
 
 interface Props {
   frame: Frame;
@@ -29,6 +30,7 @@ export function EditPanel({
   onJumpToResult,
 }: Props) {
   const [intent, setIntent] = useState(initialIntent ?? '');
+  const mcpConnected = useBoardSelector((s) => s.mcpConnected);
   const isAppFrame = frame.kind === 'app';
   const recipeSteps =
     isAppFrame && frame.content.kind === 'app' ? (frame.content.recipe ?? []) : [];
@@ -79,7 +81,7 @@ export function EditPanel({
           <Section title="State recipe">
             {recipeSteps.length === 0 ? (
               <div className="text-[11.5px] text-inkFaint">
-                Default state — no replay needed.
+                Default state. No replay needed.
               </div>
             ) : (
               <ol className="space-y-0.5">
@@ -145,6 +147,7 @@ export function EditPanel({
       <Footer
         status={dispatchStatus}
         canSend={intent.trim().length > 0 && dispatchStatus === 'idle'}
+        mcpConnected={mcpConnected}
         onSend={() => onSend(intent)}
         onJumpToResult={onJumpToResult}
         errorMessage={dispatch?.errorMessage}
@@ -230,12 +233,14 @@ function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 function Footer({
   status,
   canSend,
+  mcpConnected,
   onSend,
   onJumpToResult,
   errorMessage,
 }: {
   status: DispatchStatus | 'idle';
   canSend: boolean;
+  mcpConnected: boolean;
   onSend: () => void;
   onJumpToResult?: () => void;
   errorMessage?: string;
@@ -287,7 +292,9 @@ function Footer({
   return (
     <div className="flex items-center justify-between border-t border-hairlineSoft px-4 py-3">
       <div className="text-[11px] text-inkFaint">
-        Sends via the local MCP server to Claude Code.
+        {mcpConnected
+          ? 'Sends via the local MCP server to Claude Code.'
+          : 'No MCP connected. Foldo will simulate the edit (no real commit).'}
       </div>
       <button
         disabled={!canSend}
@@ -299,7 +306,7 @@ function Footer({
             : 'cursor-not-allowed bg-hairlineSoft text-inkFaint')
         }
       >
-        <span>Send to Claude Code</span>
+        <span>{mcpConnected ? 'Send to Claude Code' : 'Simulate edit'}</span>
         <SendIcon />
       </button>
     </div>
@@ -327,11 +334,11 @@ function statusLabel(s: DispatchStatus | 'idle') {
 function statusDetail(s: DispatchStatus | 'idle') {
   switch (s) {
     case 'queued':
-      return 'Queued · waiting for an MCP runner…';
+      return 'Queued · waiting for a runner…';
     case 'sending':
-      return 'Sending prompt to local MCP server…';
+      return 'Routing to MCP (or simulator if no MCP connected)…';
     case 'running':
-      return 'Claude Code is replaying the recipe and applying the edit…';
+      return 'Replaying recipe and applying the edit…';
     default:
       return '';
   }

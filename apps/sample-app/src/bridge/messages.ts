@@ -59,4 +59,5 @@ export type SampleAppInbound =
       overrides: Record<string, string | boolean>;
     };
 
-export const PARENT_ORIGIN = 'http://localhost:5173';
+export const PARENT_ORIGIN =
+  (import.meta.env.VITE_PARENT_ORIGIN as string | undefined) ?? 'http://localhost:5173';

@@ -1,3 +1,7 @@
+// Side-effect import: loads repo-root .env into process.env BEFORE ./db.ts
+// is evaluated. Must stay at the very top.
+import './load-env.ts';
+
 import type {
   AppFrameContent,
   Branch,
@@ -5,26 +9,29 @@ import type {
   MarkdownFrameContent,
   User,
 } from '@foldo/protocol';
-import { db } from './db.ts';
+import { closePool, initSchema } from './db.ts';
 import { getBoardById, upsertBoard } from './repo/boards.ts';
 import { upsertBranch, upsertCommit } from './repo/branches.ts';
 import { insertFrame } from './repo/frames.ts';
 import { insertComment } from './repo/comments.ts';
+import { addBoardMember } from './repo/members.ts';
 import { upsertSource } from './repo/sources.ts';
 import { upsertUser } from './repo/users.ts';
 import { nowIso } from './util.ts';
 
-const BOARD_ID = 'board-acme-landing';
+export const DEMO_BOARD_ID = 'board-acme-landing';
+
+const BOARD_ID = DEMO_BOARD_ID;
 
 const readmeBody = `# acme/landing
 
 The marketing site for Acme. Three live branches feed the canvas:
 
-- **main** — production today.
-- **feat/cta-revamp** — agent run by Anna to test stronger hero copy.
-- **feat/pro-tier-highlight** — agent run by Mateo to see if the Pro plan needs more visual weight.
+- **main** is production today.
+- **feat/cta-revamp** is an agent run by Anna to test stronger hero copy.
+- **feat/pro-tier-highlight** is an agent run by Mateo to see if the Pro plan needs more visual weight.
 
-Each AI branch ships with its own PRD frame on the right — that's where the intent lives. Frames on this canvas are live: click into one, hit *Test it*, and you're in the running app at that commit.
+Each AI branch ships with its own PRD frame on the right; that's where the intent lives. Frames on this canvas are live: click into one, hit *Test it*, and you're in the running app at that commit.
 
 ## Conventions
 
@@ -45,7 +52,7 @@ Conversion on the pricing page hero CTA dropped 14% MoM after the redesign. Hypo
 1. The primary CTA copy references the trial duration explicitly (e.g. "Start your 14-day free trial").
 2. The button is large enough that a phone-sized tap target is comfortable on the smallest supported viewport.
 3. Secondary copy under the button names the no-credit-card guarantee.
-4. The CTA continues to use the existing \`primary\` button variant — no new styles.
+4. The CTA continues to use the existing \`primary\` button variant. No new styles.
 
 ## Out of scope
 
@@ -63,14 +70,14 @@ const proHighlightPrdBody = `# PRD: Pro tier visual highlight
 
 ## Why
 
-The Pro tier is our highest-margin plan but only 11% of new signups land on it. User research shows readers don't perceive it as distinct from Starter — they read the page as "two plans, same shape, different price."
+The Pro tier is our highest-margin plan but only 11% of new signups land on it. User research shows readers don't perceive it as distinct from Starter. They read the page as "two plans, same shape, different price."
 
 ## Acceptance criteria
 
-1. The Pro tier card is visually distinct from Starter and Team — clearly the recommended plan at a glance.
+1. The Pro tier card is visually distinct from Starter and Team; clearly the recommended plan at a glance.
 2. The visual treatment does not overwhelm the headline above it.
 3. A "Most popular" or equivalent badge sits above the card.
-4. The Pro card scales identically to its siblings — same height, same internal padding.
+4. The Pro card scales identically to its siblings; same height, same internal padding.
 
 ## Out of scope
 
@@ -81,6 +88,9 @@ The Pro tier is our highest-margin plan but only 11% of new signups land on it. 
 
 The Mailchimp pricing page is a reasonable reference for the "recommended plan" treatment, though theirs tilts loud. We want quieter.`;
 
+const SAMPLE_APP_URL =
+  process.env.FOLDO_SAMPLE_APP_URL ?? 'http://localhost:5174';
+
 function iframeUrl(variant: string, sha: string, stateLabel: string, modal?: string): string {
   const params = new URLSearchParams({
     variant,
@@ -89,12 +99,12 @@ function iframeUrl(variant: string, sha: string, stateLabel: string, modal?: str
     'foldo.embedded': '1',
   });
   if (modal) params.set('modal', modal);
-  return `http://localhost:5174/?${params.toString()}`;
+  return `${SAMPLE_APP_URL}/?${params.toString()}`;
 }
 
-export function seed(): void {
-  // Idempotent — bail if the board already exists.
-  if (getBoardById(BOARD_ID)) {
+export async function seed(): Promise<void> {
+  // Idempotent, bail if the board already exists.
+  if (await getBoardById(BOARD_ID)) {
     return;
   }
 
@@ -108,16 +118,23 @@ export function seed(): void {
     { id: 'u-you', name: 'You', initial: 'Y', color: '#7fd49a', kind: 'human' },
     { id: 'u-claude', name: 'Claude Code', initial: 'C', color: '#b08cff', kind: 'agent' },
   ];
-  for (const u of users) upsertUser(u);
+  for (const u of users) await upsertUser(u);
 
   // ---------- Board ----------
-  upsertBoard({
+  await upsertBoard({
     id: BOARD_ID,
     name: 'acme/landing',
     repoSlug: 'acme/landing',
-    devUrl: 'http://localhost:5174',
+    devUrl: SAMPLE_APP_URL,
     createdAt: now,
   });
+
+  // Seeded users are all members so the demo board has activity.
+  await addBoardMember(BOARD_ID, 'u-mateo', 'owner');
+  for (const id of ['u-anna', 'u-priya', 'u-you']) {
+    await addBoardMember(BOARD_ID, id, 'editor');
+  }
+  await addBoardMember(BOARD_ID, 'u-claude', 'editor');
 
   // ---------- Branches + commits ----------
   const mainCommitSha = 'a7c1d29';
@@ -161,16 +178,16 @@ export function seed(): void {
       updatedAt: now,
     },
   ];
-  for (const b of branches) upsertBranch(b);
+  for (const b of branches) await upsertBranch(b);
 
-  upsertCommit({
+  await upsertCommit({
     sha: mainCommitSha,
     branchId: 'main',
     message: 'pricing: clean baseline',
     authorUserId: 'u-mateo',
     createdAt: now,
   });
-  upsertCommit({
+  await upsertCommit({
     sha: ctaCommitSha,
     branchId: 'feat/cta-revamp',
     message: 'cta: stronger trial copy + arrow',
@@ -178,7 +195,7 @@ export function seed(): void {
     parentSha: mainCommitSha,
     createdAt: now,
   });
-  upsertCommit({
+  await upsertCommit({
     sha: proCommitSha,
     branchId: 'feat/pro-tier-highlight',
     message: 'pricing: highlight Pro tier',
@@ -344,10 +361,10 @@ export function seed(): void {
       updatedAt: now,
     },
   ];
-  for (const f of frames) insertFrame(f);
+  for (const f of frames) await insertFrame(f);
 
   // ---------- Sources (also accessible via /api/sources) ----------
-  upsertSource({
+  await upsertSource({
     repoSlug: 'acme/landing',
     commitSha: mainCommitSha,
     path: 'README.md',
@@ -355,7 +372,7 @@ export function seed(): void {
     contentType: 'markdown',
     updatedAt: now,
   });
-  upsertSource({
+  await upsertSource({
     repoSlug: 'acme/landing',
     commitSha: ctaCommitSha,
     path: 'docs/prd/cta-revamp.md',
@@ -363,7 +380,7 @@ export function seed(): void {
     contentType: 'markdown',
     updatedAt: now,
   });
-  upsertSource({
+  await upsertSource({
     repoSlug: 'acme/landing',
     commitSha: proCommitSha,
     path: 'docs/prd/pro-highlight.md',
@@ -373,12 +390,12 @@ export function seed(): void {
   });
 
   // ---------- Comments ----------
-  insertComment({
+  await insertComment({
     id: 'c-cta-1',
     boardId: BOARD_ID,
     frameId: 'f-cta-app',
     authorUserId: 'u-anna',
-    text: "Button still doesn't name the trial duration — spec says it has to.",
+    text: "Button still doesn't name the trial duration. Spec says it has to.",
     pin: { x: 0.36, y: 0.42 },
     target: {
       elementLabel: '<button class="cta-primary">',
@@ -386,7 +403,7 @@ export function seed(): void {
       elementLine: 48,
     },
   });
-  insertComment({
+  await insertComment({
     id: 'c-cta-prd-1',
     boardId: BOARD_ID,
     frameId: 'f-cta-prd',
@@ -394,12 +411,12 @@ export function seed(): void {
     text: 'This acceptance criterion is not met by the current commit.',
     anchor: { sectionId: 'acceptance-criteria', lineStart: 1, lineEnd: 1 },
   });
-  insertComment({
+  await insertComment({
     id: 'c-pro-1',
     boardId: BOARD_ID,
     frameId: 'f-pro-app',
     authorUserId: 'u-mateo',
-    text: 'Gradient is too loud — competing with the headline. PRD literally calls this out.',
+    text: 'Gradient is too loud, competing with the headline. PRD literally calls this out.',
     pin: { x: 0.5, y: 0.62 },
     target: {
       elementLabel: '<div class="tier-card tier-card--pro">',
@@ -407,12 +424,12 @@ export function seed(): void {
       elementLine: 112,
     },
   });
-  insertComment({
+  await insertComment({
     id: 'c-pro-prd-1',
     boardId: BOARD_ID,
     frameId: 'f-pro-prd',
     authorUserId: 'u-mateo',
-    text: 'This is the one the current commit is failing — gradient overwhelms headline.',
+    text: 'This is the one the current commit is failing; gradient overwhelms headline.',
     anchor: { sectionId: 'acceptance-criteria', lineStart: 2, lineEnd: 2 },
   });
 }
@@ -424,8 +441,9 @@ const invokedDirectly =
   process.argv[1]?.endsWith('seed.js');
 
 if (invokedDirectly) {
-  seed();
+  await initSchema();
+  await seed();
   // eslint-disable-next-line no-console
   console.log('Seed complete.');
-  db.close();
+  await closePool();
 }

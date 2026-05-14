@@ -28,7 +28,14 @@ export type {
   VariantOverrides,
 } from '@foldo/protocol';
 
-export type Tool = 'select' | 'hand' | 'comment' | 'edit';
+export type Tool =
+  | 'select'
+  | 'hand'
+  | 'comment'
+  | 'edit'
+  | 'sticky'
+  | 'arrow'
+  | 'image';
 
 export interface SelectedElement {
   frameId: string;

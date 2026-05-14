@@ -3,12 +3,15 @@ import type { Board, UserId, User } from '@foldo/protocol';
 import { PresenceAvatars } from '../multiplayer/PresenceAvatars';
 import { useBoardSelector } from '../state/useBoardStore';
 
+const HOME_URL = '/home';
+
 interface Props {
   board: Board | null;
   meUserId: UserId | null;
   followingUserId: UserId | null;
   onFollow: (userId: UserId | null) => void;
   onCapture: () => void;
+  onOpenTests: () => void;
   onSwitchUser: (userId: UserId) => void;
   wsStatus: 'connecting' | 'open' | 'closed' | 'reconnecting' | 'offline';
   offline: boolean;
@@ -20,6 +23,7 @@ export function TopBar({
   followingUserId,
   onFollow,
   onCapture,
+  onOpenTests,
   onSwitchUser,
   wsStatus,
   offline,
@@ -28,6 +32,7 @@ export function TopBar({
   const [userPickerOpen, setUserPickerOpen] = useState(false);
   const [shared, setShared] = useState(false);
   const users = useBoardSelector((s) => s.users);
+  const mcpConnected = useBoardSelector((s) => s.mcpConnected);
   const me = meUserId ? users.get(meUserId) ?? null : null;
   const switchable: User[] = [];
   for (const u of users.values()) if (u.kind === 'human') switchable.push(u);
@@ -39,7 +44,7 @@ export function TopBar({
       setShared(true);
       setTimeout(() => setShared(false), 1400);
     } catch {
-      // Older browsers — fall back to selection
+      // Older browsers, fall back to selection
       const ta = document.createElement('textarea');
       ta.value = window.location.href;
       document.body.appendChild(ta);
@@ -54,7 +59,9 @@ export function TopBar({
     <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between px-4 pt-3">
       {/* left: logo + repo selector */}
       <div className="pointer-events-auto relative flex items-center gap-3 rounded-xl border border-hairlineSoft bg-panel px-2 py-1.5 shadow-panel">
-        <Logo />
+        <a href={HOME_URL} title="Back to home">
+          <Logo />
+        </a>
         <div className="h-4 w-px bg-hairline" />
         <button
           onClick={() => setOpen((o) => !o)}
@@ -65,13 +72,22 @@ export function TopBar({
           <Chevron />
         </button>
         <ConnectionDot status={wsStatus} offline={offline} />
+        <McpChip connected={mcpConnected} />
         {open && (
           <div className="absolute left-2 top-12 w-60 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
-            <RepoOption name={repoName} active />
+            <a
+              href={HOME_URL}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-ink hover:bg-white/5"
+            >
+              <BoardsIcon /> All boards…
+            </a>
             <div className="mt-1 border-t border-hairlineSoft pt-1">
-              <button className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-inkMute hover:bg-white/5">
+              <a
+                href="/home?new=1"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-inkMute hover:bg-white/5"
+              >
                 <PlusIcon /> Connect a repo…
-              </button>
+              </a>
             </div>
           </div>
         )}
@@ -136,6 +152,13 @@ export function TopBar({
           <ExtensionIcon /> Capture from URL
         </button>
         <button
+          onClick={onOpenTests}
+          title="Create unmoderated UX test links"
+          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-1.5 text-[12px] text-ink hover:bg-white/5"
+        >
+          <FlaskIcon /> Tests
+        </button>
+        <button
           onClick={onShare}
           title="Copy this canvas URL to clipboard"
           className={
@@ -161,13 +184,12 @@ function Logo() {
   return (
     <div className="flex items-center gap-1.5 pl-1.5">
       <img
-        src="/logo.png"
-        srcSet="/logo.png 1x, /logo@2x.png 2x"
+        src="/foldo-mark.svg"
         alt="Foldo"
         width={26}
         height={26}
-        className="rounded-md"
         draggable={false}
+        style={{ display: 'block' }}
       />
       <span className="font-semibold tracking-tight text-ink">foldo</span>
     </div>
@@ -205,18 +227,31 @@ function ConnectionDot({
   );
 }
 
-function RepoOption({ name, active }: { name: string; active?: boolean }) {
+function McpChip({ connected }: { connected: boolean }) {
+  const color = connected ? '#7fd49a' : '#9a9a9a';
+  const label = connected ? 'MCP live' : 'MCP offline · dispatches simulated';
   return (
-    <button
-      className={
-        'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12px] hover:bg-white/5 ' +
-        (active ? 'text-ink' : 'text-inkMute')
-      }
+    <span
+      title={label}
+      className="ml-1 inline-flex items-center gap-1 rounded-md border border-hairlineSoft px-1.5 py-0.5 text-[10.5px] text-inkMute"
     >
-      <RepoIcon />
-      <span className="flex-1 text-left">{name}</span>
-      {active && <CheckIcon />}
-    </button>
+      <span
+        className="h-1.5 w-1.5 rounded-full"
+        style={{ background: color, boxShadow: `0 0 6px ${color}` }}
+      />
+      MCP
+    </span>
+  );
+}
+
+function BoardsIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="9" y="2.5" width="4.5" height="4.5" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="2.5" y="9" width="4.5" height="4.5" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="9" y="9" width="4.5" height="4.5" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
   );
 }
 
@@ -267,6 +302,25 @@ function CheckIcon() {
         strokeWidth="1.6"
         strokeLinecap="round"
         strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+function FlaskIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+      <path
+        d="M6 2.5h4M6.8 2.5v4.2L3.8 12a1 1 0 0 0 .9 1.5h6.6a1 1 0 0 0 .9-1.5L9.2 6.7V2.5"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M5.4 9.5h5.2"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
       />
     </svg>
   );

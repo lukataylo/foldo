@@ -11,7 +11,7 @@ export interface BannerArgs {
 /**
  * Body executed inside the captured tab. Renders a small toast at the
  * bottom-right that fades in and out, with a clickable link back to the Foldo
- * canvas. Idempotent — running twice replaces the previous banner.
+ * canvas. Idempotent, running twice replaces the previous banner.
  */
 export function showBanner({ viewUrl, logoUrl }: BannerArgs): void {
   const ID = '__foldo-capture-banner__';

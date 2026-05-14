@@ -1,4 +1,4 @@
-// Popup UI — a single button to freeze the current tab, plus a gear icon that
+// Popup UI, a single button to freeze the current tab, plus a gear icon that
 // reveals cloud URL / token / board id settings.
 //
 // State machine:

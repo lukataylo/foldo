@@ -1,10 +1,10 @@
 // Injected into the active tab via chrome.scripting.executeScript when the
 // user clicks "Freeze this state". Returns a serialised snapshot of the page
-// — viewport, title, URL, and a truncated `outerHTML` blob. The service worker
+//, viewport, title, URL, and a truncated `outerHTML` blob. The service worker
 // pairs this with `chrome.tabs.captureVisibleTab` to produce the screenshot.
 //
-// This file is loaded as a function body — not as a content_scripts manifest
-// entry — so it must be self-contained (no imports). We keep the shape
+// This file is loaded as a function body, not as a content_scripts manifest
+// entry, so it must be self-contained (no imports). We keep the shape
 // compatible with PageProbe from shared/types.ts.
 
 export interface InlinePageProbe {
@@ -39,7 +39,7 @@ export function probePage(): InlinePageProbe {
     domSnapshot =
       raw.length > 500_000 ? raw.slice(0, 500_000) + '\n<!-- truncated -->' : raw;
   } catch {
-    // Some pages with restrictive CSP / sandboxing throw — that's fine, we
+    // Some pages with restrictive CSP / sandboxing throw, that's fine, we
     // ship the screenshot only.
     domSnapshot = undefined;
   }

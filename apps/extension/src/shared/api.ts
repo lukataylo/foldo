@@ -31,7 +31,7 @@ export async function createCapture(
     const text = await safeText(res);
     throw new Error(
       `Foldo cloud responded ${res.status} ${res.statusText}${
-        text ? ` — ${text}` : ''
+        text ? `, ${text}` : ''
       }`,
     );
   }
@@ -45,7 +45,7 @@ function stripTrailingSlash(s: string): string {
 async function safeText(res: Response): Promise<string> {
   try {
     const t = await res.text();
-    // Surface JSON error shapes — see ApiError in @foldo/protocol.
+    // Surface JSON error shapes, see ApiError in @foldo/protocol.
     try {
       const parsed = JSON.parse(t) as { error?: string };
       if (parsed && typeof parsed.error === 'string') return parsed.error;

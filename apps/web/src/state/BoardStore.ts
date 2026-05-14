@@ -9,6 +9,7 @@ import type {
   Dispatch,
   Frame,
   PresenceUser,
+  TestId,
   User,
   UserId,
 } from '@foldo/protocol';
@@ -16,7 +17,7 @@ import type {
 export interface BoardSnapshot {
   /** True once the initial REST/WS welcome arrives. */
   hydrated: boolean;
-  /** "offline" demo mode — using local mock data because cloud was unreachable. */
+  /** "offline" demo mode, using local mock data because cloud was unreachable. */
   offline: boolean;
   /** WS connection status; informs the top-bar indicator. */
   wsStatus: 'connecting' | 'open' | 'closed' | 'reconnecting' | 'offline';
@@ -32,6 +33,13 @@ export interface BoardSnapshot {
   dispatches: Map<string, Dispatch>;
   /** mcp connection (informational) */
   mcpConnected: boolean;
+  /**
+   * Tests with a session in progress right now — a transient "someone is
+   * testing" signal driven by `test.session.started` / `test.session.completed`
+   * WS messages. The completed session's actual frame still arrives via the
+   * normal `frame.added` path.
+   */
+  activeTestSessions: Set<TestId>;
 }
 
 type Listener = () => void;
@@ -49,6 +57,7 @@ const empty = (): BoardSnapshot => ({
   presence: new Map(),
   dispatches: new Map(),
   mcpConnected: false,
+  activeTestSessions: new Set(),
 });
 
 class BoardStoreImpl {
@@ -71,7 +80,7 @@ class BoardStoreImpl {
   }
 
   /**
-   * Apply a shallow patch — frames/comments/etc Maps are kept by reference if
+   * Apply a shallow patch, frames/comments/etc Maps are kept by reference if
    * untouched so memoised selectors stay stable. Always swaps the top-level
    * snapshot object so subscribers re-evaluate.
    */
@@ -146,6 +155,22 @@ class BoardStoreImpl {
     const dispatches = new Map(this.snap.dispatches);
     dispatches.set(d.id, d);
     this.patch({ dispatches });
+  }
+
+  /** Mark a test as having a session in progress (transient indicator). */
+  markTestSessionActive(testId: TestId) {
+    if (this.snap.activeTestSessions.has(testId)) return;
+    const activeTestSessions = new Set(this.snap.activeTestSessions);
+    activeTestSessions.add(testId);
+    this.patch({ activeTestSessions });
+  }
+
+  /** Clear the in-progress indicator for a test. */
+  markTestSessionInactive(testId: TestId) {
+    if (!this.snap.activeTestSessions.has(testId)) return;
+    const activeTestSessions = new Set(this.snap.activeTestSessions);
+    activeTestSessions.delete(testId);
+    this.patch({ activeTestSessions });
   }
 
   reset() {

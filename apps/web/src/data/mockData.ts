@@ -75,11 +75,11 @@ const readmeBody = `# acme/landing
 
 The marketing site for Acme. Three live branches feed the canvas:
 
-- **main** — production today.
-- **feat/cta-revamp** — agent run by Anna to test stronger hero copy.
-- **feat/pro-tier-highlight** — agent run by Mateo to see if the Pro plan needs more visual weight.
+- **main**, production today.
+- **feat/cta-revamp**, agent run by Anna to test stronger hero copy.
+- **feat/pro-tier-highlight**, agent run by Mateo to see if the Pro plan needs more visual weight.
 
-Each AI branch ships with its own PRD frame on the right — that's where the intent lives. Frames on this canvas are live: click into one, hit *Test it*, and you're in the running app at that commit.
+Each AI branch ships with its own PRD frame on the right, that's where the intent lives. Frames on this canvas are live: click into one, hit *Test it*, and you're in the running app at that commit.
 
 ## Conventions
 
@@ -100,7 +100,7 @@ Conversion on the pricing page hero CTA dropped 14% MoM after the redesign. Hypo
 1. The primary CTA copy references the trial duration explicitly (e.g. "Start your 14-day free trial").
 2. The button is large enough that a phone-sized tap target is comfortable on the smallest supported viewport.
 3. Secondary copy under the button names the no-credit-card guarantee.
-4. The CTA continues to use the existing \`primary\` button variant — no new styles.
+4. The CTA continues to use the existing \`primary\` button variant, no new styles.
 
 ## Out of scope
 
@@ -118,14 +118,14 @@ const proHighlightPrdBody = `# PRD: Pro tier visual highlight
 
 ## Why
 
-The Pro tier is our highest-margin plan but only 11% of new signups land on it. User research shows readers don't perceive it as distinct from Starter — they read the page as "two plans, same shape, different price."
+The Pro tier is our highest-margin plan but only 11% of new signups land on it. User research shows readers don't perceive it as distinct from Starter, they read the page as "two plans, same shape, different price."
 
 ## Acceptance criteria
 
-1. The Pro tier card is visually distinct from Starter and Team — clearly the recommended plan at a glance.
+1. The Pro tier card is visually distinct from Starter and Team, clearly the recommended plan at a glance.
 2. The visual treatment does not overwhelm the headline above it.
 3. A "Most popular" or equivalent badge sits above the card.
-4. The Pro card scales identically to its siblings — same height, same internal padding.
+4. The Pro card scales identically to its siblings, same height, same internal padding.
 
 ## Out of scope
 
@@ -290,7 +290,7 @@ const comments: Comment[] = [
     authorName: 'Anna Cole',
     authorInitial: 'A',
     authorColor: '#ff7849',
-    text: "Button still doesn't name the trial duration — spec says it has to.",
+    text: "Button still doesn't name the trial duration, spec says it has to.",
     createdAt: '2026-05-12T11:48:00.000Z',
     updatedAt: '2026-05-12T11:48:00.000Z',
     resolved: false,
@@ -325,7 +325,7 @@ const comments: Comment[] = [
     authorName: 'Mateo Rivas',
     authorInitial: 'M',
     authorColor: '#5db0ff',
-    text: 'Gradient is too loud — competing with the headline. PRD literally calls this out.',
+    text: 'Gradient is too loud, competing with the headline. PRD literally calls this out.',
     createdAt: '2026-05-12T11:20:00.000Z',
     updatedAt: '2026-05-12T11:20:00.000Z',
     resolved: false,
@@ -345,7 +345,7 @@ const comments: Comment[] = [
     authorName: 'Mateo Rivas',
     authorInitial: 'M',
     authorColor: '#5db0ff',
-    text: 'This is the one the current commit is failing — gradient overwhelms headline.',
+    text: 'This is the one the current commit is failing, gradient overwhelms headline.',
     createdAt: '2026-05-12T11:22:00.000Z',
     updatedAt: '2026-05-12T11:22:00.000Z',
     resolved: false,

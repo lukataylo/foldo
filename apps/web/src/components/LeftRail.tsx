@@ -42,6 +42,31 @@ export function LeftRail({ tool, onChange }: Props) {
         >
           <SparkleIcon />
         </RailButton>
+        <div className="my-0.5 h-px bg-hairlineSoft" />
+        <RailButton
+          label="Sticky note (S)"
+          active={tool === 'sticky'}
+          onClick={() => onChange('sticky')}
+          shortcut="S"
+        >
+          <StickyIcon />
+        </RailButton>
+        <RailButton
+          label="Arrow (A)"
+          active={tool === 'arrow'}
+          onClick={() => onChange('arrow')}
+          shortcut="A"
+        >
+          <ArrowToolIcon />
+        </RailButton>
+        <RailButton
+          label="Image (I)"
+          active={tool === 'image'}
+          onClick={() => onChange('image')}
+          shortcut="I"
+        >
+          <ImageIcon />
+        </RailButton>
       </div>
     </div>
   );
@@ -84,10 +109,7 @@ function RailButton({
 function ArrowIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <path
-        d="M3.5 2.5l9 4.5-3.8 1.2-1.5 4z"
-        fill="currentColor"
-      />
+      <path d="M3.5 2.5l9 4.5-3.8 1.2-1.5 4z" fill="currentColor" />
     </svg>
   );
 }
@@ -120,11 +142,36 @@ function CommentIcon() {
 function SparkleIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <path d="M8 2.5l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" fill="currentColor" />
       <path
-        d="M8 2.5l1 3 3 1-3 1-1 3-1-3-3-1 3-1z"
+        d="M12.5 9.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"
         fill="currentColor"
       />
-      <path d="M12.5 9.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="currentColor" />
+    </svg>
+  );
+}
+function StickyIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <path d="M3 3.5h7.5l2.5 2.5v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z" />
+      <path d="M10.5 3.5V6h2.5" />
+    </svg>
+  );
+}
+function ArrowToolIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 13 13 3" />
+      <path d="M8 3h5v5" />
+    </svg>
+  );
+}
+function ImageIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <rect x="2" y="2.5" width="12" height="11" rx="1.4" />
+      <circle cx="6" cy="7" r="1.2" fill="currentColor" stroke="none" />
+      <path d="m2.5 12 3.5-3.5 3 3 2.5-2.5L14 11.5" />
     </svg>
   );
 }

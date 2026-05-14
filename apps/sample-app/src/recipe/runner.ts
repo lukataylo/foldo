@@ -39,7 +39,7 @@ async function runStep(step: RecipeStep): Promise<void> {
         }
         return;
       }
-      // Path-style — keep the current search (which carries variant/commit).
+      // Path-style, keep the current search (which carries variant/commit).
       const next = dest + window.location.search;
       if (window.location.pathname !== dest) {
         window.history.pushState({}, '', next);

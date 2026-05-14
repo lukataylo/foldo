@@ -5,7 +5,7 @@ import type {
   CommentReply,
   CommentTarget,
 } from '@foldo/protocol';
-import { db } from '../db.ts';
+import { query, queryOne, exec } from '../db.ts';
 import { nowIso, parseJson } from '../util.ts';
 import { getUserById } from './users.ts';
 
@@ -17,7 +17,7 @@ interface CommentRow {
   text: string;
   created_at: string;
   updated_at: string;
-  resolved: number;
+  resolved: boolean;
   resolved_by_user_id: string | null;
   resolved_at: string | null;
   pin_x: number | null;
@@ -29,10 +29,10 @@ interface CommentRow {
   replies_json: string;
 }
 
-function rowToComment(r: CommentRow): Comment {
-  const author = getUserById(r.author_user_id);
+async function rowToComment(r: CommentRow): Promise<Comment> {
+  const author = await getUserById(r.author_user_id);
   const pin: CommentPin | undefined =
-    r.pin_x != null && r.pin_y != null ? { x: r.pin_x, y: r.pin_y } : undefined;
+    r.pin_x != null && r.pin_y != null ? { x: Number(r.pin_x), y: Number(r.pin_y) } : undefined;
   const anchor: CommentAnchor | undefined = r.anchor_section
     ? {
         sectionId: r.anchor_section,
@@ -53,7 +53,7 @@ function rowToComment(r: CommentRow): Comment {
     text: r.text,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
-    resolved: r.resolved === 1,
+    resolved: r.resolved === true,
     resolvedByUserId: r.resolved_by_user_id ?? undefined,
     resolvedAt: r.resolved_at ?? undefined,
     pin,
@@ -63,17 +63,16 @@ function rowToComment(r: CommentRow): Comment {
   };
 }
 
-export function listCommentsForBoard(boardId: string): Comment[] {
-  const rows = db
-    .prepare(`SELECT * FROM comments WHERE board_id = ? ORDER BY created_at`)
-    .all(boardId) as CommentRow[];
-  return rows.map(rowToComment);
+export async function listCommentsForBoard(boardId: string): Promise<Comment[]> {
+  const rows = await query<CommentRow>(
+    `SELECT * FROM comments WHERE board_id = $1 ORDER BY created_at`,
+    [boardId],
+  );
+  return Promise.all(rows.map(rowToComment));
 }
 
-export function getCommentById(id: string): Comment | null {
-  const r = db.prepare(`SELECT * FROM comments WHERE id = ?`).get(id) as
-    | CommentRow
-    | undefined;
+export async function getCommentById(id: string): Promise<Comment | null> {
+  const r = await queryOne<CommentRow>(`SELECT * FROM comments WHERE id = $1`, [id]);
   return r ? rowToComment(r) : null;
 }
 
@@ -89,29 +88,29 @@ export interface CommentInsert {
   target?: CommentTarget;
 }
 
-export function insertComment(c: CommentInsert): Comment {
+export async function insertComment(c: CommentInsert): Promise<Comment> {
   const now = c.createdAt ?? nowIso();
-  db.prepare(
+  await exec(
     `INSERT INTO comments (id, board_id, frame_id, author_user_id, text, created_at, updated_at,
        resolved, pin_x, pin_y, anchor_section, anchor_line_start, anchor_line_end, target_json, replies_json)
-     VALUES (@id, @board_id, @frame_id, @author_user_id, @text, @created_at, @updated_at,
-       0, @pin_x, @pin_y, @anchor_section, @anchor_line_start, @anchor_line_end, @target_json, '[]')`,
-  ).run({
-    id: c.id,
-    board_id: c.boardId,
-    frame_id: c.frameId,
-    author_user_id: c.authorUserId,
-    text: c.text,
-    created_at: now,
-    updated_at: now,
-    pin_x: c.pin?.x ?? null,
-    pin_y: c.pin?.y ?? null,
-    anchor_section: c.anchor?.sectionId ?? null,
-    anchor_line_start: c.anchor?.lineStart ?? null,
-    anchor_line_end: c.anchor?.lineEnd ?? null,
-    target_json: c.target ? JSON.stringify(c.target) : null,
-  });
-  return getCommentById(c.id)!;
+     VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9, $10, $11, $12, $13, '[]')`,
+    [
+      c.id,
+      c.boardId,
+      c.frameId,
+      c.authorUserId,
+      c.text,
+      now,
+      now,
+      c.pin?.x ?? null,
+      c.pin?.y ?? null,
+      c.anchor?.sectionId ?? null,
+      c.anchor?.lineStart ?? null,
+      c.anchor?.lineEnd ?? null,
+      c.target ? JSON.stringify(c.target) : null,
+    ],
+  );
+  return (await getCommentById(c.id))!;
 }
 
 export interface CommentUpdate {
@@ -120,8 +119,11 @@ export interface CommentUpdate {
   resolvedByUserId?: string;
 }
 
-export function updateComment(id: string, patch: CommentUpdate): Comment | null {
-  const existing = getCommentById(id);
+export async function updateComment(
+  id: string,
+  patch: CommentUpdate,
+): Promise<Comment | null> {
+  const existing = await getCommentById(id);
   if (!existing) return null;
   const now = nowIso();
   const resolved = patch.resolved ?? existing.resolved;
@@ -133,36 +135,35 @@ export function updateComment(id: string, patch: CommentUpdate): Comment | null 
   const resolvedBy = patch.resolved
     ? patch.resolvedByUserId ?? existing.resolvedByUserId ?? null
     : null;
-  db.prepare(
+  await exec(
     `UPDATE comments SET
-       text = COALESCE(?, text),
-       resolved = ?,
-       resolved_by_user_id = ?,
-       resolved_at = ?,
-       updated_at = ?
-     WHERE id = ?`,
-  ).run(
-    patch.text ?? null,
-    resolved ? 1 : 0,
-    resolvedBy,
-    resolvedAt,
-    now,
-    id,
+       text = COALESCE($1, text),
+       resolved = $2,
+       resolved_by_user_id = $3,
+       resolved_at = $4,
+       updated_at = $5
+     WHERE id = $6`,
+    [patch.text ?? null, resolved, resolvedBy, resolvedAt, now, id],
   );
   return getCommentById(id);
 }
 
-export function addReply(commentId: string, reply: CommentReply): Comment | null {
-  const existing = getCommentById(commentId);
+export async function addReply(
+  commentId: string,
+  reply: CommentReply,
+): Promise<Comment | null> {
+  const existing = await getCommentById(commentId);
   if (!existing) return null;
   const replies = [...existing.replies, reply];
-  db.prepare(
-    `UPDATE comments SET replies_json = ?, updated_at = ? WHERE id = ?`,
-  ).run(JSON.stringify(replies), nowIso(), commentId);
+  await exec(`UPDATE comments SET replies_json = $1, updated_at = $2 WHERE id = $3`, [
+    JSON.stringify(replies),
+    nowIso(),
+    commentId,
+  ]);
   return getCommentById(commentId);
 }
 
-export function deleteComment(id: string): boolean {
-  const info = db.prepare(`DELETE FROM comments WHERE id = ?`).run(id);
-  return info.changes > 0;
+export async function deleteComment(id: string): Promise<boolean> {
+  const changes = await exec(`DELETE FROM comments WHERE id = $1`, [id]);
+  return changes > 0;
 }

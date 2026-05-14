@@ -1,4 +1,4 @@
-// Tool: foldo_replay_recipe — replay a UI recipe against a running app and
+// Tool: foldo_replay_recipe, replay a UI recipe against a running app and
 // report whether the end state was reached. For the prototype we always
 // return ok=true; a real impl would drive Playwright through the steps.
 

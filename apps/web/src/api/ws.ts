@@ -31,6 +31,10 @@ const RECONNECT_BASE_MS = 200;
 const RECONNECT_MAX_MS = 5_000;
 
 function wsBaseFromApi(apiBase: string): string {
+  // Allow an explicit ws/wss override (useful when WS is behind a different
+  // hostname/proxy than the REST API).
+  const explicit = (import.meta.env.VITE_WS_URL as string | undefined) ?? '';
+  if (explicit) return explicit.replace(/\/+$/, '');
   // http://… → ws://… ; https://… → wss://…
   if (apiBase.startsWith('https://')) return 'wss://' + apiBase.slice(8);
   if (apiBase.startsWith('http://')) return 'ws://' + apiBase.slice(7);
@@ -106,7 +110,7 @@ export class FoldoWsClient {
       this.reconnectAttempt = 0;
       this.missedPongs = 0;
       this.setStatus('open');
-      // (re)introduce ourselves — server replies with `welcome` snapshot
+      // (re)introduce ourselves, server replies with `welcome` snapshot
       const hello: ClientMessage = {
         type: 'hello',
         boardId: this.cfg.boardId,
@@ -210,7 +214,7 @@ export class FoldoWsClient {
       this.pongTimer = setTimeout(() => {
         this.missedPongs += 1;
         if (this.missedPongs >= 2) {
-          // dead conn — force a reconnect cycle
+          // dead conn, force a reconnect cycle
           try {
             this.ws?.close();
           } catch {

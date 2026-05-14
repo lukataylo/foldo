@@ -8,6 +8,9 @@ interface Props {
   onMakeEdit: () => void;
   onReply?: (text: string) => Promise<void> | void;
   onResolve?: () => void;
+  /** Permission to delete this comment (author or editor). */
+  canDelete?: boolean;
+  onDelete?: () => Promise<void> | void;
 }
 
 export function CommentPopover({
@@ -17,6 +20,8 @@ export function CommentPopover({
   onMakeEdit,
   onReply,
   onResolve,
+  canDelete = false,
+  onDelete,
 }: Props) {
   const [replyText, setReplyText] = useState('');
   const [replyOpen, setReplyOpen] = useState(false);
@@ -174,6 +179,16 @@ export function CommentPopover({
         >
           {comment.resolved ? 'Unresolve' : 'Resolve'}
         </button>
+        {canDelete && onDelete && (
+          <button
+            onClick={() => {
+              if (confirm('Delete this comment?')) void onDelete();
+            }}
+            className="text-[11.5px] text-red-300 hover:text-red-200"
+          >
+            Delete
+          </button>
+        )}
         <button
           onClick={onMakeEdit}
           className="flex items-center gap-1.5 rounded-md bg-accent/15 px-2 py-1 text-[11.5px] font-medium text-accent hover:bg-accent/25"

@@ -41,7 +41,7 @@ export interface EditSimOutput {
   note: string;
 }
 
-/** Pseudo SHA — 7 lowercase hex-ish chars, mirroring how `git log --oneline` looks. */
+/** Pseudo SHA, 7 lowercase hex-ish chars, mirroring how `git log --oneline` looks. */
 export function makePseudoSha(): string {
   return nanoid(7).toLowerCase().replace(/[^a-z0-9]/g, '0');
 }
@@ -83,7 +83,7 @@ export function inferEdit(
   const app = appContent(baseFrame);
   const baseVariant = app?.variant;
 
-  // CTA branch — explicit trial / duration / 14-day intent on a primary CTA.
+  // CTA branch, explicit trial / duration / 14-day intent on a primary CTA.
   if (
     label.includes('cta-primary') &&
     /14[- ]?day|trial|duration/i.test(intent)
@@ -94,11 +94,11 @@ export function inferEdit(
         ctaSubtext: 'No credit card. Cancel anytime.',
       },
       commitMessage: `cta: ${shortIntent || 'extend trial to 14 days'}`,
-      note: 'matched cta-primary heuristic — extending trial copy and subtext',
+      note: 'matched cta-primary heuristic, extending trial copy and subtext',
     };
   }
 
-  // Pro tier highlight branch — soften / tone-down intent on a pro element.
+  // Pro tier highlight branch, soften / tone-down intent on a pro element.
   if (
     (label.includes('pro') &&
       /tone|quiet|softer|less|reduce|calm|subtle/i.test(intent)) ||
@@ -107,16 +107,16 @@ export function inferEdit(
     return {
       overrides: { proGradientToned: true },
       commitMessage: `pricing: ${shortIntent || 'soften pro tier gradient'}`,
-      note: 'matched pro-highlight heuristic — toning down the pro gradient',
+      note: 'matched pro-highlight heuristic, toning down the pro gradient',
     };
   }
 
-  // Fallback — no override, but still produce a frame so the canvas shows progress.
+  // Fallback, no override, but still produce a frame so the canvas shows progress.
   return {
     overrides: {},
     commitMessage: `chore: ${shortIntent || 'tweak per Claude Code prompt'}`,
     note:
-      'no heuristic match — emitting a placeholder frame; real claude CLI would edit code',
+      'no heuristic match, emitting a placeholder frame; real claude CLI would edit code',
   };
 }
 

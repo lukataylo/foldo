@@ -1,7 +1,7 @@
-// WebSocket protocol — bidirectional, JSON-over-WS.
+// WebSocket protocol, bidirectional, JSON-over-WS.
 // Two distinct WS endpoints:
-//   /ws            — browser clients (canvas)
-//   /ws/mcp        — in-directory MCP servers
+//   /ws           , browser clients (canvas)
+//   /ws/mcp       , in-directory MCP servers
 
 import type {
   Board,
@@ -22,6 +22,10 @@ import type {
   DispatchId,
   CommitSha,
   RecipeStep,
+  Test,
+  TestId,
+  TestSession,
+  TestSessionId,
 } from './domain.ts';
 
 // ---------- Client → Server (browser) ----------
@@ -84,6 +88,11 @@ export type ServerMessage =
   | { type: 'branch.updated'; branch: Branch }
   | { type: 'mcp.online'; boardId: BoardId; agentName: string }
   | { type: 'mcp.offline'; boardId: BoardId }
+  | { type: 'test.created'; test: Test }
+  | { type: 'test.updated'; test: Test }
+  | { type: 'test.deleted'; testId: TestId }
+  | { type: 'test.session.started'; testId: TestId; sessionId: TestSessionId }
+  | { type: 'test.session.completed'; testId: TestId; session: TestSession }
   | { type: 'pong'; ts: number }
   | { type: 'error'; code: string; message: string };
 

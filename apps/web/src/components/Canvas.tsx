@@ -31,7 +31,10 @@ interface Props {
   initialViewport?: ViewportState;
   contentBounds?: { x: number; y: number; width: number; height: number };
   onViewportChange?: (v: ViewportState) => void;
-  onBackgroundClick?: () => void;
+  onBackgroundClick?: (world: { x: number; y: number }) => void;
+  onBackgroundDragStart?: (world: { x: number; y: number }) => void;
+  onBackgroundDragMove?: (world: { x: number; y: number }) => void;
+  onBackgroundDragEnd?: (world: { x: number; y: number }) => void;
   /** Fires at most ~33Hz with the user's cursor in world coordinates. */
   onCursorMove?: (worldX: number, worldY: number) => void;
 }
@@ -44,6 +47,9 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     contentBounds,
     onViewportChange,
     onBackgroundClick,
+    onBackgroundDragStart,
+    onBackgroundDragMove,
+    onBackgroundDragEnd,
     onCursorMove,
   },
   ref,
@@ -180,6 +186,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
 
   // Pan dragging
   const handMode = tool === 'hand' || spaceDown;
+  const dragRef = useRef<{ pid: number; downAt: number; world: { x: number; y: number } } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => {
     // background click to deselect
     const isBg = (e.target as HTMLElement).dataset.canvasBg === 'true';
@@ -188,7 +195,15 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       (e.target as Element).setPointerCapture(e.pointerId);
       e.preventDefault();
     } else if (isBg) {
-      onBackgroundClick?.();
+      const world = screenToWorld(e.clientX, e.clientY);
+      if (onBackgroundDragStart) {
+        dragRef.current = { pid: e.pointerId, downAt: Date.now(), world };
+        (e.target as Element).setPointerCapture(e.pointerId);
+        onBackgroundDragStart(world);
+        e.preventDefault();
+      } else {
+        onBackgroundClick?.(world);
+      }
     }
   };
   const lastCursorRef = useRef<{ x: number; y: number } | null>(null);
@@ -205,6 +220,9 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     if (panning) {
       setViewport((v) => ({ ...v, x: v.x + e.movementX, y: v.y + e.movementY }));
     }
+    if (dragRef.current && onBackgroundDragMove) {
+      onBackgroundDragMove(screenToWorld(e.clientX, e.clientY));
+    }
     if (onCursorMove) {
       lastCursorRef.current = { x: e.clientX, y: e.clientY };
       if (cursorRafRef.current == null) {
@@ -216,6 +234,12 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     if (panning) {
       setPanning(false);
       (e.target as Element).releasePointerCapture?.(e.pointerId);
+    }
+    if (dragRef.current && dragRef.current.pid === e.pointerId) {
+      const world = screenToWorld(e.clientX, e.clientY);
+      onBackgroundDragEnd?.(world);
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+      dragRef.current = null;
     }
   };
 

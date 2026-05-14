@@ -11,3 +11,11 @@ tsconfig.tsbuildinfo
 apps/*/data/*.db
 apps/*/data/*.db-journal
 apps/extension/dist/
+.foldo-storage/
+
+# Playwright
+test-results/
+playwright-report/
+
+# Editor lock files
+*~lock~

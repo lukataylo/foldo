@@ -13,7 +13,7 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
-      // crxjs handles the entry inputs from the manifest — we only need to
+      // crxjs handles the entry inputs from the manifest, we only need to
       // ensure HMR-friendly output naming.
       output: {
         chunkFileNames: 'assets/chunk-[hash].js',

@@ -1,4 +1,4 @@
-// Foldo canvas — multiplayer, server-backed Figma-style review surface.
+// Foldo canvas, multiplayer, server-backed Figma-style review surface.
 //
 // Boot sequence:
 //   1. Parse the URL to find the desired board / frame / comment.
@@ -20,16 +20,23 @@ import type {
   Dispatch,
   Frame,
   ServerMessage,
+  TestSessionIssue,
   UserId,
 } from '@foldo/protocol';
 import { Canvas, type CanvasHandle, type ViewportState } from './components/Canvas';
 import { AppFrame } from './components/AppFrame';
+import { ArrowFrame } from './components/ArrowFrame';
+import { ImageFrame } from './components/ImageFrame';
 import { MarkdownFrame } from './components/MarkdownFrame';
+import { StickyFrame } from './components/StickyFrame';
+import { TestSummaryFrame } from './components/TestSummaryFrame';
+import { TestSessionFrame } from './components/TestSessionFrame';
 import { TopBar } from './components/TopBar';
 import { LeftRail } from './components/LeftRail';
 import { ZoomControl } from './components/ZoomControl';
 import { EditPanel } from './components/EditPanel';
 import { CaptureModal } from './components/CaptureModal';
+import { TestsPanel } from './components/TestsPanel';
 import { Connectors } from './components/Connectors';
 import { CommentPopover } from './components/CommentPopover';
 import { CursorLayer } from './multiplayer/CursorLayer';
@@ -41,10 +48,12 @@ import { setAuth } from './api/client';
 import { listBoards, getBoard } from './api/boards';
 import {
   createComment as apiCreateComment,
+  deleteComment as apiDeleteComment,
   replyToComment as apiReplyToComment,
   updateComment as apiUpdateComment,
 } from './api/comments';
 import { createDispatch as apiCreateDispatch } from './api/dispatches';
+import { createFrame as apiCreateFrame } from './api/frames';
 import { FoldoWsClient, type WsStatus } from './api/ws';
 import {
   mockBoardSnapshot,
@@ -54,8 +63,30 @@ import {
 } from './data/mockData';
 import type { SelectedElement, Tool } from './types';
 
-const DEMO_USER_ID = readOrCreateDemoUserId();
-const DEMO_TOKEN = DEMO_USER_ID; // demo: token == userId
+interface StoredUser {
+  id: string;
+  name?: string;
+  initial?: string;
+  color?: string;
+  email?: string;
+}
+
+function readStoredAuth(): { userId: string; token: string } | null {
+  try {
+    const token = localStorage.getItem('foldo:token');
+    const userRaw = localStorage.getItem('foldo:user');
+    if (!token || !userRaw) return null;
+    const user = JSON.parse(userRaw) as StoredUser;
+    if (!user.id) return null;
+    return { userId: user.id, token };
+  } catch {
+    return null;
+  }
+}
+
+const REAL_AUTH = readStoredAuth();
+const DEMO_USER_ID = REAL_AUTH?.userId ?? readOrCreateDemoUserId();
+const DEMO_TOKEN = REAL_AUTH?.token ?? DEMO_USER_ID; // demo: token == userId
 setAuth(DEMO_USER_ID, DEMO_TOKEN);
 
 type BootState =
@@ -74,6 +105,7 @@ export default function App() {
     useState<SelectedElement | null>(null);
   const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [testsOpen, setTestsOpen] = useState(false);
   const [viewport, setViewport] = useState<ViewportState>({
     x: 0,
     y: 0,
@@ -140,7 +172,7 @@ export default function App() {
                 void getBoard(boardId!)
                   .then((fresh) => hydrateStoreFromRest(fresh, DEMO_USER_ID))
                   .catch(() => {
-                    /* ignore — WS will keep us live */
+                    /* ignore, WS will keep us live */
                   });
               }
               wasOpenOnce = true;
@@ -258,7 +290,7 @@ export default function App() {
     if (boot.kind !== 'ready' && boot.kind !== 'offline') return;
     if (!snap.hydrated) return;
     if (!route.frameId) {
-      // No focus — fit to all frames once.
+      // No focus, fit to all frames once.
       if (focusedFrameRef.current !== '__all__') {
         focusedFrameRef.current = '__all__';
         setTimeout(() => canvasRef.current?.zoomToFit(), 60);
@@ -416,7 +448,7 @@ export default function App() {
   const handleDropPin = useCallback(
     async (frameId: string, xRel: number, yRel: number) => {
       if (boot.kind === 'offline') {
-        // Synthesise locally — server is not running.
+        // Synthesise locally, server is not running.
         const optimistic: Comment = {
           id: `c-local-${Date.now()}`,
           boardId: snap.board?.id ?? MOCK_BOARD_ID,
@@ -509,6 +541,48 @@ export default function App() {
     setCommentPopover(null);
   }, [commentPopover, snap.comments, snap.frames, setSelectedElement]);
 
+  // "Make this an edit" from a test_session synthesis issue: drop a comment on
+  // the session frame carrying the issue text, so it flows into the existing
+  // comment → dispatch loop.
+  const onMakeEditFromIssue = useCallback(
+    async (frame: Frame, issue: TestSessionIssue) => {
+      const text = `From testing — ${issue.text}`;
+      if (boot.kind === 'offline') {
+        const optimistic: Comment = {
+          id: `c-local-${Date.now()}`,
+          boardId: snap.board?.id ?? MOCK_BOARD_ID,
+          frameId: frame.id,
+          authorUserId: DEMO_USER_ID,
+          authorName: 'You',
+          authorInitial: 'Y',
+          authorColor: '#7fd49a',
+          text,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          resolved: false,
+          replies: [],
+        };
+        boardStore.upsertComment(optimistic);
+        showToast(setToast, 'Issue added as a comment');
+        return;
+      }
+      try {
+        const body: CreateCommentRequest = {
+          boardId: snap.board?.id ?? '',
+          frameId: frame.id,
+          text,
+        };
+        const c = await apiCreateComment(body);
+        boardStore.upsertComment(c);
+        showToast(setToast, 'Issue added as a comment');
+      } catch (e) {
+        console.warn('[foldo] make-edit-from-issue failed', e);
+        showToast(setToast, 'Failed to add comment');
+      }
+    },
+    [boot.kind, snap.board?.id],
+  );
+
   const onReplyToComment = useCallback(
     async (commentId: string, text: string) => {
       if (boot.kind === 'offline') {
@@ -556,6 +630,24 @@ export default function App() {
         boardStore.upsertComment(updated);
       } catch (e) {
         console.warn('[foldo] resolve failed', e);
+      }
+    },
+    [boot.kind],
+  );
+
+  const onDeleteComment = useCallback(
+    async (commentId: string) => {
+      const c = boardStore.getSnapshot().comments.get(commentId);
+      if (!c) return;
+      boardStore.removeComment(commentId);
+      setCommentPopover(null);
+      if (boot.kind === 'offline') return;
+      try {
+        await apiDeleteComment(commentId);
+      } catch (e) {
+        console.warn('[foldo] delete comment failed', e);
+        // Re-insert on failure so UI doesn't silently lose state.
+        boardStore.upsertComment(c);
       }
     },
     [boot.kind],
@@ -630,7 +722,7 @@ export default function App() {
     }
   }, [activeDispatch, snap.frames, snap.board, navigate, fitToFrame]);
 
-  // Auto-pan to the new frame once a dispatch completes — mirrors the
+  // Auto-pan to the new frame once a dispatch completes, mirrors the
   // offline-mode behavior so the demo's "watch new frame appear" beat works
   // without the user clicking "Jump to it".
   const autoJumpedDispatchRef = useRef<string | null>(null);
@@ -658,6 +750,155 @@ export default function App() {
       if (snap.board) navigate({ boardId: snap.board.id, frameId: frame.id });
     },
     [snap.board, navigate, fitToFrame],
+  );
+
+  // ---------- new-frame tools (sticky / arrow / image) ----------
+
+  const arrowDraftRef = useRef<{
+    startX: number;
+    startY: number;
+    endX: number;
+    endY: number;
+  } | null>(null);
+  const [arrowDraft, setArrowDraft] = useState<typeof arrowDraftRef.current>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const imagePendingPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  const ensureCanvasBranch = useCallback((): Branch | null => {
+    if (!snap.board) return null;
+    // Prefer the captures branch; if it doesn't exist, fall back to the first.
+    const captures = snap.branches.get('captures');
+    if (captures) return captures;
+    const first = snap.branches.values().next().value as Branch | undefined;
+    return first ?? null;
+  }, [snap.board, snap.branches]);
+
+  const createStickyFrame = useCallback(
+    async (pos: { x: number; y: number }) => {
+      const board = snap.board;
+      const branch = ensureCanvasBranch();
+      if (!board || !branch) return;
+      const now = new Date().toISOString();
+      const W = 220;
+      const H = 180;
+      try {
+        const frame = await apiCreateFrame({
+          boardId: board.id,
+          branchId: branch.id,
+          commitSha: branch.headSha,
+          commitMessage: 'sticky note',
+          kind: 'sticky',
+          position: { x: pos.x - W / 2, y: pos.y - H / 2 },
+          size: { width: W, height: H },
+          content: { kind: 'sticky', body: '', color: 'yellow' },
+        });
+        boardStore.upsertFrame(frame);
+        setTool('select');
+      } catch (err) {
+        console.warn('[foldo] sticky create failed', err);
+      }
+    },
+    [snap.board, ensureCanvasBranch],
+  );
+
+  const createArrowFrame = useCallback(
+    async (startX: number, startY: number, endX: number, endY: number) => {
+      const board = snap.board;
+      const branch = ensureCanvasBranch();
+      if (!board || !branch) return;
+      const minX = Math.min(startX, endX);
+      const minY = Math.min(startY, endY);
+      const w = Math.max(Math.abs(endX - startX), 40);
+      const h = Math.max(Math.abs(endY - startY), 40);
+      try {
+        const frame = await apiCreateFrame({
+          boardId: board.id,
+          branchId: branch.id,
+          commitSha: branch.headSha,
+          commitMessage: 'arrow',
+          kind: 'arrow',
+          position: { x: minX, y: minY },
+          size: { width: w, height: h },
+          content: {
+            kind: 'arrow',
+            from: { x: startX - minX, y: startY - minY },
+            to: { x: endX - minX, y: endY - minY },
+            color: '#111111',
+            thickness: 2.5,
+          },
+        });
+        boardStore.upsertFrame(frame);
+        setTool('select');
+      } catch (err) {
+        console.warn('[foldo] arrow create failed', err);
+      }
+    },
+    [snap.board, ensureCanvasBranch],
+  );
+
+  const createImageFrame = useCallback(
+    async (pos: { x: number; y: number }, dataUrl: string, name?: string) => {
+      const board = snap.board;
+      const branch = ensureCanvasBranch();
+      if (!board || !branch) return;
+      // Resolve natural dimensions before placing, so the frame matches the image's ratio.
+      const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+        const img = new Image();
+        img.onload = () =>
+          resolve({ w: img.naturalWidth || 480, h: img.naturalHeight || 320 });
+        img.onerror = () => resolve({ w: 480, h: 320 });
+        img.src = dataUrl;
+      });
+      const maxW = 600;
+      const scale = dims.w > maxW ? maxW / dims.w : 1;
+      const W = Math.round(dims.w * scale);
+      const H = Math.round(dims.h * scale);
+      try {
+        const frame = await apiCreateFrame({
+          boardId: board.id,
+          branchId: branch.id,
+          commitSha: branch.headSha,
+          commitMessage: name ? `image: ${name}` : 'image upload',
+          kind: 'image',
+          position: { x: pos.x - W / 2, y: pos.y - H / 2 },
+          size: { width: W, height: H },
+          content: { kind: 'image', dataUrl, alt: name },
+        });
+        boardStore.upsertFrame(frame);
+        setTool('select');
+      } catch (err) {
+        console.warn('[foldo] image create failed', err);
+      }
+    },
+    [snap.board, ensureCanvasBranch],
+  );
+
+  const openImagePicker = useCallback((world: { x: number; y: number }) => {
+    imagePendingPosRef.current = world;
+    imageInputRef.current?.click();
+  }, []);
+
+  const onImageFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      const pos = imagePendingPosRef.current;
+      imagePendingPosRef.current = null;
+      if (!file || !pos) return;
+      // Reject anything over 2MB so we don't bloat content_json.
+      if (file.size > 2 * 1024 * 1024) {
+        showToast(setToast, 'Image too large (2 MB max for the MVP).');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+        if (!dataUrl) return;
+        void createImageFrame(pos, dataUrl, file.name);
+      };
+      reader.readAsDataURL(file);
+    },
+    [createImageFrame],
   );
 
   // ---------- popover screen-positioning ----------
@@ -695,7 +936,15 @@ export default function App() {
         contentBounds={bounds}
         onViewportChange={setViewport}
         onCursorMove={onCursorMove}
-        onBackgroundClick={() => {
+        onBackgroundClick={(world) => {
+          if (tool === 'sticky') {
+            void createStickyFrame(world);
+            return;
+          }
+          if (tool === 'image') {
+            openImagePicker(world);
+            return;
+          }
           if (tool !== 'comment') {
             setSelectedElement(null);
             setCommentPopover(null);
@@ -704,9 +953,75 @@ export default function App() {
             }
           }
         }}
+        onBackgroundDragStart={
+          tool === 'arrow'
+            ? (world) => {
+                arrowDraftRef.current = {
+                  startX: world.x,
+                  startY: world.y,
+                  endX: world.x,
+                  endY: world.y,
+                };
+                setArrowDraft(arrowDraftRef.current);
+              }
+            : undefined
+        }
+        onBackgroundDragMove={
+          tool === 'arrow'
+            ? (world) => {
+                if (!arrowDraftRef.current) return;
+                arrowDraftRef.current = {
+                  ...arrowDraftRef.current,
+                  endX: world.x,
+                  endY: world.y,
+                };
+                setArrowDraft({ ...arrowDraftRef.current });
+              }
+            : undefined
+        }
+        onBackgroundDragEnd={
+          tool === 'arrow'
+            ? (world) => {
+                const d = arrowDraftRef.current;
+                arrowDraftRef.current = null;
+                setArrowDraft(null);
+                if (!d) return;
+                const dist = Math.hypot(world.x - d.startX, world.y - d.startY);
+                if (dist < 24) return; // ignore stray taps
+                void createArrowFrame(d.startX, d.startY, world.x, world.y);
+              }
+            : undefined
+        }
       >
         <Connectors frames={frames} />
         <SelectionGhosts meUserId={snap.meUserId} />
+        {arrowDraft && (
+          <svg
+            style={{
+              position: 'absolute',
+              left: Math.min(arrowDraft.startX, arrowDraft.endX) - 40,
+              top: Math.min(arrowDraft.startY, arrowDraft.endY) - 40,
+              width:
+                Math.abs(arrowDraft.endX - arrowDraft.startX) + 80,
+              height:
+                Math.abs(arrowDraft.endY - arrowDraft.startY) + 80,
+              pointerEvents: 'none',
+              overflow: 'visible',
+            }}
+          >
+            <line
+              x1={arrowDraft.startX - (Math.min(arrowDraft.startX, arrowDraft.endX) - 40)}
+              y1={arrowDraft.startY - (Math.min(arrowDraft.startY, arrowDraft.endY) - 40)}
+              x2={arrowDraft.endX - (Math.min(arrowDraft.startX, arrowDraft.endX) - 40)}
+              y2={arrowDraft.endY - (Math.min(arrowDraft.startY, arrowDraft.endY) - 40)}
+              stroke="#111111"
+              strokeWidth={2.5}
+              strokeDasharray="6 4"
+              strokeLinecap="round"
+              opacity={0.6}
+            />
+          </svg>
+        )}
         {frames.map((f) => {
           const branch = snap.branches.get(f.branchId);
           if (!branch) return null;
@@ -729,6 +1044,42 @@ export default function App() {
               />
             );
           }
+          if (f.kind === 'sticky') {
+            return (
+              <MemoStickyFrame key={f.id} frame={f} branch={branch} zoom={viewport.zoom} />
+            );
+          }
+          if (f.kind === 'arrow') {
+            return (
+              <MemoArrowFrame key={f.id} frame={f} branch={branch} zoom={viewport.zoom} />
+            );
+          }
+          if (f.kind === 'image') {
+            return (
+              <MemoImageFrame key={f.id} frame={f} branch={branch} zoom={viewport.zoom} />
+            );
+          }
+          if (f.kind === 'test_summary') {
+            return (
+              <MemoTestSummaryFrame
+                key={f.id}
+                frame={f}
+                branch={branch}
+                zoom={viewport.zoom}
+              />
+            );
+          }
+          if (f.kind === 'test_session') {
+            return (
+              <MemoTestSessionFrame
+                key={f.id}
+                frame={f}
+                branch={branch}
+                zoom={viewport.zoom}
+                onMakeEditFromIssue={onMakeEditFromIssue}
+              />
+            );
+          }
           return (
             <MemoMarkdownFrame
               key={f.id}
@@ -738,6 +1089,7 @@ export default function App() {
               comments={comments}
               tool={tool}
               inViewport={inViewport}
+              zoom={viewport.zoom}
               onSelectMdLine={(frameId, sectionId, lineIndex, label) => {
                 const ff = snap.frames.get(frameId);
                 if (!ff || ff.content.kind !== 'markdown') return;
@@ -770,6 +1122,7 @@ export default function App() {
           }
         }}
         onCapture={() => setCaptureOpen(true)}
+        onOpenTests={() => setTestsOpen(true)}
         onSwitchUser={(uid) => {
           setDemoUserId(uid);
           // Reload so the new identity propagates to bearer + WS handshake.
@@ -779,6 +1132,13 @@ export default function App() {
         offline={boot.kind === 'offline'}
       />
       <LeftRail tool={tool} onChange={setTool} />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        style={{ position: 'fixed', left: -9999, top: -9999, opacity: 0 }}
+        onChange={onImageFileChange}
+      />
       <ZoomControl
         zoom={viewport.zoom}
         onZoomIn={() => canvasRef.current?.zoomIn()}
@@ -819,6 +1179,10 @@ export default function App() {
           onMakeEdit={onMakeEditFromComment}
           onReply={(text) => onReplyToComment(popoverComment.id, text)}
           onResolve={() => onResolveComment(popoverComment.id)}
+          canDelete={
+            popoverComment.authorUserId === snap.meUserId || boot.kind === 'offline'
+          }
+          onDelete={() => onDeleteComment(popoverComment.id)}
         />
       )}
 
@@ -828,6 +1192,12 @@ export default function App() {
         meUserId={snap.meUserId}
         onClose={() => setCaptureOpen(false)}
         onComplete={onCaptureComplete}
+      />
+
+      <TestsPanel
+        open={testsOpen}
+        boardId={snap.board?.id ?? null}
+        onClose={() => setTestsOpen(false)}
       />
 
       {boot.kind === 'loading' && <BootLoadingOverlay />}
@@ -854,6 +1224,11 @@ export default function App() {
 
 const MemoAppFrame = memo(AppFrame);
 const MemoMarkdownFrame = memo(MarkdownFrame);
+const MemoStickyFrame = memo(StickyFrame);
+const MemoArrowFrame = memo(ArrowFrame);
+const MemoImageFrame = memo(ImageFrame);
+const MemoTestSummaryFrame = memo(TestSummaryFrame);
+const MemoTestSessionFrame = memo(TestSessionFrame);
 
 // ----- bootstrapping helpers -----
 
@@ -898,6 +1273,7 @@ function hydrateStoreFromRest(
     presence,
     dispatches: new Map(),
     mcpConnected: snapshot.mcpConnected,
+    activeTestSessions: new Set(),
   });
 }
 
@@ -921,6 +1297,7 @@ function hydrateStoreFromMock() {
     presence,
     dispatches: new Map(),
     mcpConnected: false,
+    activeTestSessions: new Set(),
   });
 }
 
@@ -1162,7 +1539,7 @@ function FirstRunHint({ count }: { count: number }) {
         <span className="rounded bg-accent/15 px-1 py-px font-medium text-accent">
           Send to Claude Code
         </span>{' '}
-        — a new frame appears connected to its parent.
+        . A new frame appears connected to its parent.
       </div>
       <div className="mt-2 text-[11px] text-inkFaint">
         {count} frames · scroll to pan · ⌘+scroll to zoom

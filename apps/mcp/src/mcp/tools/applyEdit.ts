@@ -1,4 +1,4 @@
-// Tool: foldo_apply_edit_prompt — the headline tool. Given an intent and a
+// Tool: foldo_apply_edit_prompt, the headline tool. Given an intent and a
 // target, generate a follow-up frame on the canvas representing the edit's
 // result. Real impl would shell out to the `claude` CLI; the prototype uses
 // the shared editSim logic so the cloud sees a sensible new frame.
@@ -106,7 +106,7 @@ function fakeBaseFromArgs(args: ApplyEditArgs): Frame {
 }
 
 export interface ApplyEditExtras {
-  /** Resulting synthetic frame — used by the WS dispatch handler. */
+  /** Resulting synthetic frame, used by the WS dispatch handler. */
   resultFrame: Frame;
 }
 

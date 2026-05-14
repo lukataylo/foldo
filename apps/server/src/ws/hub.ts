@@ -61,7 +61,7 @@ class Hub {
       try {
         conn.socket.send(payload);
       } catch {
-        // ignore — connection may be closing
+        // ignore, connection may be closing
       }
     }
   }

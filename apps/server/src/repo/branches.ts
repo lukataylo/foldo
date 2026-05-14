@@ -1,5 +1,5 @@
 import type { Branch, Commit } from '@foldo/protocol';
-import { db } from '../db.ts';
+import { query, queryOne, exec } from '../db.ts';
 import { nowIso } from '../util.ts';
 
 interface BranchRow {
@@ -30,51 +30,53 @@ function rowToBranch(r: BranchRow): Branch {
   };
 }
 
-export function listBranchesForBoard(boardId: string): Branch[] {
-  const rows = db
-    .prepare(`SELECT * FROM branches WHERE board_id = ? ORDER BY created_at`)
-    .all(boardId) as BranchRow[];
+export async function listBranchesForBoard(boardId: string): Promise<Branch[]> {
+  const rows = await query<BranchRow>(
+    `SELECT * FROM branches WHERE board_id = $1 ORDER BY created_at`,
+    [boardId],
+  );
   return rows.map(rowToBranch);
 }
 
-export function getBranchById(id: string): Branch | null {
-  const r = db.prepare(`SELECT * FROM branches WHERE id = ?`).get(id) as
-    | BranchRow
-    | undefined;
+export async function getBranchById(id: string): Promise<Branch | null> {
+  const r = await queryOne<BranchRow>(`SELECT * FROM branches WHERE id = $1`, [id]);
   return r ? rowToBranch(r) : null;
 }
 
-export function upsertBranch(b: Branch): Branch {
-  db.prepare(
+export async function upsertBranch(b: Branch): Promise<Branch> {
+  await exec(
     `INSERT INTO branches (id, board_id, name, authored_by, author_user_id, agent_name, color, head_sha, created_at, updated_at)
-     VALUES (@id, @board_id, @name, @authored_by, @author_user_id, @agent_name, @color, @head_sha, @created_at, @updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT(id) DO UPDATE SET
-       name = excluded.name,
-       authored_by = excluded.authored_by,
-       author_user_id = excluded.author_user_id,
-       agent_name = excluded.agent_name,
-       color = excluded.color,
-       head_sha = excluded.head_sha,
-       updated_at = excluded.updated_at`,
-  ).run({
-    id: b.id,
-    board_id: b.boardId,
-    name: b.name,
-    authored_by: b.authoredBy,
-    author_user_id: b.authorUserId,
-    agent_name: b.agentName ?? null,
-    color: b.color,
-    head_sha: b.headSha,
-    created_at: b.createdAt,
-    updated_at: b.updatedAt,
-  });
+       name = EXCLUDED.name,
+       authored_by = EXCLUDED.authored_by,
+       author_user_id = EXCLUDED.author_user_id,
+       agent_name = EXCLUDED.agent_name,
+       color = EXCLUDED.color,
+       head_sha = EXCLUDED.head_sha,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      b.id,
+      b.boardId,
+      b.name,
+      b.authoredBy,
+      b.authorUserId,
+      b.agentName ?? null,
+      b.color,
+      b.headSha,
+      b.createdAt,
+      b.updatedAt,
+    ],
+  );
   return b;
 }
 
-export function updateBranchHead(branchId: string, sha: string): void {
-  db.prepare(
-    `UPDATE branches SET head_sha = ?, updated_at = ? WHERE id = ?`,
-  ).run(sha, nowIso(), branchId);
+export async function updateBranchHead(branchId: string, sha: string): Promise<void> {
+  await exec(`UPDATE branches SET head_sha = $1, updated_at = $2 WHERE id = $3`, [
+    sha,
+    nowIso(),
+    branchId,
+  ]);
 }
 
 interface CommitRow {
@@ -97,28 +99,20 @@ function rowToCommit(r: CommitRow): Commit {
   };
 }
 
-export function upsertCommit(c: Commit): Commit {
-  db.prepare(
+export async function upsertCommit(c: Commit): Promise<Commit> {
+  await exec(
     `INSERT INTO commits (sha, branch_id, message, author_user_id, parent_sha, created_at)
-     VALUES (@sha, @branch_id, @message, @author_user_id, @parent_sha, @created_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT(sha) DO UPDATE SET
-       message = excluded.message,
-       author_user_id = excluded.author_user_id,
-       parent_sha = excluded.parent_sha`,
-  ).run({
-    sha: c.sha,
-    branch_id: c.branchId,
-    message: c.message,
-    author_user_id: c.authorUserId,
-    parent_sha: c.parentSha ?? null,
-    created_at: c.createdAt,
-  });
+       message = EXCLUDED.message,
+       author_user_id = EXCLUDED.author_user_id,
+       parent_sha = EXCLUDED.parent_sha`,
+    [c.sha, c.branchId, c.message, c.authorUserId, c.parentSha ?? null, c.createdAt],
+  );
   return c;
 }
 
-export function getCommit(sha: string): Commit | null {
-  const r = db.prepare(`SELECT * FROM commits WHERE sha = ?`).get(sha) as
-    | CommitRow
-    | undefined;
+export async function getCommit(sha: string): Promise<Commit | null> {
+  const r = await queryOne<CommitRow>(`SELECT * FROM commits WHERE sha = $1`, [sha]);
   return r ? rowToCommit(r) : null;
 }

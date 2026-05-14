@@ -1,0 +1,44 @@
+# Keep the docker build context small + deterministic.
+# Every nested node_modules + every build artifact is rebuilt inside the image.
+
+**/node_modules
+**/dist
+**/build
+**/.vite
+**/.turbo
+
+# Local DBs MUST NOT ship — they contain seed data and would block volume mount
+# behaviour on first boot.
+apps/server/data
+apps/*/data/*.db
+apps/*/data/*.db-shm
+apps/*/data/*.db-wal
+
+# VCS + editor + OS junk
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local env files — these are intentionally NOT baked into images.
+.env
+.env.local
+.env.*.local
+
+# TypeScript incremental build files
+**/tsconfig.tsbuildinfo
+
+# Extension packaging artifacts
+apps/extension/dist
+
+# Docs/images aren't needed in the image
+docs
+images
+README.md
+LICENSE

@@ -7,6 +7,7 @@ import type {
 } from '@foldo/protocol';
 import { resolveUserFromToken } from '../auth.ts';
 import { getBoardById } from '../repo/boards.ts';
+import { isMember } from '../repo/members.ts';
 import { hub, type BrowserConn } from './hub.ts';
 import { nowIso } from '../util.ts';
 import { isMcpConnected } from './mcp.ts';
@@ -14,14 +15,14 @@ import { isMcpConnected } from './mcp.ts';
 const CURSOR_MIN_INTERVAL_MS = 33; // ~30Hz
 
 export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
-  app.get('/ws', { websocket: true }, (socket, req) => {
+  app.get('/ws', { websocket: true }, async (socket, req) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const boardId = url.searchParams.get('boardId');
     const userId = url.searchParams.get('userId');
     const token = url.searchParams.get('token');
 
-    const user = resolveUserFromToken(token);
-    const board = boardId ? getBoardById(boardId) : null;
+    const user = await resolveUserFromToken(token);
+    const board = boardId ? await getBoardById(boardId) : null;
 
     if (!user || !board || !userId) {
       sendSafe(socket, {
@@ -30,6 +31,16 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
         message: 'invalid token, board, or userId',
       });
       socket.close(1008, 'unauthorized');
+      return;
+    }
+
+    if (!(await isMember(board.id, user.id))) {
+      sendSafe(socket, {
+        type: 'error',
+        code: 'UNAUTHORIZED',
+        message: 'not a member of this board',
+      });
+      socket.close(1008, 'not a member');
       return;
     }
 
@@ -96,7 +107,7 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
         // Register with hub
         hub.subscribe(conn);
 
-        // Build presence users for welcome — start with everyone currently connected on this board
+        // Build presence users for welcome, start with everyone currently connected on this board
         const others = hub
           .connectionsOnBoard(board.id)
           .map((c) => c.presence);
@@ -147,7 +158,7 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'viewport.update': {
-          // Single broadcast — followers receive it through the standard
+          // Single broadcast, followers receive it through the standard
           // `presence.viewport` event like everyone else.
           hub.broadcast(
             board.id,

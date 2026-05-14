@@ -14,8 +14,29 @@ import {
   insertComment,
   updateComment,
 } from '../repo/comments.ts';
+import { canEditBoard, isMember } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { newId, nowIso } from '../util.ts';
+
+async function requireEditor(userId: string, boardId: string): Promise<void> {
+  if (!(await canEditBoard(boardId, userId))) {
+    const err = new Error('Not a member of this board') as Error & {
+      statusCode?: number;
+    };
+    err.statusCode = 403;
+    throw err;
+  }
+}
+
+async function requireMember(userId: string, boardId: string): Promise<void> {
+  if (!(await isMember(boardId, userId))) {
+    const err = new Error('Not a member of this board') as Error & {
+      statusCode?: number;
+    };
+    err.statusCode = 403;
+    throw err;
+  }
+}
 
 export async function registerCommentRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: CreateCommentRequest }>('/api/comments', async (req, reply) => {
@@ -24,7 +45,9 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
     if (!body?.boardId || !body?.frameId || !body?.text) {
       return reply.code(400).send({ error: 'Invalid comment body', code: 'BAD_REQUEST' });
     }
-    const comment = insertComment({
+    // Comments require membership; even viewers can leave them in this MVP.
+    await requireMember(user.id, body.boardId);
+    const comment = await insertComment({
       id: newId('c'),
       boardId: body.boardId,
       frameId: body.frameId,
@@ -42,9 +65,13 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
     '/api/comments/:id',
     async (req, reply) => {
       const user = requireUser(req);
-      const existing = getCommentById(req.params.id);
+      const existing = await getCommentById(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'Comment not found', code: 'NOT_FOUND' });
-      const next = updateComment(req.params.id, {
+      // Either the author or any editor may edit/resolve.
+      if (existing.authorUserId !== user.id && !(await canEditBoard(existing.boardId, user.id))) {
+        return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' });
+      }
+      const next = await updateComment(req.params.id, {
         text: req.body?.text,
         resolved: req.body?.resolved,
         resolvedByUserId: user.id,
@@ -59,8 +86,9 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
     '/api/comments/:id/replies',
     async (req, reply) => {
       const user = requireUser(req);
-      const existing = getCommentById(req.params.id);
+      const existing = await getCommentById(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'Comment not found', code: 'NOT_FOUND' });
+      await requireMember(user.id, existing.boardId);
       if (!req.body?.text) {
         return reply.code(400).send({ error: 'Missing reply text', code: 'BAD_REQUEST' });
       }
@@ -73,7 +101,7 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
         text: req.body.text,
         createdAt: nowIso(),
       };
-      const updated = addReply(existing.id, replyObj);
+      const updated = await addReply(existing.id, replyObj);
       if (updated) {
         hub.broadcast(updated.boardId, {
           type: 'comment.reply.added',
@@ -86,10 +114,14 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
   );
 
   app.delete<{ Params: { id: string } }>('/api/comments/:id', async (req, reply) => {
-    requireUser(req);
-    const existing = getCommentById(req.params.id);
+    const user = requireUser(req);
+    const existing = await getCommentById(req.params.id);
     if (!existing) return reply.code(404).send({ error: 'Comment not found', code: 'NOT_FOUND' });
-    deleteComment(existing.id);
+    // Author or any editor.
+    if (existing.authorUserId !== user.id && !(await canEditBoard(existing.boardId, user.id))) {
+      return reply.code(403).send({ error: 'Forbidden', code: 'FORBIDDEN' });
+    }
+    await deleteComment(existing.id);
     hub.broadcast(existing.boardId, {
       type: 'comment.deleted',
       commentId: existing.id,

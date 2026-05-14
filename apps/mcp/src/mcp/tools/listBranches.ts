@@ -1,4 +1,4 @@
-// Tool: foldo_list_branches — return branches known locally. For the prototype
+// Tool: foldo_list_branches, return branches known locally. For the prototype
 // we return the three seed branches; a real impl would shell out to git and
 // reconcile with the cloud's branch repo.
 

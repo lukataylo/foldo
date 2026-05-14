@@ -9,6 +9,7 @@ import {
   insertDispatch,
   listDispatchesForBoard,
 } from '../repo/dispatches.ts';
+import { canEditBoard, isMember } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { simulateDispatch } from '../sim/dispatch.ts';
 import { isMcpConnected, routeDispatchToMcp } from '../ws/mcp.ts';
@@ -27,8 +28,11 @@ export async function registerDispatchRoutes(app: FastifyInstance): Promise<void
     ) {
       return reply.code(400).send({ error: 'Invalid dispatch body', code: 'BAD_REQUEST' });
     }
+    if (!(await canEditBoard(body.boardId, user.id))) {
+      return reply.code(403).send({ error: 'Not a member of this board', code: 'FORBIDDEN' });
+    }
 
-    const dispatch = insertDispatch({
+    const dispatch = await insertDispatch({
       id: newId('d'),
       boardId: body.boardId,
       frameId: body.frameId,
@@ -41,11 +45,9 @@ export async function registerDispatchRoutes(app: FastifyInstance): Promise<void
 
     hub.broadcast(dispatch.boardId, { type: 'dispatch.created', dispatch });
 
-    // Route to MCP if connected, otherwise simulate in-process.
     if (isMcpConnected(dispatch.boardId)) {
       routeDispatchToMcp(dispatch);
     } else {
-      // Fire-and-forget — don't await; the request returns immediately.
       void simulateDispatch(dispatch);
     }
 
@@ -53,21 +55,29 @@ export async function registerDispatchRoutes(app: FastifyInstance): Promise<void
   });
 
   app.get<{ Params: { id: string } }>('/api/dispatches/:id', async (req, reply) => {
-    const d = getDispatchById(req.params.id);
+    const me = requireUser(req);
+    const d = await getDispatchById(req.params.id);
     if (!d) return reply.code(404).send({ error: 'Dispatch not found', code: 'NOT_FOUND' });
+    if (!(await isMember(d.boardId, me.id))) {
+      return reply.code(404).send({ error: 'Dispatch not found', code: 'NOT_FOUND' });
+    }
     return reply.send(d);
   });
 
   app.get<{ Params: { id: string } }>('/api/boards/:id/dispatches', async (req, reply) => {
+    const me = requireUser(req);
+    if (!(await isMember(req.params.id, me.id))) {
+      return reply.code(404).send({ error: 'Board not found', code: 'NOT_FOUND' });
+    }
     return reply.send({
-      dispatches: listDispatchesForBoard(req.params.id),
+      dispatches: await listDispatchesForBoard(req.params.id),
     } satisfies ListDispatchesResponse);
   });
 
-  // Convenience alias used by the web client: GET /api/dispatches?boardId=…
   app.get<{ Querystring: { boardId?: string } }>(
     '/api/dispatches',
     async (req, reply) => {
+      const me = requireUser(req);
       const boardId = req.query?.boardId;
       if (!boardId) {
         return reply.code(400).send({
@@ -75,8 +85,11 @@ export async function registerDispatchRoutes(app: FastifyInstance): Promise<void
           code: 'BAD_REQUEST',
         });
       }
+      if (!(await isMember(boardId, me.id))) {
+        return reply.code(404).send({ error: 'Board not found', code: 'NOT_FOUND' });
+      }
       return reply.send({
-        dispatches: listDispatchesForBoard(boardId),
+        dispatches: await listDispatchesForBoard(boardId),
       } satisfies ListDispatchesResponse);
     },
   );

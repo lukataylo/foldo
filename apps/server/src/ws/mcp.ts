@@ -3,6 +3,7 @@ import type { WebSocket } from 'ws';
 import type {
   BoardId,
   Dispatch,
+  Frame,
   McpClientMessage,
   McpServerMessage,
 } from '@foldo/protocol';
@@ -12,11 +13,11 @@ import {
   addDispatchEvent,
   completeDispatch,
   failDispatch,
+  getDispatchById,
   setDispatchStatus,
 } from '../repo/dispatches.ts';
 import { insertFrame, getFrameById, listFramesForBoard } from '../repo/frames.ts';
 import { nowIso } from '../util.ts';
-import type { Frame } from '@foldo/protocol';
 
 interface McpConn {
   socket: WebSocket;
@@ -24,7 +25,6 @@ interface McpConn {
   agentName: string;
 }
 
-/** boardId → live MCP connection */
 const mcpByBoard: Map<BoardId, McpConn> = new Map();
 
 export function isMcpConnected(boardId: BoardId): boolean {
@@ -35,7 +35,6 @@ export function getMcpForBoard(boardId: BoardId): McpConn | undefined {
   return mcpByBoard.get(boardId);
 }
 
-/** Send a message to the MCP for a board, if connected. Returns true on send. */
 export function sendToMcp(boardId: BoardId, message: McpServerMessage): boolean {
   const conn = mcpByBoard.get(boardId);
   if (!conn) return false;
@@ -47,25 +46,20 @@ export function sendToMcp(boardId: BoardId, message: McpServerMessage): boolean 
   }
 }
 
-/** Route a dispatch to the MCP. Returns true if it was delivered. */
 export function routeDispatchToMcp(dispatch: Dispatch): boolean {
   return sendToMcp(dispatch.boardId, { type: 'dispatch.execute', dispatch });
 }
 
-/**
- * MCP-built result frames carry the variant/commit/overrides but typically
- * have (0,0) position because the MCP can't know the canvas layout. Look up
- * the dispatch's parent and re-anchor the child next to the rightmost sibling
- * in the same row on the same branch. Mirrors the in-process sim logic.
- */
-import { getDispatchById } from '../repo/dispatches.ts';
-
-function repositionResultFrame(result: Frame, dispatchId: string): Frame {
-  const dispatch = getDispatchById(dispatchId);
+async function repositionResultFrame(
+  result: Frame,
+  dispatchId: string,
+): Promise<Frame> {
+  const dispatch = await getDispatchById(dispatchId);
   if (!dispatch) return result;
-  const parent = getFrameById(dispatch.frameId);
+  const parent = await getFrameById(dispatch.frameId);
   if (!parent) return result;
-  const siblings = listFramesForBoard(parent.boardId).filter(
+  const all = await listFramesForBoard(parent.boardId);
+  const siblings = all.filter(
     (f) =>
       Math.abs(f.position.y - parent.position.y) < 1 &&
       f.branchId === parent.branchId,
@@ -88,13 +82,12 @@ function repositionResultFrame(result: Frame, dispatchId: string): Frame {
 }
 
 export async function registerMcpWs(app: FastifyInstance): Promise<void> {
-  app.get('/ws/mcp', { websocket: true }, (socket, req) => {
+  app.get('/ws/mcp', { websocket: true }, async (socket, req) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const token = url.searchParams.get('token');
     const boardId = url.searchParams.get('boardId');
-    const agentName = url.searchParams.get('agentName') ?? 'unknown-agent';
 
-    const user = resolveUserFromToken(token);
+    const user = await resolveUserFromToken(token);
     if (!user || !boardId) {
       try {
         socket.send(
@@ -114,7 +107,7 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
     let helloReceived = false;
     let registeredBoardId: BoardId | null = null;
 
-    socket.on('message', (raw: Buffer) => {
+    socket.on('message', async (raw: Buffer) => {
       let msg: McpClientMessage;
       try {
         msg = JSON.parse(raw.toString()) as McpClientMessage;
@@ -145,10 +138,9 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
         return;
       }
 
-      // Subsequent messages
       switch (msg.type) {
         case 'dispatch.ack': {
-          const d = setDispatchStatus(msg.dispatchId, 'sending');
+          const d = await setDispatchStatus(msg.dispatchId, 'sending');
           if (d) {
             hub.broadcast(d.boardId, {
               type: 'dispatch.status',
@@ -159,12 +151,11 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'dispatch.progress': {
-          // First progress event flips us into 'running'; subsequent ones just append.
-          const before = addDispatchEvent(msg.dispatchId, msg.event);
+          const before = await addDispatchEvent(msg.dispatchId, msg.event);
           if (!before) break;
           let d = before;
           if (d.status !== 'running' && d.status !== 'done' && d.status !== 'error') {
-            const promoted = setDispatchStatus(msg.dispatchId, 'running');
+            const promoted = await setDispatchStatus(msg.dispatchId, 'running');
             if (promoted) d = promoted;
           }
           hub.broadcast(d.boardId, {
@@ -176,12 +167,9 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'dispatch.completed': {
-          // The MCP doesn't know the parent frame's canvas position, so the
-          // result frame typically lands at (0,0). Re-position it next to the
-          // parent's rightmost row sibling before persisting.
-          const repositioned = repositionResultFrame(msg.resultFrame, msg.dispatchId);
-          insertFrame(repositioned);
-          const d = completeDispatch(
+          const repositioned = await repositionResultFrame(msg.resultFrame, msg.dispatchId);
+          await insertFrame(repositioned);
+          const d = await completeDispatch(
             msg.dispatchId,
             repositioned.id,
             msg.newCommitSha,
@@ -199,7 +187,7 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'dispatch.failed': {
-          const d = failDispatch(msg.dispatchId, msg.message);
+          const d = await failDispatch(msg.dispatchId, msg.message);
           if (d) {
             hub.broadcast(d.boardId, {
               type: 'dispatch.status',
@@ -211,12 +199,11 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'freeze.captured': {
-          insertFrame(msg.frame);
+          await insertFrame(msg.frame);
           hub.broadcast(msg.frame.boardId, { type: 'frame.added', frame: msg.frame });
           break;
         }
         case 'branches.snapshot': {
-          // Not strictly required for demo — could upsert branches here.
           break;
         }
         case 'pong': {
@@ -225,8 +212,6 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
         default:
           break;
       }
-      // Silence: setDispatchStatus is imported for future use
-      void setDispatchStatus;
     });
 
     socket.on('close', () => {

@@ -1,4 +1,4 @@
-// Local git operations. For the prototype most of this is mocked — we return
+// Local git operations. For the prototype most of this is mocked, we return
 // the three seed branches that the cloud already knows about. The real impl
 // would shell out to `git branch -a` (or use simple-git) and reconcile with
 // the cloud's branch repo.
@@ -13,7 +13,7 @@ function isoDays(daysAgo: number): string {
   return d.toISOString();
 }
 
-/** Seed branches that match what the cloud server seeds — same IDs, names,
+/** Seed branches that match what the cloud server seeds, same IDs, names,
  *  colors, and head SHAs so list_branches answers consistently. */
 export function listSeedBranches(boardId: BoardId): Branch[] {
   return [
@@ -75,7 +75,7 @@ export async function tryLocalBranches(): Promise<string[] | null> {
   }
 }
 
-/** Simulated "commit + push" — returns the fake SHA we already minted. */
+/** Simulated "commit + push", returns the fake SHA we already minted. */
 export async function fakeCommitAndPush(sha: string, message: string): Promise<{
   sha: string;
   message: string;

@@ -1,4 +1,5 @@
-import type { FastifyInstance } from 'fastify';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { FastifyInstance, FastifyRequest, RawServerDefault } from 'fastify';
 import type { Frame, GithubPushPayload, MarkdownFrameContent } from '@foldo/protocol';
 import { getBoardByRepoSlug } from '../repo/boards.ts';
 import {
@@ -12,15 +13,53 @@ import { hub } from '../ws/hub.ts';
 import { newId, nowIso } from '../util.ts';
 import { upsertUser } from '../repo/users.ts';
 
+/**
+ * Verify GitHub's HMAC-SHA256 webhook signature. GitHub sends the secret-key
+ * HMAC of the raw body as `X-Hub-Signature-256: sha256=<hex>`.
+ *
+ * Returns true if the secret is unset (dev) or the signature matches.
+ */
+function verifyGithubSignature(
+  req: FastifyRequest,
+  rawBody: string,
+  secret: string | undefined,
+): boolean {
+  if (!secret) return true; // dev mode, no secret configured
+  const header = req.headers['x-hub-signature-256'];
+  if (!header || Array.isArray(header)) return false;
+  const expected =
+    'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex');
+  const a = Buffer.from(header, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
 export async function registerWebhookRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: GithubPushPayload }>(
     '/api/webhooks/github',
+    {
+      config: { rawBody: true },
+    },
     async (req, reply) => {
+      const secret = process.env.FOLDO_GITHUB_WEBHOOK_SECRET;
+      // We need raw body for HMAC; Fastify parses JSON before our handler runs,
+      // so reconstitute by re-stringifying. This isn't byte-identical with
+      // exotic encodings but matches GitHub's payload for all practical cases.
+      // For strict verification, register a raw-body content-type-parser.
+      const raw =
+        (req as unknown as { rawBody?: string }).rawBody ?? JSON.stringify(req.body ?? {});
+      if (!verifyGithubSignature(req, raw, secret)) {
+        return reply
+          .code(401)
+          .send({ error: 'Invalid webhook signature', code: 'UNAUTHORIZED' });
+      }
+
       const body = req.body;
       if (!body?.ref || !body?.after || !body?.repository?.full_name) {
         return reply.code(400).send({ error: 'Invalid GitHub payload', code: 'BAD_REQUEST' });
       }
-      const board = getBoardByRepoSlug(body.repository.full_name);
+      const board = await getBoardByRepoSlug(body.repository.full_name);
       if (!board) {
         return reply.code(404).send({ error: 'No board for repo', code: 'NOT_FOUND' });
       }
@@ -28,7 +67,7 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
       const branchName = body.ref.replace(/^refs\/heads\//, '');
       const branchId = branchName;
       const pusherUserId = `u-gh-${(body.pusher.name || 'anon').toLowerCase()}`;
-      upsertUser({
+      await upsertUser({
         id: pusherUserId,
         name: body.pusher.name || 'GitHub Pusher',
         initial: (body.pusher.name || '?').charAt(0).toUpperCase(),
@@ -38,9 +77,9 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
       });
 
       const now = nowIso();
-      const existingBranch = getBranchById(branchId);
+      const existingBranch = await getBranchById(branchId);
       if (!existingBranch) {
-        const branch = upsertBranch({
+        const branch = await upsertBranch({
           id: branchId,
           boardId: board.id,
           name: branchName,
@@ -53,14 +92,13 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
         });
         hub.broadcast(board.id, { type: 'branch.added', branch });
       } else {
-        updateBranchHead(branchId, body.after);
-        const updated = getBranchById(branchId);
+        await updateBranchHead(branchId, body.after);
+        const updated = await getBranchById(branchId);
         if (updated) hub.broadcast(board.id, { type: 'branch.updated', branch: updated });
       }
 
-      // Persist commits
       for (const c of body.commits ?? []) {
-        upsertCommit({
+        await upsertCommit({
           sha: c.id,
           branchId,
           message: c.message,
@@ -69,7 +107,6 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
         });
       }
 
-      // Create a stub markdown frame for the push so the canvas sees it.
       const stubContent: MarkdownFrameContent = {
         kind: 'markdown',
         docPath: `commits/${body.after}.md`,
@@ -79,7 +116,7 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
           .join('\n'),
       };
 
-      const siblings = listFramesForBoard(board.id);
+      const siblings = await listFramesForBoard(board.id);
       const maxY = siblings.reduce(
         (m, f) => Math.max(m, f.position.y + f.size.height),
         0,
@@ -99,10 +136,15 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
         createdAt: now,
         updatedAt: now,
       };
-      insertFrame(frame);
+      await insertFrame(frame);
       hub.broadcast(board.id, { type: 'frame.added', frame });
 
       return reply.send({ ok: true });
     },
   );
+
+  // Suppress unused-type warning for the helper signature on older Fastify type
+  // exports, we don't actually need RawServerDefault but the import keeps the
+  // type imports honest. Side-effect free.
+  void (null as unknown as RawServerDefault);
 }

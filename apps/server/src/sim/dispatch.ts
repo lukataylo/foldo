@@ -15,11 +15,9 @@ import { upsertCommit, updateBranchHead } from '../repo/branches.ts';
 import { hub } from '../ws/hub.ts';
 import { newCommitSha, newId, nowIso, sleep } from '../util.ts';
 
-/**
- * Infer the overrides Claude Code would have produced. Mirrors the original
- * prototype's hard-coded smart-guess logic so the demo is identical when no
- * real MCP is connected.
- */
+const SAMPLE_APP_URL =
+  process.env.FOLDO_SAMPLE_APP_URL ?? 'http://localhost:5174';
+
 export function inferOverrides(args: {
   intent: string;
   elementLabel?: string;
@@ -29,9 +27,17 @@ export function inferOverrides(args: {
   const out: VariantOverrides = {};
 
   const isCtaPrimary = label.includes('cta-primary');
-  if (isCtaPrimary && (intent.includes('trial') || intent.includes('14-day') || intent.includes('14 day'))) {
+  if (
+    isCtaPrimary &&
+    (intent.includes('trial') || intent.includes('14-day') || intent.includes('14 day'))
+  ) {
     out.ctaLabel = 'Start your 14-day free trial';
     out.ctaSubtext = 'No credit card. Cancel anytime.';
+  } else if (isCtaPrimary) {
+    // Pull a short label out of the intent so the simulated edit is at least
+    // visible: take the first verb-phrase up to ~32 chars.
+    out.ctaLabel = sentenceCase(args.intent).slice(0, 32);
+    out.ctaSubtext = 'Simulated by Foldo. No MCP connected.';
   }
 
   const isProTier = label.includes('tier-card--pro') || label.includes('pro');
@@ -39,21 +45,37 @@ export function inferOverrides(args: {
     out.proGradientToned = true;
   }
 
+  // Catch-all: if we still have no overrides, set a generic subtext so the
+  // user always sees that something *changed* in the child frame.
+  if (
+    !out.ctaLabel &&
+    !out.ctaSubtext &&
+    !out.proGradientToned
+  ) {
+    out.ctaSubtext = 'Simulated by Foldo. No MCP connected.';
+  }
+
   return out;
 }
 
-/**
- * Build the new child frame produced by a simulated dispatch.
- * It is placed to the right of the parent's rightmost sibling in that row.
- */
-function buildChildFrame(parent: Frame, dispatch: Dispatch, newSha: string): Frame {
+function sentenceCase(s: string): string {
+  const t = s.trim();
+  if (!t) return '';
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+async function buildChildFrame(
+  parent: Frame,
+  dispatch: Dispatch,
+  newSha: string,
+): Promise<Frame> {
   const overrides = inferOverrides({
     intent: dispatch.intent,
     elementLabel: dispatch.target.elementLabel,
   });
 
-  // Find the rightmost frame in the same row (same y) on this board.
-  const siblings = listFramesForBoard(parent.boardId).filter(
+  const allSiblings = await listFramesForBoard(parent.boardId);
+  const siblings = allSiblings.filter(
     (f) => Math.abs(f.position.y - parent.position.y) < 1,
   );
   const rightmost = siblings.reduce(
@@ -62,7 +84,6 @@ function buildChildFrame(parent: Frame, dispatch: Dispatch, newSha: string): Fra
   );
   const gap = 40;
 
-  // Carry over the parent's app content but bump the iframe URL (commit + variant).
   const parentContent =
     parent.content.kind === 'app'
       ? parent.content
@@ -89,7 +110,7 @@ function buildChildFrame(parent: Frame, dispatch: Dispatch, newSha: string): Fra
   if (overrides.ctaSubtext) iframeParams.set('override.ctaSubtext', overrides.ctaSubtext);
   if (overrides.proGradientToned) iframeParams.set('override.proGradientToned', '1');
 
-  const iframeUrl = `http://localhost:5174/?${iframeParams.toString()}`;
+  const iframeUrl = `${SAMPLE_APP_URL}/?${iframeParams.toString()}`;
 
   const now = nowIso();
   const child: Frame = {
@@ -118,29 +139,19 @@ function buildChildFrame(parent: Frame, dispatch: Dispatch, newSha: string): Fra
 function deriveCommitMessage(d: Dispatch, ov: VariantOverrides): string {
   if (ov.ctaLabel) return `cta: ${ov.ctaLabel.toLowerCase()}`;
   if (ov.proGradientToned) return 'pricing: tone down Pro gradient';
-  // Fallback uses the intent.
   const intent = d.intent.length > 60 ? d.intent.slice(0, 57) + '...' : d.intent;
-  return `edit: ${intent}`;
+  return `[simulated] edit: ${intent}`;
 }
 
-/**
- * Run the in-process dispatch simulation. Mirrors the original prototype timing
- * and inferred overrides so the demo works without a real MCP.
- *
- * Lifecycle:
- *   1. immediately → status=sending, broadcast dispatch.status
- *   2. ~700ms → status=running, "Replaying recipe…"
- *   3. ~1500ms later → produce child frame, status=done, broadcast frame.added + dispatch.done
- */
 export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
   try {
-    // Step 1: sending
     const sendingEvent: DispatchEvent = {
       ts: nowIso(),
       level: 'info',
-      message: 'Sending dispatch to local agent…',
+      message:
+        'Simulating dispatch: no MCP agent connected, Foldo will fake a child frame.',
     };
-    const sending = setDispatchStatus(dispatch.id, 'sending', sendingEvent);
+    const sending = await setDispatchStatus(dispatch.id, 'sending', sendingEvent);
     if (sending) {
       hub.broadcast(dispatch.boardId, {
         type: 'dispatch.status',
@@ -152,13 +163,12 @@ export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
 
     await sleep(700);
 
-    // Step 2: running
     const runningEvent: DispatchEvent = {
       ts: nowIso(),
       level: 'info',
-      message: 'Replaying recipe…',
+      message: 'Replaying recipe in simulator…',
     };
-    const running = setDispatchStatus(dispatch.id, 'running', runningEvent);
+    const running = await setDispatchStatus(dispatch.id, 'running', runningEvent);
     if (running) {
       hub.broadcast(dispatch.boardId, {
         type: 'dispatch.status',
@@ -170,10 +180,9 @@ export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
 
     await sleep(1500);
 
-    // Step 3: build result frame + complete
-    const parent = getFrameById(dispatch.frameId);
+    const parent = await getFrameById(dispatch.frameId);
     if (!parent) {
-      failDispatch(dispatch.id, `parent frame ${dispatch.frameId} not found`);
+      await failDispatch(dispatch.id, `parent frame ${dispatch.frameId} not found`);
       hub.broadcast(dispatch.boardId, {
         type: 'dispatch.status',
         dispatchId: dispatch.id,
@@ -188,10 +197,10 @@ export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
     }
 
     const newSha = newCommitSha();
-    const childFrame = buildChildFrame(parent, dispatch, newSha);
-    insertFrame(childFrame);
+    const childFrame = await buildChildFrame(parent, dispatch, newSha);
+    await insertFrame(childFrame);
 
-    upsertCommit({
+    await upsertCommit({
       sha: newSha,
       branchId: dispatch.branchId,
       message: childFrame.commitMessage,
@@ -199,14 +208,15 @@ export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
       parentSha: dispatch.baseCommitSha,
       createdAt: nowIso(),
     });
-    updateBranchHead(dispatch.branchId, newSha);
+    await updateBranchHead(dispatch.branchId, newSha);
 
     const doneEvent: DispatchEvent = {
       ts: nowIso(),
       level: 'info',
-      message: 'Edit applied. Pushed new commit.',
+      message:
+        'Simulated child frame ready. No commit was actually pushed (connect Claude Code MCP to apply for real).',
     };
-    const done = completeDispatch(dispatch.id, childFrame.id, newSha, doneEvent);
+    const done = await completeDispatch(dispatch.id, childFrame.id, newSha, doneEvent);
 
     hub.broadcast(dispatch.boardId, { type: 'frame.added', frame: childFrame });
     if (done) {
@@ -220,7 +230,7 @@ export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    failDispatch(dispatch.id, message);
+    await failDispatch(dispatch.id, message);
     hub.broadcast(dispatch.boardId, {
       type: 'dispatch.status',
       dispatchId: dispatch.id,

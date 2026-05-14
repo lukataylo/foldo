@@ -162,17 +162,27 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     [setZoomAtAnchor, viewport, zoomToFit, fitTo, screenToWorld],
   );
 
-  // Wheel handler: pinch-to-zoom (ctrlKey on Mac trackpad), else pan
+  // Wheel handler: ctrl/meta = zoom (anchored at the cursor), plain = pan.
+  // Bound to `window`, not just the canvas element — otherwise ctrl/meta+wheel
+  // while the cursor is over a toolbar overlay (the left rail, top bar, zoom
+  // control) is never preventDefault'd and falls through to the browser's
+  // native page-zoom, which leaves the whole app looking zoomed/shifted.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
-        // pinch zoom
+        // Always block native browser page-zoom; zoom the canvas instead,
+        // wherever the cursor happens to be.
+        e.preventDefault();
         const factor = Math.exp(-e.deltaY * 0.01);
         setZoomAtAnchor(viewport.zoom * factor, { x: e.clientX, y: e.clientY });
-      } else {
+        return;
+      }
+      // Plain wheel = pan, but only when the cursor is actually over the
+      // canvas — don't hijack scrolling inside panels and modals.
+      if (el.contains(e.target as Node)) {
+        e.preventDefault();
         setViewport((v) => ({
           ...v,
           x: v.x - e.deltaX,
@@ -180,8 +190,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         }));
       }
     };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
+    window.addEventListener('wheel', onWheel, { passive: false });
+    return () => window.removeEventListener('wheel', onWheel);
   }, [viewport.zoom, setZoomAtAnchor]);
 
   // Pan dragging

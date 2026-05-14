@@ -16,7 +16,7 @@
         "dockerfilePath": "apps/server/Dockerfile"
       },
       "deploy": {
-        "startCommand": "node dist/index.js",
+        "//": "No startCommand — the server runs straight from TS via tsx, so it uses the Dockerfile CMD (`npm start` → tsx src/index.ts). There is no `dist/` build step.",
         "healthcheckPath": "/health",
         "healthcheckTimeout": 30,
         "restartPolicyType": "ON_FAILURE"

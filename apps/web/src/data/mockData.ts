@@ -79,7 +79,7 @@ The marketing site for Acme. Three live branches feed the canvas:
 - **feat/cta-revamp**, agent run by Anna to test stronger hero copy.
 - **feat/pro-tier-highlight**, agent run by Mateo to see if the Pro plan needs more visual weight.
 
-Each AI branch ships with its own PRD frame on the right, that's where the intent lives. Frames on this canvas are live: click into one, hit *Test it*, and you're in the running app at that commit.
+Each AI branch ships with its own PRD frame on the left, that's where the intent lives. Frames on this canvas are live: click into one, hit *Test it*, and you're in the running app at that commit.
 
 ## Conventions
 
@@ -145,7 +145,7 @@ const frames: Frame[] = [
     commitSha: 'a7c1d29',
     commitMessage: 'pricing: clean baseline',
     age: '6 days ago',
-    position: { x: 80, y: 80 },
+    position: { x: 660, y: 80 },
     size: { width: 920, height: 700 },
     content: {
       kind: 'app',
@@ -165,7 +165,7 @@ const frames: Frame[] = [
     commitSha: 'a7c1d29',
     commitMessage: 'docs: refresh README',
     age: '6 days ago',
-    position: { x: 1120, y: 80 },
+    position: { x: 80, y: 80 },
     size: { width: 540, height: 700 },
     content: {
       kind: 'markdown',
@@ -184,7 +184,7 @@ const frames: Frame[] = [
     commitSha: '4f81b62',
     commitMessage: 'cta: stronger trial copy + arrow',
     age: '38 min ago',
-    position: { x: 80, y: 880 },
+    position: { x: 660, y: 880 },
     size: { width: 920, height: 700 },
     content: {
       kind: 'app',
@@ -204,7 +204,7 @@ const frames: Frame[] = [
     commitSha: '4f81b62',
     commitMessage: 'docs(prd): cta revamp',
     age: '38 min ago',
-    position: { x: 1120, y: 880 },
+    position: { x: 80, y: 880 },
     size: { width: 540, height: 700 },
     content: {
       kind: 'markdown',
@@ -223,7 +223,7 @@ const frames: Frame[] = [
     commitSha: '9e0a17d',
     commitMessage: 'pricing: highlight Pro tier',
     age: '2 hours ago',
-    position: { x: 80, y: 1680 },
+    position: { x: 660, y: 1680 },
     size: { width: 920, height: 700 },
     content: {
       kind: 'app',
@@ -243,7 +243,7 @@ const frames: Frame[] = [
     commitSha: '9e0a17d',
     commitMessage: 'pricing: highlight Pro tier',
     age: '2 hours ago',
-    position: { x: 1120, y: 1680 },
+    position: { x: 1620, y: 1680 },
     size: { width: 920, height: 700 },
     content: {
       kind: 'app',
@@ -268,7 +268,7 @@ const frames: Frame[] = [
     commitSha: '9e0a17d',
     commitMessage: 'docs(prd): pro tier highlight',
     age: '2 hours ago',
-    position: { x: 2160, y: 1680 },
+    position: { x: 80, y: 1680 },
     size: { width: 540, height: 700 },
     content: {
       kind: 'markdown',

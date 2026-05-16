@@ -1,6 +1,7 @@
 import type { Branch, Comment, Frame, ImageFrameContent } from '@foldo/protocol';
 import { FrameMeta } from './FrameMeta';
 import { CommentPin } from './CommentPin';
+import { useFrameDrag } from './useFrameDrag';
 import type { Tool } from '../types';
 
 interface Props {
@@ -24,6 +25,7 @@ export function ImageFrame({
 }: Props) {
   const c = frame.content as ImageFrameContent;
   const src = c.url ?? c.dataUrl ?? '';
+  const { handlers: dragHandlers } = useFrameDrag({ frame, zoom });
   return (
     <div
       className="absolute"
@@ -36,6 +38,7 @@ export function ImageFrame({
     >
       <FrameMeta frame={frame} branch={branch} zoom={zoom} />
       <div
+        {...dragHandlers}
         className="relative"
         style={{
           width: '100%',
@@ -47,6 +50,8 @@ export function ImageFrame({
           display: 'flex',
           flexDirection: 'column',
           pointerEvents: 'auto',
+          cursor: 'grab',
+          userSelect: 'none',
         }}
       >
         {src ? (

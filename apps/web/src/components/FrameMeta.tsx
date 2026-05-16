@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { Branch, Frame } from '@foldo/protocol';
 import { boardStore } from '../state/BoardStore';
-import { moveFrame as apiMoveFrame, deleteFrame as apiDeleteFrame } from '../api/frames';
+import { deleteFrame as apiDeleteFrame } from '../api/frames';
+import { useFrameDrag } from './useFrameDrag';
 
 interface Props {
   frame: Frame;
@@ -16,72 +17,10 @@ export function FrameMeta({ frame, branch, zoom = 1, canEdit = true }: Props) {
   const isAgent = branch.authoredBy === 'agent';
   const isCapture = !!frame.capturedFromUrl;
 
-  const zoomRef = useRef(zoom);
-  useEffect(() => {
-    zoomRef.current = zoom;
-  }, [zoom]);
-
-  const dragRef = useRef<
-    | {
-        startClientX: number;
-        startClientY: number;
-        frameX0: number;
-        frameY0: number;
-        pointerId: number;
-        moved: boolean;
-      }
-    | null
-  >(null);
+  const { handlers } = useFrameDrag({ frame, zoom, enabled: canEdit });
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-
-  function onPointerDown(e: React.PointerEvent<HTMLDivElement>): void {
-    if (!canEdit) return;
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest('[data-no-drag]')) return;
-    dragRef.current = {
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      frameX0: frame.position.x,
-      frameY0: frame.position.y,
-      pointerId: e.pointerId,
-      moved: false,
-    };
-    e.currentTarget.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  }
-
-  function onPointerMove(e: React.PointerEvent<HTMLDivElement>): void {
-    const d = dragRef.current;
-    if (!d) return;
-    const dx = (e.clientX - d.startClientX) / zoomRef.current;
-    const dy = (e.clientY - d.startClientY) / zoomRef.current;
-    if (!d.moved && Math.hypot(dx, dy) < 2 / zoomRef.current) return;
-    d.moved = true;
-    boardStore.moveFrame(frame.id, d.frameX0 + dx, d.frameY0 + dy);
-  }
-
-  async function onPointerUp(e: React.PointerEvent<HTMLDivElement>): Promise<void> {
-    const d = dragRef.current;
-    if (!d) return;
-    try {
-      e.currentTarget.releasePointerCapture(d.pointerId);
-    } catch {
-      // ignore
-    }
-    dragRef.current = null;
-    if (!d.moved) return;
-    const f = boardStore.getSnapshot().frames.get(frame.id);
-    if (!f) return;
-    try {
-      await apiMoveFrame(frame.id, { position: f.position });
-    } catch {
-      // rollback on failure
-      boardStore.moveFrame(frame.id, d.frameX0, d.frameY0);
-    }
-  }
 
   async function onConfirmDelete(): Promise<void> {
     boardStore.removeFrame(frame.id);
@@ -96,10 +35,7 @@ export function FrameMeta({ frame, branch, zoom = 1, canEdit = true }: Props) {
 
   return (
     <div
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      {...handlers}
       className="absolute left-0 flex items-center gap-2 text-[12px] text-inkMute"
       style={{
         top: -34,

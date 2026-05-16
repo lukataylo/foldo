@@ -180,8 +180,21 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         return;
       }
       // Plain wheel = pan, but only when the cursor is actually over the
-      // canvas — don't hijack scrolling inside panels and modals.
+      // canvas — don't hijack scrolling inside panels and modals. Frames that
+      // host long content opt in with data-canvas-scroll; when there's room
+      // to scroll in the wheel's direction, let the native scroll happen.
       if (el.contains(e.target as Node)) {
+        const scrollable = (e.target as Element).closest?.(
+          '[data-canvas-scroll]',
+        ) as HTMLElement | null;
+        if (scrollable) {
+          const canScrollDown =
+            e.deltaY > 0 &&
+            scrollable.scrollTop + scrollable.clientHeight <
+              scrollable.scrollHeight - 1;
+          const canScrollUp = e.deltaY < 0 && scrollable.scrollTop > 0;
+          if (canScrollDown || canScrollUp) return;
+        }
         e.preventDefault();
         setViewport((v) => ({
           ...v,

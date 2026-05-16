@@ -1,13 +1,27 @@
-import type { Branch, Frame, ImageFrameContent } from '@foldo/protocol';
+import type { Branch, Comment, Frame, ImageFrameContent } from '@foldo/protocol';
 import { FrameMeta } from './FrameMeta';
+import { CommentPin } from './CommentPin';
+import type { Tool } from '../types';
 
 interface Props {
   frame: Frame;
   branch: Branch;
   zoom?: number;
+  tool?: Tool;
+  comments?: Comment[];
+  onDropPin?: (frameId: string, xRel: number, yRel: number) => void;
+  onCommentClick?: (frameId: string, comment: Comment) => void;
 }
 
-export function ImageFrame({ frame, branch, zoom = 1 }: Props) {
+export function ImageFrame({
+  frame,
+  branch,
+  zoom = 1,
+  tool = 'select',
+  comments = [],
+  onDropPin,
+  onCommentClick,
+}: Props) {
   const c = frame.content as ImageFrameContent;
   const src = c.url ?? c.dataUrl ?? '';
   return (
@@ -22,6 +36,7 @@ export function ImageFrame({ frame, branch, zoom = 1 }: Props) {
     >
       <FrameMeta frame={frame} branch={branch} zoom={zoom} />
       <div
+        className="relative"
         style={{
           width: '100%',
           height: '100%',
@@ -31,6 +46,7 @@ export function ImageFrame({ frame, branch, zoom = 1 }: Props) {
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
+          pointerEvents: 'auto',
         }}
       >
         {src ? (
@@ -72,6 +88,33 @@ export function ImageFrame({ frame, branch, zoom = 1 }: Props) {
             {c.caption}
           </div>
         )}
+
+        {tool === 'comment' && onDropPin && (
+          <div
+            className="absolute inset-0 z-20"
+            style={{ cursor: 'crosshair', pointerEvents: 'auto' }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const xRel = (e.clientX - rect.left) / rect.width;
+              const yRel = (e.clientY - rect.top) / rect.height;
+              onDropPin(frame.id, xRel, yRel);
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          />
+        )}
+
+        {comments
+          .filter((c) => c.pin)
+          .map((c) => (
+            <CommentPin
+              key={c.id}
+              comment={c}
+              frameSize={{ width: frame.size.width, height: frame.size.height }}
+              onClick={() => onCommentClick?.(frame.id, c)}
+            />
+          ))}
       </div>
     </div>
   );

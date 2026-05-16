@@ -342,7 +342,9 @@ export default function App() {
         if (!selectionRef.current) {
           showToast(setToast, 'Click an element first, then press E');
         }
-      }
+      } else if (e.key === 's' || e.key === 'S') setTool('sticky');
+      else if (e.key === 'a' || e.key === 'A') setTool('arrow');
+      else if (e.key === 'i' || e.key === 'I') setTool('image');
       else if (e.key === 'Escape') {
         setSelectedElementRaw(null);
         setCommentPopover(null);
@@ -1056,7 +1058,16 @@ export default function App() {
           }
           if (f.kind === 'image') {
             return (
-              <MemoImageFrame key={f.id} frame={f} branch={branch} zoom={viewport.zoom} />
+              <MemoImageFrame
+                key={f.id}
+                frame={f}
+                branch={branch}
+                zoom={viewport.zoom}
+                tool={tool}
+                comments={comments}
+                onDropPin={handleDropPin}
+                onCommentClick={handleCommentClick}
+              />
             );
           }
           if (f.kind === 'test_summary') {
@@ -1103,6 +1114,7 @@ export default function App() {
                 });
               }}
               onCommentClick={handleCommentClick}
+              onDropPin={handleDropPin}
             />
           );
         })}

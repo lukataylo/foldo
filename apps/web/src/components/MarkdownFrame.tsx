@@ -7,6 +7,7 @@ import type {
   MarkdownFrameContent,
 } from '@foldo/protocol';
 import { FrameMeta } from './FrameMeta';
+import { CommentPin } from './CommentPin';
 import { MarkdownView, parseMarkdown } from './Markdown';
 import { getSource } from '../api/sources';
 import { updateFrame as apiUpdateFrame } from '../api/frames';
@@ -29,6 +30,7 @@ interface Props {
     label: string,
   ) => void;
   onCommentClick: (frameId: string, comment: Comment) => void;
+  onDropPin?: (frameId: string, xRel: number, yRel: number) => void;
 }
 
 export function MarkdownFrame({
@@ -41,6 +43,7 @@ export function MarkdownFrame({
   zoom = 1,
   onSelectMdLine,
   onCommentClick,
+  onDropPin,
 }: Props) {
   const content = frame.content as MarkdownFrameContent;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -154,6 +157,7 @@ export function MarkdownFrame({
         />
         <div
           ref={containerRef}
+          data-canvas-scroll="true"
           className="h-[calc(100%-44px)] overflow-y-auto px-8 py-5"
           style={{
             background: '#f6f1ea',
@@ -219,6 +223,38 @@ export function MarkdownFrame({
             onCommentClick={onCommentClick}
           />
         )}
+
+        {/* Comment-tool overlay: capture clicks to drop a pin. Only active when
+            the comment tool is selected; otherwise pointer-events:none so the
+            markdown body stays scrollable and double-clickable. */}
+        {tool === 'comment' && onDropPin && (
+          <div
+            className="absolute inset-0 z-20"
+            style={{ cursor: 'crosshair', pointerEvents: 'auto' }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const xRel = (e.clientX - rect.left) / rect.width;
+              const yRel = (e.clientY - rect.top) / rect.height;
+              onDropPin(frame.id, xRel, yRel);
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          />
+        )}
+
+        {/* free-floating pin overlay (xy-pin comments without a line anchor) */}
+        {!editing &&
+          comments
+            .filter((c) => c.pin)
+            .map((c) => (
+              <CommentPin
+                key={c.id}
+                comment={c}
+                frameSize={{ width: frame.size.width, height: frame.size.height }}
+                onClick={() => onCommentClick(frame.id, c)}
+              />
+            ))}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type {
   Board,
+  Branch,
   GetBoardResponse,
   ListBoardsResponse,
   ListBranchesResponse,
@@ -123,8 +124,10 @@ export async function registerBoardRoutes(app: FastifyInstance): Promise<void> {
     await addBoardMember(id, me.id, 'owner');
 
     // Seed an empty main branch so the canvas has something to land on.
-    await upsertBranch({
-      id: 'main',
+    // Branch ids are globally unique, so scope by board to avoid collisions
+    // with other boards' "main" (e.g. the seeded acme/landing board).
+    const mainBranch: Branch = {
+      id: `${id}:main`,
       boardId: id,
       name: 'main',
       authoredBy: 'human',
@@ -133,22 +136,10 @@ export async function registerBoardRoutes(app: FastifyInstance): Promise<void> {
       headSha: '0000000',
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    await upsertBranch(mainBranch);
 
-    hub.broadcast(id, {
-      type: 'branch.added',
-      branch: {
-        id: 'main',
-        boardId: id,
-        name: 'main',
-        authoredBy: 'human',
-        authorUserId: me.id,
-        color: '#9a9a9a',
-        headSha: '0000000',
-        createdAt: now,
-        updatedAt: now,
-      },
-    });
+    hub.broadcast(id, { type: 'branch.added', branch: mainBranch });
 
     return reply.code(201).send({ board });
   });

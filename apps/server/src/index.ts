@@ -22,6 +22,7 @@ import { registerShareRoutes } from './routes/shares.ts';
 import { registerTestRoutes } from './routes/tests.ts';
 import { registerTestSessionRoutes } from './routes/testSessions.ts';
 import { registerRecordingRoutes } from './routes/recordings.ts';
+import { registerUploadRoutes } from './routes/uploads.ts';
 import { registerBrowserWs } from './ws/browser.ts';
 import { registerMcpWs } from './ws/mcp.ts';
 import { startSessionGc } from './gc.ts';
@@ -94,6 +95,7 @@ async function main(): Promise<void> {
   await registerTestRoutes(app);
   await registerTestSessionRoutes(app);
   await registerRecordingRoutes(app);
+  await registerUploadRoutes(app);
 
   // WebSocket endpoints
   await registerBrowserWs(app);

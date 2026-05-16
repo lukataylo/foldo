@@ -65,7 +65,9 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
       }
 
       const branchName = body.ref.replace(/^refs\/heads\//, '');
-      const branchId = branchName;
+      // Scope by board so two repos pushing the same branch name don't collide
+      // on the globally-unique branch id.
+      const branchId = `${board.id}:${branchName}`;
       const pusherUserId = `u-gh-${(body.pusher.name || 'anon').toLowerCase()}`;
       await upsertUser({
         id: pusherUserId,

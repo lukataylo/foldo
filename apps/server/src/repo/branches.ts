@@ -48,6 +48,7 @@ export async function upsertBranch(b: Branch): Promise<Branch> {
     `INSERT INTO branches (id, board_id, name, authored_by, author_user_id, agent_name, color, head_sha, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT(id) DO UPDATE SET
+       board_id = EXCLUDED.board_id,
        name = EXCLUDED.name,
        authored_by = EXCLUDED.authored_by,
        author_user_id = EXCLUDED.author_user_id,

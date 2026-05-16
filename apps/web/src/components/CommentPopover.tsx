@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Comment } from '@foldo/protocol';
 
 interface Props {
@@ -11,6 +11,14 @@ interface Props {
   /** Permission to delete this comment (author or editor). */
   canDelete?: boolean;
   onDelete?: () => Promise<void> | void;
+  /**
+   * The comment was just created from a drop-pin click and is awaiting its
+   * real body text. Renders the body as a focused textarea so the user can
+   * start typing immediately.
+   */
+  composing?: boolean;
+  /** Persist the typed body. Called on blur / Cmd+Enter when `composing`. */
+  onUpdateText?: (text: string) => Promise<void> | void;
 }
 
 export function CommentPopover({
@@ -22,10 +30,32 @@ export function CommentPopover({
   onResolve,
   canDelete = false,
   onDelete,
+  composing = false,
+  onUpdateText,
 }: Props) {
   const [replyText, setReplyText] = useState('');
   const [replyOpen, setReplyOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [bodyDraft, setBodyDraft] = useState(comment.text);
+  const composeRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Reset the draft if a different comment is loaded into the same popover
+  // instance (e.g. after an optimistic id → server id swap on drop-pin).
+  useEffect(() => {
+    setBodyDraft(comment.text);
+  }, [comment.id, comment.text]);
+
+  // Auto-focus the compose textarea when the popover opens for a new pin.
+  useEffect(() => {
+    if (composing) composeRef.current?.focus();
+  }, [composing]);
+
+  const flushBody = async () => {
+    if (!composing || !onUpdateText) return;
+    const next = bodyDraft.trim();
+    if (!next || next === comment.text) return;
+    await onUpdateText(next);
+  };
 
   const submitReply = async () => {
     const text = replyText.trim();
@@ -90,9 +120,31 @@ export function CommentPopover({
         </button>
       </div>
       <div className="px-3 py-2.5">
-        <div className="text-[12.5px] leading-relaxed text-ink">
-          {comment.text}
-        </div>
+        {composing ? (
+          <textarea
+            ref={composeRef}
+            value={bodyDraft}
+            onChange={(e) => setBodyDraft(e.target.value)}
+            onBlur={() => void flushBody()}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                e.preventDefault();
+                void flushBody();
+                onClose();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                onClose();
+              }
+            }}
+            rows={3}
+            placeholder="Type your comment…"
+            className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2 py-1.5 text-[12.5px] leading-relaxed text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
+          />
+        ) : (
+          <div className="text-[12.5px] leading-relaxed text-ink">
+            {comment.text}
+          </div>
+        )}
         {comment.target?.elementLabel && (
           <div className="mt-2 rounded-md border border-hairlineSoft bg-canvas/80 px-2 py-1.5 font-mono text-[10.5px] text-inkMute">
             <span className="text-inkFaint">target · </span>

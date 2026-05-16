@@ -14,14 +14,24 @@ import {
   listBoards,
   upsertBoard,
 } from '../repo/boards.ts';
-import { listBranchesForBoard, upsertBranch } from '../repo/branches.ts';
+import {
+  getBranchById,
+  listBranchesForBoard,
+  upsertBranch,
+  upsertCommit,
+} from '../repo/branches.ts';
 import { listFramesForBoard } from '../repo/frames.ts';
 import { listCommentsForBoard } from '../repo/comments.ts';
 import { listUsers } from '../repo/users.ts';
-import { addBoardMember, isMember, listBoardIdsForUser } from '../repo/members.ts';
+import {
+  addBoardMember,
+  canEditBoard,
+  isMember,
+  listBoardIdsForUser,
+} from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { isMcpConnected } from '../ws/mcp.ts';
-import { newId, nowIso } from '../util.ts';
+import { newCommitSha, newId, nowIso } from '../util.ts';
 
 interface CreateBoardBody {
   name?: string;
@@ -142,5 +152,76 @@ export async function registerBoardRoutes(app: FastifyInstance): Promise<void> {
     hub.broadcast(id, { type: 'branch.added', branch: mainBranch });
 
     return reply.code(201).send({ board });
+  });
+
+  // Create a new branch under a board. Branch ids are board-scoped
+  // (`${boardId}:${name}`) so two boards can both have a "main", a
+  // "feat/x", etc. without colliding on the globally-unique branch id.
+  app.post<{
+    Body: {
+      boardId?: string;
+      name?: string;
+      color?: string;
+      headSha?: string;
+    };
+  }>('/api/branches', async (req, reply) => {
+    const me = requireUser(req);
+    const boardId = (req.body?.boardId ?? '').trim();
+    const rawName = (req.body?.name ?? '').trim();
+    if (!boardId || !rawName) {
+      return reply
+        .code(400)
+        .send({ error: 'boardId and name required', code: 'BAD_REQUEST' });
+    }
+    // Allow the same shape git uses for refs: letters, numbers, -, _, /, .
+    // Reject leading/trailing slashes and `..` so the id stays well-formed.
+    if (!/^[\w./-]+$/.test(rawName) || rawName.startsWith('/') || rawName.endsWith('/') || rawName.includes('..')) {
+      return reply
+        .code(400)
+        .send({ error: 'Invalid branch name', code: 'BAD_REQUEST' });
+    }
+    if (!(await canEditBoard(boardId, me.id))) {
+      return reply
+        .code(403)
+        .send({ error: 'Not a member of this board', code: 'FORBIDDEN' });
+    }
+
+    const id = `${boardId}:${rawName}`;
+    const existing = await getBranchById(id);
+    if (existing) {
+      return reply.code(409).send({
+        error: 'Branch already exists on this board',
+        code: 'BRANCH_TAKEN',
+      });
+    }
+
+    const now = nowIso();
+    const headSha = (req.body?.headSha ?? '').trim() || newCommitSha();
+    const branch: Branch = {
+      id,
+      boardId,
+      name: rawName,
+      authoredBy: 'human',
+      authorUserId: me.id,
+      color: (req.body?.color ?? '').trim() || '#9a9a9a',
+      headSha,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await upsertBranch(branch);
+
+    // Seed an initial commit so frames created on this branch have something
+    // to reference for their commitSha. Mirrors the seed/captures pattern.
+    await upsertCommit({
+      sha: headSha,
+      branchId: id,
+      message: `branch: ${rawName}`,
+      authorUserId: me.id,
+      createdAt: now,
+    });
+
+    hub.broadcast(boardId, { type: 'branch.added', branch });
+
+    return reply.code(201).send({ branch });
   });
 }

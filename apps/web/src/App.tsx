@@ -54,6 +54,7 @@ import {
 } from './api/comments';
 import { createDispatch as apiCreateDispatch } from './api/dispatches';
 import { createFrame as apiCreateFrame } from './api/frames';
+import { uploadImage as apiUploadImage } from './api/uploads';
 import { FoldoWsClient, type WsStatus } from './api/ws';
 import {
   mockBoardSnapshot,
@@ -114,6 +115,8 @@ export default function App() {
   const [commentPopover, setCommentPopover] = useState<{
     frameId: string;
     commentId: string;
+    /** Open in compose mode (auto-focused empty textarea) for newly-dropped pins. */
+    composing?: boolean;
   } | null>(null);
   const [initialIntent, setInitialIntent] = useState<string | undefined>(
     undefined,
@@ -449,45 +452,54 @@ export default function App() {
 
   const handleDropPin = useCallback(
     async (frameId: string, xRel: number, yRel: number) => {
-      if (boot.kind === 'offline') {
-        // Synthesise locally, server is not running.
-        const optimistic: Comment = {
-          id: `c-local-${Date.now()}`,
-          boardId: snap.board?.id ?? MOCK_BOARD_ID,
-          frameId,
-          authorUserId: DEMO_USER_ID,
-          authorName: 'You',
-          authorInitial: 'Y',
-          authorColor: '#7fd49a',
-          text: 'New comment',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          resolved: false,
-          pin: { x: xRel, y: yRel },
-          replies: [],
-        };
-        boardStore.upsertComment(optimistic);
-        setTool('select');
-        showToast(setToast, 'Comment pinned');
-        return;
-      }
+      // Always render optimistically: the pin should appear under the cursor
+      // the instant the user clicks, before any network round-trip. The popover
+      // opens in compose mode so the user can type the actual body straight
+      // away (no "New comment" placeholder, no extra click into Reply).
+      const me = snap.meUserId ? snap.users.get(snap.meUserId) : undefined;
+      const now = new Date().toISOString();
+      const tempId = `c-local-${Date.now()}`;
+      const optimistic: Comment = {
+        id: tempId,
+        boardId: snap.board?.id ?? MOCK_BOARD_ID,
+        frameId,
+        authorUserId: me?.id ?? DEMO_USER_ID,
+        authorName: me?.name ?? 'You',
+        authorInitial: me?.initial ?? 'Y',
+        authorColor: me?.color ?? '#7fd49a',
+        text: '',
+        createdAt: now,
+        updatedAt: now,
+        resolved: false,
+        pin: { x: xRel, y: yRel },
+        replies: [],
+      };
+      boardStore.upsertComment(optimistic);
+      setCommentPopover({ frameId, commentId: tempId, composing: true });
+      setTool('select');
+
+      if (boot.kind === 'offline') return; // local-only, no swap needed.
       try {
         const body: CreateCommentRequest = {
           boardId: snap.board?.id ?? '',
           frameId,
-          text: 'New comment',
+          text: '',
           pin: { x: xRel, y: yRel },
         };
         const c = await apiCreateComment(body);
+        // Swap the temp comment for the server-issued one, then point the
+        // popover at the real id so subsequent edits PATCH the right row.
+        boardStore.removeComment(tempId);
         boardStore.upsertComment(c);
-        setTool('select');
-        showToast(setToast, 'Comment pinned');
+        setCommentPopover({ frameId, commentId: c.id, composing: true });
       } catch (e) {
         console.warn('[foldo] create comment failed', e);
+        boardStore.removeComment(tempId);
+        setCommentPopover(null);
         showToast(setToast, 'Failed to add comment');
       }
     },
-    [boot.kind, snap.board?.id],
+    [boot.kind, snap.board?.id, snap.meUserId, snap.users],
   );
 
   const handleCommentClick = useCallback(
@@ -839,17 +851,23 @@ export default function App() {
   );
 
   const createImageFrame = useCallback(
-    async (pos: { x: number; y: number }, dataUrl: string, name?: string) => {
+    async (
+      pos: { x: number; y: number },
+      src: { url: string; previewDataUrl: string },
+      name?: string,
+    ) => {
       const board = snap.board;
       const branch = ensureCanvasBranch();
       if (!board || !branch) return;
-      // Resolve natural dimensions before placing, so the frame matches the image's ratio.
+      // Resolve natural dimensions before placing, so the frame matches the
+      // image's ratio. Use the local data URL because the uploaded URL won't
+      // hit the browser cache yet on the very first paint.
       const dims = await new Promise<{ w: number; h: number }>((resolve) => {
         const img = new Image();
         img.onload = () =>
           resolve({ w: img.naturalWidth || 480, h: img.naturalHeight || 320 });
         img.onerror = () => resolve({ w: 480, h: 320 });
-        img.src = dataUrl;
+        img.src = src.previewDataUrl;
       });
       const maxW = 600;
       const scale = dims.w > maxW ? maxW / dims.w : 1;
@@ -864,7 +882,7 @@ export default function App() {
           kind: 'image',
           position: { x: pos.x - W / 2, y: pos.y - H / 2 },
           size: { width: W, height: H },
-          content: { kind: 'image', dataUrl, alt: name },
+          content: { kind: 'image', url: src.url, alt: name },
         });
         boardStore.upsertFrame(frame);
         setTool('select');
@@ -887,16 +905,26 @@ export default function App() {
       const pos = imagePendingPosRef.current;
       imagePendingPosRef.current = null;
       if (!file || !pos) return;
-      // Reject anything over 2MB so we don't bloat content_json.
-      if (file.size > 2 * 1024 * 1024) {
-        showToast(setToast, 'Image too large (2 MB max for the MVP).');
+      // Server's /api/uploads cap is 8 MB; mirror it client-side so we fail
+      // fast with a friendly toast instead of a 413.
+      if (file.size > 8 * 1024 * 1024) {
+        showToast(setToast, 'Image too large (8 MB max).');
         return;
       }
+      // Read once: we use the data URL purely to measure natural dimensions
+      // for the frame's aspect ratio while the upload is in flight.
       const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = typeof reader.result === 'string' ? reader.result : '';
-        if (!dataUrl) return;
-        void createImageFrame(pos, dataUrl, file.name);
+      reader.onload = async () => {
+        const previewDataUrl =
+          typeof reader.result === 'string' ? reader.result : '';
+        if (!previewDataUrl) return;
+        try {
+          const { url } = await apiUploadImage(file);
+          await createImageFrame(pos, { url, previewDataUrl }, file.name);
+        } catch (err) {
+          console.warn('[foldo] image upload failed', err);
+          showToast(setToast, 'Image upload failed');
+        }
       };
       reader.readAsDataURL(file);
     },
@@ -1182,6 +1210,23 @@ export default function App() {
         <CommentPopover
           comment={popoverComment}
           screenPosition={popoverScreenPos}
+          composing={commentPopover.composing}
+          onUpdateText={async (text) => {
+            const optimistic = { ...popoverComment, text, updatedAt: new Date().toISOString() };
+            boardStore.upsertComment(optimistic);
+            if (boot.kind === 'offline') return;
+            // Local comments (just-dropped pins before the server swap) have
+            // an id starting with `c-local-`. Skip the PATCH; the optimistic
+            // store update is the source of truth until the server id arrives.
+            if (popoverComment.id.startsWith('c-local-')) return;
+            try {
+              const updated = await apiUpdateComment(popoverComment.id, { text });
+              boardStore.upsertComment(updated);
+            } catch (err) {
+              console.warn('[foldo] update comment failed', err);
+              showToast(setToast, 'Failed to save comment');
+            }
+          }}
           onClose={() => {
             setCommentPopover(null);
             if (snap.board && route.frameId) {

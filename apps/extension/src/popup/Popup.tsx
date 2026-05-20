@@ -5,6 +5,9 @@
 //   idle → reading-tab → injecting → snapping → uploading → done | error
 // Each phase shows a one-line label and a thin animated progress bar matching
 // the canvas's capture modal (dark #2c2c2c panel, #ff7849 accent).
+//
+// When no bearer token is stored the popup shows a "not connected" banner
+// and disables the capture button — preventing silent demo-user captures.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Frame } from '@foldo/protocol';
@@ -39,9 +42,12 @@ export function Popup() {
   const [settings, setSettings] = useState<Settings>({
     cloudUrl: DEFAULTS.cloudUrl,
     webUrl: DEFAULTS.webUrl,
-    bearerToken: DEFAULTS.bearerToken,
+    bearerToken: DEFAULTS.bearerToken, // empty string until user connects
     boardId: DEFAULTS.boardId,
   });
+
+  // True when the user has not yet pasted a session token.
+  const isConnected = settings.bearerToken.trim().length > 0;
 
   const portRef = useRef<chrome.runtime.Port | null>(null);
 
@@ -95,12 +101,34 @@ export function Popup() {
     [phase],
   );
 
+  const openOptions = () => {
+    chrome.runtime.openOptionsPage();
+  };
+
   return (
     <div className="bg-canvas text-ink">
       <Header
         onToggleSettings={() => setShowSettings((v) => !v)}
         settingsOpen={showSettings}
       />
+
+      {!isConnected && !showSettings && (
+        <div className="mx-4 mt-3 rounded-lg border border-err/40 bg-panel px-3 py-2.5">
+          <div className="text-[11px] uppercase tracking-wider text-err mb-1">
+            Not connected
+          </div>
+          <div className="text-[12px] text-ink">
+            Paste your Foldo session token to start capturing.
+          </div>
+          <button
+            type="button"
+            onClick={openOptions}
+            className="mt-2 text-[11px] text-accent hover:text-accentSoft underline"
+          >
+            Open settings →
+          </button>
+        </div>
+      )}
 
       <div className="px-4 pb-4 pt-3">
         {!showSettings ? (
@@ -110,6 +138,7 @@ export function Popup() {
             error={error}
             success={success}
             isWorking={isWorking}
+            isConnected={isConnected}
             onCapture={runCapture}
           />
         ) : (
@@ -172,6 +201,7 @@ interface MainPanelProps {
   error: string | undefined;
   success: SuccessState | undefined;
   isWorking: boolean;
+  isConnected: boolean;
   onCapture: () => void;
 }
 
@@ -181,6 +211,7 @@ function MainPanel({
   error,
   success,
   isWorking,
+  isConnected,
   onCapture,
 }: MainPanelProps) {
   return (
@@ -247,9 +278,9 @@ function MainPanel({
       <button
         type="button"
         onClick={onCapture}
-        disabled={isWorking}
+        disabled={isWorking || !isConnected}
         className={`w-full rounded-lg font-medium text-[13px] py-2.5 transition ${
-          isWorking
+          isWorking || !isConnected
             ? 'bg-panel text-inkFaint cursor-not-allowed'
             : phase === 'error'
               ? 'bg-accent text-canvas hover:bg-accentSoft'
@@ -258,11 +289,13 @@ function MainPanel({
       >
         {isWorking
           ? 'Working…'
-          : phase === 'error'
-            ? 'Retry'
-            : phase === 'done'
-              ? 'Freeze this state again'
-              : 'Freeze this state'}
+          : !isConnected
+            ? 'Connect first'
+            : phase === 'error'
+              ? 'Retry'
+              : phase === 'done'
+                ? 'Freeze this state again'
+                : 'Freeze this state'}
       </button>
     </div>
   );
@@ -302,19 +335,29 @@ function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
         onCommit={(v) => onChange({ webUrl: v || DEFAULTS.webUrl })}
       />
       <Field
-        label="Bearer token"
+        label="Session token"
         value={settings.bearerToken}
-        placeholder={DEFAULTS.bearerToken}
-        onCommit={(v) => onChange({ bearerToken: v || DEFAULTS.bearerToken })}
+        placeholder="Paste from Foldo app → Settings → API"
+        type="password"
+        onCommit={(v) => onChange({ bearerToken: v })}
       />
       <Field
-        label="Default board id"
+        label="Board id"
         value={settings.boardId}
-        placeholder={DEFAULTS.boardId}
-        onCommit={(v) => onChange({ boardId: v || DEFAULTS.boardId })}
+        placeholder="board-…"
+        onCommit={(v) => onChange({ boardId: v })}
       />
       <div className="text-[11px] text-inkFaint pt-1">
-        Settings live in chrome.storage.local. Click the gear again to go back.
+        Settings live in chrome.storage.local. For a full-screen settings view
+        open the{' '}
+        <button
+          type="button"
+          onClick={() => chrome.runtime.openOptionsPage()}
+          className="underline hover:text-ink"
+        >
+          options page
+        </button>
+        .
       </div>
     </div>
   );
@@ -324,10 +367,11 @@ interface FieldProps {
   label: string;
   value: string;
   placeholder: string;
+  type?: 'text' | 'password';
   onCommit: (next: string) => void;
 }
 
-function Field({ label, value, placeholder, onCommit }: FieldProps) {
+function Field({ label, value, placeholder, type = 'text', onCommit }: FieldProps) {
   const [local, setLocal] = useState(value);
   useEffect(() => {
     setLocal(value);
@@ -338,7 +382,7 @@ function Field({ label, value, placeholder, onCommit }: FieldProps) {
         {label}
       </span>
       <input
-        type="text"
+        type={type}
         value={local}
         placeholder={placeholder}
         onChange={(e) => setLocal(e.target.value)}

@@ -23,6 +23,10 @@ export const manifest = defineManifest({
       '128': 'public/icon-128.png',
     },
   },
+  options_ui: {
+    page: 'src/options/index.html',
+    open_in_tab: true,
+  },
   background: {
     service_worker: 'src/background/service-worker.ts',
     type: 'module',
@@ -31,7 +35,7 @@ export const manifest = defineManifest({
   host_permissions: ['<all_urls>'],
   web_accessible_resources: [
     {
-      resources: ['public/logo.png', 'public/icon-128.png'],
+      resources: ['public/logo.png', 'public/icon-128.png', 'public/icon-48.png'],
       matches: ['<all_urls>'],
     },
   ],

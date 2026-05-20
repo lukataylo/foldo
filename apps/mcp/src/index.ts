@@ -19,8 +19,9 @@
 import { loadConfig } from './config.ts';
 import { startMcpStdioServer } from './mcp/server.ts';
 import { createCloudClient } from './cloud/wsClient.ts';
-import { runApplyEdit } from './mcp/tools/applyEdit.ts';
+import { runApplyEdit, probeClaudeAtStartup } from './mcp/tools/applyEdit.ts';
 import { runFreeze } from './mcp/tools/freeze.ts';
+import { isGitRepo } from './git/ops.ts';
 import type { Dispatch, RecipeStep } from '@foldo/protocol';
 
 type Mode = 'stdio' | 'bridge' | 'both';
@@ -65,6 +66,28 @@ async function main(): Promise<void> {
   log(
     `starting mode=${mode} cloudUrl=${config.cloudUrl} boardId=${config.boardId}`,
   );
+
+  // Detect the real-edit capabilities once at startup so every dispatch is
+  // fast and the operator sees up-front whether edits will be real or
+  // simulated.
+  void Promise.all([probeClaudeAtStartup(), isGitRepo(config.targetRepo)])
+    .then(([cap, repoOk]) => {
+      const claudeState = cap.available
+        ? `claude ${cap.version ?? 'present'}`
+        : 'claude NOT on PATH';
+      const repoState = repoOk
+        ? `repo=${config.targetRepo}`
+        : `targetRepo not a git repo (${config.targetRepo})`;
+      const real = cap.available && repoOk;
+      log(
+        `edit pipeline: ${claudeState}, ${repoState}, push=${config.push ? 'on' : 'off'} → ${
+          real ? 'REAL edits' : 'SIMULATED edits (fallback)'
+        }`,
+      );
+    })
+    .catch(() => {
+      /* probe failures are non-fatal — dispatch handler falls back anyway */
+    });
 
   let cloud: ReturnType<typeof createCloudClient> | null = null;
 

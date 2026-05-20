@@ -1,6 +1,8 @@
 // Configuration loaded from environment variables, with sensible defaults
 // suitable for the local prototype.
 
+import { resolve } from 'node:path';
+
 export interface FoldoMcpConfig {
   cloudUrl: string;
   cloudWsPath: string;
@@ -10,6 +12,11 @@ export interface FoldoMcpConfig {
   version: string;
   sampleAppUrl: string;
   cloudBridge: boolean;
+  /** Absolute path to the repo the `claude` CLI should edit. Defaults to cwd. */
+  targetRepo: string;
+  /** When true, the real-edit path pushes the work branch to `origin`.
+   *  Opt-in (FOLDO_MCP_PUSH=1); default is commit-locally-only. */
+  push: boolean;
 }
 
 function envOr(name: string, fallback: string): string {
@@ -35,6 +42,8 @@ export function loadConfig(): FoldoMcpConfig {
     version: '0.0.1',
     sampleAppUrl: envOr('FOLDO_SAMPLE_APP_URL', 'http://localhost:5174'),
     cloudBridge: envBool('FOLDO_CLOUD_BRIDGE', false),
+    targetRepo: resolve(envOr('FOLDO_TARGET_REPO', process.cwd())),
+    push: envBool('FOLDO_MCP_PUSH', false),
   };
 }
 

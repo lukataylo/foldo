@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { apiCleanupByName } from './helpers';
+import { apiCleanupByName, apiCleanupTestFrames } from './helpers';
 
 const NAME_PREFIX = 'E2E creator';
 
@@ -64,5 +64,6 @@ test('creator builds, publishes, inspects, and deletes a test', async ({
     ).toHaveCount(0);
   } finally {
     await apiCleanupByName(NAME_PREFIX);
+    await apiCleanupTestFrames();
   }
 });

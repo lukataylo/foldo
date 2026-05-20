@@ -12,6 +12,8 @@ apps/*/data/*.db
 apps/*/data/*.db-journal
 apps/extension/dist/
 .foldo-storage/
+.foldo-mail/
+.claude/
 
 # Playwright
 test-results/

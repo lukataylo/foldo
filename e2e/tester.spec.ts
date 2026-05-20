@@ -1,10 +1,18 @@
 import { test, expect } from '@playwright/test';
-import { apiCleanupByName, apiCreateTest, apiListSessions } from './helpers';
+import {
+  apiCleanupByName,
+  apiCleanupTestFrames,
+  apiCreateTest,
+  apiListSessions,
+} from './helpers';
 
 const NAME_PREFIX = 'E2E tester';
 
 test.afterAll(async () => {
   await apiCleanupByName(NAME_PREFIX);
+  // Completed sessions spawn test_session/test_summary frames on the board —
+  // delete them so they don't accumulate across runs.
+  await apiCleanupTestFrames();
 });
 
 // The full tester journey on /t/:token for a voice-only test: intro → consent

@@ -12,6 +12,7 @@ import {
 } from '../repo/dispatches.ts';
 import { getFrameById, insertFrame, listFramesForBoard } from '../repo/frames.ts';
 import { upsertCommit, updateBranchHead } from '../repo/branches.ts';
+import { withTx } from '../db.ts';
 import { hub } from '../ws/hub.ts';
 import { newCommitSha, newId, nowIso, sleep } from '../util.ts';
 
@@ -198,17 +199,6 @@ export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
 
     const newSha = newCommitSha();
     const childFrame = await buildChildFrame(parent, dispatch, newSha);
-    await insertFrame(childFrame);
-
-    await upsertCommit({
-      sha: newSha,
-      branchId: dispatch.branchId,
-      message: childFrame.commitMessage,
-      authorUserId: 'u-claude',
-      parentSha: dispatch.baseCommitSha,
-      createdAt: nowIso(),
-    });
-    await updateBranchHead(dispatch.branchId, newSha);
 
     const doneEvent: DispatchEvent = {
       ts: nowIso(),
@@ -216,7 +206,31 @@ export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
       message:
         'Simulated child frame ready. No commit was actually pushed (connect Claude Code MCP to apply for real).',
     };
-    const done = await completeDispatch(dispatch.id, childFrame.id, newSha, doneEvent);
+
+    // Atomic: a crash mid-sequence must not leave an orphan frame or a
+    // dispatch stuck in "running".
+    const done = await withTx(async (client) => {
+      await insertFrame(childFrame, client);
+      await upsertCommit(
+        {
+          sha: newSha,
+          branchId: dispatch.branchId,
+          message: childFrame.commitMessage,
+          authorUserId: 'u-claude',
+          parentSha: dispatch.baseCommitSha,
+          createdAt: nowIso(),
+        },
+        client,
+      );
+      await updateBranchHead(dispatch.branchId, newSha, client);
+      return completeDispatch(
+        dispatch.id,
+        childFrame.id,
+        newSha,
+        doneEvent,
+        client,
+      );
+    });
 
     hub.broadcast(dispatch.boardId, { type: 'frame.added', frame: childFrame });
     if (done) {

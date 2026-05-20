@@ -1,5 +1,8 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import type { Readable } from 'node:stream';
 import { S3Storage } from './s3.ts';
 
 /**
@@ -21,9 +24,22 @@ export interface StoredObject {
 export interface Storage {
   /** Persist bytes under a key (the key may contain `/` path segments). */
   put(key: string, body: Buffer, contentType: string): Promise<StoredObject>;
+  /**
+   * Persist a readable stream under a key without buffering it whole in
+   * memory. Used for large uploads (test-session recordings) so concurrent
+   * uploads don't risk OOMing the instance. The returned `size` is the byte
+   * count actually written.
+   */
+  putStream(
+    key: string,
+    body: Readable,
+    contentType: string,
+  ): Promise<StoredObject>;
   /** Read bytes back, or null if the key doesn't exist. */
   get(key: string): Promise<{ body: Buffer; contentType: string } | null>;
   exists(key: string): Promise<boolean>;
+  /** Delete an object. Best-effort, idempotent — missing keys are a no-op. */
+  remove(key: string): Promise<void>;
   /** Path (relative to the API origin) the browser can GET to play the object. */
   pathFor(key: string): string;
   /**
@@ -68,6 +84,22 @@ class LocalStorage implements Storage {
     return { key, size: body.length, contentType };
   }
 
+  async putStream(
+    key: string,
+    body: Readable,
+    contentType: string,
+  ): Promise<StoredObject> {
+    const full = this.resolveKey(key);
+    await mkdir(dirname(full), { recursive: true });
+    let size = 0;
+    body.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+    });
+    // pipeline destroys the write stream + cleans up the file handle on error.
+    await pipeline(body, createWriteStream(full));
+    return { key, size, contentType };
+  }
+
   async get(
     key: string,
   ): Promise<{ body: Buffer; contentType: string } | null> {
@@ -85,6 +117,14 @@ class LocalStorage implements Storage {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async remove(key: string): Promise<void> {
+    try {
+      await rm(this.resolveKey(key), { force: true });
+    } catch {
+      // best-effort: a missing or already-removed file is fine
     }
   }
 

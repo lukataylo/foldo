@@ -205,6 +205,22 @@ export async function listSessionsForTest(
   return sessions;
 }
 
+/**
+ * Raw storage keys of every recording belonging to a test's sessions. Used
+ * by the test-delete path to clean up orphan recording blobs (DB cascade
+ * drops the rows but never touches blob storage).
+ */
+export async function listRecordingKeysForTest(
+  testId: string,
+): Promise<string[]> {
+  const rows = await query<{ recording_key: string }>(
+    `SELECT recording_key FROM test_sessions
+      WHERE test_id = $1 AND recording_key IS NOT NULL`,
+    [testId],
+  );
+  return rows.map((r) => r.recording_key);
+}
+
 export interface CompleteSessionInput {
   taskResults: TestTaskResult[];
   responses?: TestResponseAnswer[];

@@ -16,7 +16,11 @@ import { isMcpConnected, routeDispatchToMcp } from '../ws/mcp.ts';
 import { newId } from '../util.ts';
 
 export async function registerDispatchRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: CreateDispatchRequest }>('/api/dispatches', async (req, reply) => {
+  app.post<{ Body: CreateDispatchRequest }>('/api/dispatches', {
+    // AI dispatches hit the model + the simulator and are the most expensive
+    // write path. Per-user/per-token cap below the global default.
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
     const user = requireUser(req);
     const body = req.body;
     if (

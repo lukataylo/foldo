@@ -14,7 +14,50 @@ import { isMcpConnected } from './mcp.ts';
 
 const CURSOR_MIN_INTERVAL_MS = 33; // ~30Hz
 
+/** How often the server pings every socket to detect dead connections. */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+let heartbeatTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Start the server-side heartbeat once. Each tick: terminate any socket that
+ * hasn't ponged since the previous tick (laptop sleep / dropped link with no
+ * TCP FIN), then ping the rest and reset their liveness flag. Terminated
+ * sockets fire their `close` handler which unsubscribes them from the hub.
+ */
+function ensureHeartbeat(app: FastifyInstance): void {
+  if (heartbeatTimer) return;
+  heartbeatTimer = setInterval(() => {
+    for (const conn of hub.allConnections()) {
+      if (!conn.isAlive) {
+        try {
+          conn.socket.terminate();
+        } catch {
+          /* ignore */
+        }
+        hub.unsubscribe(conn);
+        continue;
+      }
+      conn.isAlive = false;
+      try {
+        conn.socket.ping();
+      } catch {
+        /* ignore */
+      }
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  // Don't keep the event loop alive purely for the heartbeat.
+  heartbeatTimer.unref?.();
+  app.addHook('onClose', async () => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  });
+}
+
 export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
+  ensureHeartbeat(app);
   app.get('/ws', { websocket: true }, async (socket, req) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const boardId = url.searchParams.get('boardId');
@@ -70,12 +113,21 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
       userId: user.id,
       presence,
       lastCursorBroadcastAt: 0,
+      isAlive: true,
     };
+
+    // A pong (or any frame) from the client marks the socket alive for the
+    // next heartbeat tick.
+    socket.on('pong', () => {
+      conn.isAlive = true;
+    });
 
     let helloReceived = false;
     let disconnectTimer: NodeJS.Timeout | null = null;
 
     socket.on('message', (raw: Buffer) => {
+      // Any inbound traffic proves the socket is live for this heartbeat tick.
+      conn.isAlive = true;
       let msg: ClientMessage;
       try {
         msg = JSON.parse(raw.toString()) as ClientMessage;

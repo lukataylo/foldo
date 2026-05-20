@@ -4,7 +4,7 @@ import type {
   DispatchEvent,
   DispatchStatus,
 } from '@foldo/protocol';
-import { query, queryOne, exec } from '../db.ts';
+import { query, queryOne, exec, type Executor } from '../db.ts';
 import { nowIso, parseJson } from '../util.ts';
 
 interface DispatchRow {
@@ -55,8 +55,15 @@ export async function listDispatchesForBoard(boardId: string): Promise<Dispatch[
   return rows.map(rowToDispatch);
 }
 
-export async function getDispatchById(id: string): Promise<Dispatch | null> {
-  const r = await queryOne<DispatchRow>(`SELECT * FROM dispatches WHERE id = $1`, [id]);
+export async function getDispatchById(
+  id: string,
+  client?: Executor,
+): Promise<Dispatch | null> {
+  const r = await queryOne<DispatchRow>(
+    `SELECT * FROM dispatches WHERE id = $1`,
+    [id],
+    client,
+  );
   return r ? rowToDispatch(r) : null;
 }
 
@@ -133,16 +140,18 @@ export async function completeDispatch(
   resultFrameId: string,
   resultCommitSha: string,
   event?: DispatchEvent,
+  client?: Executor,
 ): Promise<Dispatch | null> {
-  const existing = await getDispatchById(id);
+  const existing = await getDispatchById(id, client);
   if (!existing) return null;
   const events = event ? [...existing.events, event] : existing.events;
   await exec(
     `UPDATE dispatches SET status = 'done', events_json = $1, result_frame_id = $2,
        result_commit_sha = $3, finished_at = $4 WHERE id = $5`,
     [JSON.stringify(events), resultFrameId, resultCommitSha, nowIso(), id],
+    client,
   );
-  return getDispatchById(id);
+  return getDispatchById(id, client);
 }
 
 export async function failDispatch(id: string, message: string): Promise<Dispatch | null> {

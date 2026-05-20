@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { Transform, type Readable } from 'node:stream';
 import type {
   AbandonTestSessionRequest,
   CompleteTestSessionRequest,
@@ -38,6 +39,41 @@ const TASK_OUTCOMES: TestTaskResult['outcome'][] = [
 ];
 
 const SESSION_HEADER = 'x-foldo-session-token';
+
+/**
+ * Hard cap on a single recording upload. The body is streamed straight to
+ * blob storage, so this only bounds the size of a stored object — peak
+ * memory per request is now O(chunk), not O(file).
+ */
+const MAX_RECORDING_BYTES = 64 * 1024 * 1024; // 64 MB
+
+/** Marker error so the route can map an over-limit stream to a 413. */
+class RecordingTooLargeError extends Error {
+  constructor() {
+    super('Recording exceeds the maximum allowed size');
+    this.name = 'RecordingTooLargeError';
+  }
+}
+
+/**
+ * A Transform that passes bytes through but aborts the stream with a
+ * `RecordingTooLargeError` the moment the running total exceeds `max`.
+ * Lets the route enforce the cap on chunked uploads (no Content-Length)
+ * without ever buffering the whole body.
+ */
+function byteLimitStream(max: number): Transform {
+  let total = 0;
+  return new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      total += chunk.length;
+      if (total > max) {
+        cb(new RecordingTooLargeError());
+        return;
+      }
+      cb(null, chunk);
+    },
+  });
+}
 
 /** Load a test by its share token, but only if it's currently runnable. */
 async function loadLiveTest(token: string): Promise<Test | null> {
@@ -164,11 +200,11 @@ export async function registerTestSessionRoutes(
     } satisfies StartTestSessionResponse);
   });
 
-  // ---- Upload the recording (raw binary body) ----
+  // ---- Upload the recording (raw binary body, streamed to storage) ----
   app.post<{
     Params: { token: string; id: string };
     Querystring: { durationMs?: string };
-    Body: Buffer;
+    Body: Readable;
   }>(
     '/api/t/:token/sessions/:id/recording',
     { preHandler: rateLimitPreHandler('test-session-recording', 20, 60_000) },
@@ -192,10 +228,20 @@ export async function registerTestSessionRoutes(
           .send({ error: 'Session not found', code: 'NOT_FOUND' });
       }
 
+      // Reject oversized uploads up-front via Content-Length when present,
+      // so a stream that lies in its header is rejected before any I/O.
+      const declaredLength = Number(req.headers['content-length'] ?? 0);
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_RECORDING_BYTES) {
+        return reply.code(413).send({
+          error: 'Recording exceeds the maximum allowed size',
+          code: 'PAYLOAD_TOO_LARGE',
+        });
+      }
+
       const body = req.body;
-      if (!Buffer.isBuffer(body) || body.length === 0) {
+      if (!body || typeof body.pipe !== 'function') {
         return reply.code(400).send({
-          error: 'Recording body must be non-empty binary data',
+          error: 'Recording body must be a binary stream',
           code: 'BAD_REQUEST',
         });
       }
@@ -205,7 +251,35 @@ export async function registerTestSessionRoutes(
         Math.round(Number(req.query.durationMs ?? 0)),
       );
       const key = `recordings/${test.id}/${session.id}.webm`;
-      await getStorage().put(key, body, 'video/webm');
+
+      // Stream the body straight to storage, enforcing the cap as bytes
+      // flow — chunked uploads have no Content-Length to trust.
+      let stored;
+      try {
+        const limited = body.pipe(byteLimitStream(MAX_RECORDING_BYTES));
+        stored = await getStorage().putStream(key, limited, 'video/webm');
+      } catch (err) {
+        if (err instanceof RecordingTooLargeError) {
+          // Best-effort: drop the partial object so storage isn't littered.
+          await getStorage()
+            .remove(key)
+            .catch(() => undefined);
+          return reply.code(413).send({
+            error: 'Recording exceeds the maximum allowed size',
+            code: 'PAYLOAD_TOO_LARGE',
+          });
+        }
+        throw err;
+      }
+      if (stored.size === 0) {
+        await getStorage()
+          .remove(key)
+          .catch(() => undefined);
+        return reply.code(400).send({
+          error: 'Recording body must be non-empty binary data',
+          code: 'BAD_REQUEST',
+        });
+      }
       await saveRecording(session.id, key, durationMs);
 
       return reply.send({

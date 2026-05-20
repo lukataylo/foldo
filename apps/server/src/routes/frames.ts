@@ -16,8 +16,26 @@ import {
   updateFrame,
 } from '../repo/frames.ts';
 import { canEditBoard } from '../repo/members.ts';
+import { getStorage } from '../storage/index.ts';
 import { hub } from '../ws/hub.ts';
 import { newId, nowIso } from '../util.ts';
+
+/**
+ * If a frame's content references a blob we own (an uploaded image), return
+ * the storage key so the caller can delete it and avoid an orphan blob.
+ * Returns null for frames whose content lives entirely in Postgres.
+ */
+function storageKeyForFrame(frame: Frame): string | null {
+  const content = frame.content;
+  if (content.kind === 'image' && typeof content.url === 'string') {
+    const m = /^\/api\/uploads\/(.+)$/.exec(content.url);
+    if (m) {
+      const tail = decodeURIComponent(m[1]);
+      if (tail && !tail.includes('..')) return `uploads/${tail}`;
+    }
+  }
+  return null;
+}
 
 async function requireEditor(
   userId: string,
@@ -131,6 +149,10 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
         position: body.position,
         size: body.size,
         content: merged,
+        z: body.z,
+        hidden: body.hidden,
+        locked: body.locked,
+        style: body.style,
       });
       if (!next) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
       hub.broadcast(next.boardId, { type: 'frame.updated', frame: next });
@@ -167,6 +189,16 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
     if (!existing) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
     await requireEditor(me.id, existing.boardId);
     await deleteFrame(existing.id);
+    // Best-effort orphan-blob cleanup: an image frame owns its uploaded
+    // bytes, so dropping the row would otherwise leak the storage object.
+    const key = storageKeyForFrame(existing);
+    if (key) {
+      try {
+        await getStorage().remove(key);
+      } catch (err) {
+        req.log.warn({ err, key }, 'failed to remove frame blob');
+      }
+    }
     hub.broadcast(existing.boardId, { type: 'frame.deleted', frameId: existing.id });
     return reply.send({ ok: true } satisfies SuccessResponse);
   });

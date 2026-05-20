@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type {
+  AppFrameContent,
   Branch,
   CreateCaptureRequest,
   CreateCaptureResponse,
@@ -11,8 +12,20 @@ import { getBranchById, upsertBranch } from '../repo/branches.ts';
 import { canEditBoard } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { newCommitSha, newId, nowIso } from '../util.ts';
+import { getStorage } from '../storage/index.ts';
 
 const CAPTURES_BRANCH_ID = 'captures';
+
+/**
+ * Extension of AppFrameContent carrying capture-specific metadata that lives
+ * local to this route. We don't need a protocol bump because these fields are
+ * stored in `content_json` as free extras and any reader that doesn't know
+ * about them will simply ignore them.
+ */
+interface CaptureAppFrameContent extends AppFrameContent {
+  /** Storage key of the persisted DOM snapshot (.html), if one was supplied. */
+  domSnapshotKey?: string;
+}
 
 async function ensureCapturesBranch(boardId: string, userId: string): Promise<Branch> {
   const existing = await getBranchById(CAPTURES_BRANCH_ID);
@@ -70,9 +83,36 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
     );
     const newY = captureSiblings.length === 0 ? maxY + 120 : captureSiblings[0].position.y;
 
+    // Persist the DOM snapshot to object storage when supplied. The key is
+    // deterministic per frame so it can be re-requested without a DB look-up.
+    // Storage already recognises .html → text/html in contentTypeForKey().
+    const frameId = newId('f');
+    let domSnapshotKey: string | undefined;
+    if (body.domSnapshot) {
+      try {
+        const snapshotBuf = Buffer.from(body.domSnapshot, 'utf-8');
+        const key = `captures/${frameId}/dom-snapshot.html`;
+        await getStorage().put(key, snapshotBuf, 'text/html');
+        domSnapshotKey = key;
+      } catch (err) {
+        // Storage failures must not block the capture — log and continue.
+        req.log.warn({ err }, '[captures] failed to persist DOM snapshot');
+      }
+    }
+
+    const content: CaptureAppFrameContent = {
+      kind: 'app',
+      variant: 'baseline',
+      route: body.url,
+      viewport: body.viewport,
+      stateLabel: 'Captured',
+      iframeUrl: body.url,
+      ...(domSnapshotKey ? { domSnapshotKey } : {}),
+    };
+
     const now = nowIso();
     const frame: Frame = {
-      id: newId('f'),
+      id: frameId,
       boardId: body.boardId,
       kind: 'app',
       branchId: CAPTURES_BRANCH_ID,
@@ -81,14 +121,7 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
       age: 'just now',
       position: { x: newX, y: newY },
       size: { width: 920, height: 700 },
-      content: {
-        kind: 'app',
-        variant: 'baseline',
-        route: body.url,
-        viewport: body.viewport,
-        stateLabel: 'Captured',
-        iframeUrl: body.url,
-      },
+      content,
       capturedFromUrl: body.url,
       createdAt: now,
       updatedAt: now,

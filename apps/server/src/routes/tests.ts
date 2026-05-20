@@ -32,7 +32,11 @@ import {
   sessionCountsForTest,
   updateTest,
 } from '../repo/tests.ts';
-import { listSessionsForTest } from '../repo/testSessions.ts';
+import {
+  listRecordingKeysForTest,
+  listSessionsForTest,
+} from '../repo/testSessions.ts';
+import { getStorage } from '../storage/index.ts';
 import { probeFrameable } from '../probe.ts';
 import { hub } from '../ws/hub.ts';
 
@@ -410,7 +414,20 @@ export async function registerTestRoutes(app: FastifyInstance): Promise<void> {
           .code(404)
           .send({ error: 'Test not found', code: 'NOT_FOUND' });
       }
+      // Collect blob keys before the DB cascade wipes the session rows, so
+      // we can clean up orphan recordings + the DOM snapshot after delete.
+      const recordingKeys = await listRecordingKeysForTest(test.id);
       await deleteTest(test.id);
+      const storage = getStorage();
+      const blobKeys = [...recordingKeys];
+      if (test.domSnapshotKey) blobKeys.push(test.domSnapshotKey);
+      for (const key of blobKeys) {
+        try {
+          await storage.remove(key);
+        } catch (err) {
+          req.log.warn({ err, key }, 'failed to remove test blob');
+        }
+      }
       hub.broadcast(test.boardId, { type: 'test.deleted', testId: test.id });
       return reply.send({ ok: true });
     },

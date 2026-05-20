@@ -14,7 +14,20 @@ export interface BrowserConn {
   followingUserId?: UserId;
   /** Cursor broadcast throttling */
   lastCursorBroadcastAt: number;
+  /**
+   * Heartbeat liveness flag. Set false before each ping tick, set true on
+   * every pong. A socket still false at the next tick is considered dead
+   * (e.g. laptop sleep with no TCP FIN) and gets terminated.
+   */
+  isAlive: boolean;
 }
+
+/**
+ * If a socket's outbound buffer exceeds this, the client can't keep up.
+ * Rather than letting the buffer grow unbounded (and OOM the server) we
+ * drop the message for that socket — or close it outright.
+ */
+const MAX_BUFFERED_BYTES = 1024 * 1024; // 1 MB
 
 class Hub {
   private boards: Map<BoardId, Set<BrowserConn>> = new Map();
@@ -51,6 +64,10 @@ class Hub {
 
   /**
    * Broadcast a message to all connections on a board, optionally excluding a user.
+   *
+   * Applies per-socket backpressure: a client whose outbound buffer is
+   * already over the threshold is skipped (and closed) rather than having
+   * its buffer grown — one slow client must not OOM the server.
    */
   broadcast(boardId: BoardId, message: ServerMessage, exceptUserId?: UserId): void {
     const set = this.boards.get(boardId);
@@ -59,11 +76,26 @@ class Hub {
     for (const conn of set) {
       if (exceptUserId && conn.userId === exceptUserId) continue;
       try {
+        if (conn.socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+          // Client is too far behind — terminate it so the buffer can be
+          // reclaimed. The socket's `close` handler unsubscribes it.
+          conn.socket.terminate();
+          continue;
+        }
         conn.socket.send(payload);
       } catch {
         // ignore, connection may be closing
       }
     }
+  }
+
+  /** Every connection across all boards. Used by the heartbeat sweep. */
+  allConnections(): BrowserConn[] {
+    const out: BrowserConn[] = [];
+    for (const set of this.boards.values()) {
+      for (const c of set) out.push(c);
+    }
+    return out;
   }
 }
 

@@ -38,9 +38,6 @@ function verifyGithubSignature(
 export async function registerWebhookRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: GithubPushPayload }>(
     '/api/webhooks/github',
-    {
-      config: { rawBody: true },
-    },
     async (req, reply) => {
       const secret = process.env.FOLDO_GITHUB_WEBHOOK_SECRET;
       // We need raw body for HMAC; Fastify parses JSON before our handler runs,

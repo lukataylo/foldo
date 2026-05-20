@@ -48,6 +48,9 @@ export async function registerUploadRoutes(app: FastifyInstance): Promise<void> 
     // Default Fastify JSON limit is 1 MB; raise it for image uploads so a
     // typical PNG (which base64-bloats by ~33%) fits comfortably.
     bodyLimit: 16 * 1024 * 1024,
+    // Per-route cap on uploads (storage + bandwidth costs money). Looser
+    // than the global cap would imply but still bounded.
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (req, reply) => {
     requireUser(req);
     const body = req.body ?? ({} as UploadBody);

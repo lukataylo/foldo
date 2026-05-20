@@ -8,6 +8,7 @@ interface UserRow {
   initial: string;
   color: string;
   email: string | null;
+  email_verified_at: string | null;
   kind: 'human' | 'agent';
   created_at: string;
 }
@@ -21,6 +22,28 @@ function rowToUser(r: UserRow): User {
     email: r.email ?? undefined,
     kind: r.kind,
   };
+}
+
+/**
+ * Whether a user has confirmed their email address. Surfaced separately from
+ * the `User` shape (which is shared protocol) so the client can show the
+ * "verify your email" banner. Returns false for users without the column set.
+ */
+export async function isEmailVerified(id: string): Promise<boolean> {
+  const r = await queryOne<{ email_verified_at: string | null }>(
+    `SELECT email_verified_at FROM users WHERE id = $1`,
+    [id],
+  );
+  return Boolean(r?.email_verified_at);
+}
+
+/** Stamp `email_verified_at = now()` for a user. Idempotent. */
+export async function markEmailVerified(id: string): Promise<void> {
+  await exec(
+    `UPDATE users SET email_verified_at = now()
+      WHERE id = $1 AND email_verified_at IS NULL`,
+    [id],
+  );
 }
 
 export async function listUsers(): Promise<User[]> {
@@ -79,6 +102,8 @@ export async function updateUserProfile(
   if (patch.email !== undefined) {
     sets.push(`email = $${i++}`);
     args.push(patch.email);
+    // Changing the email address invalidates any prior verification.
+    sets.push(`email_verified_at = NULL`);
   }
   if (patch.color !== undefined) {
     sets.push(`color = $${i++}`);

@@ -20,25 +20,70 @@ pool.on('error', (err) => {
   console.error('pg pool error:', err);
 });
 
+/**
+ * Anything that can run a query: the pool itself or a checked-out client
+ * inside a transaction. Repo write functions accept an optional `Executor`
+ * so callers can compose several writes in one `withTx`.
+ */
+export interface Executor {
+  query<T extends pg.QueryResultRow = pg.QueryResultRow>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<pg.QueryResult<T>>;
+}
+
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   sql: string,
   params?: unknown[],
+  client?: Executor,
 ): Promise<T[]> {
-  const res = await pool.query<T>(sql, params as never);
+  const res = await (client ?? pool).query<T>(sql, params as never);
   return res.rows;
 }
 
 export async function queryOne<T extends pg.QueryResultRow = pg.QueryResultRow>(
   sql: string,
   params?: unknown[],
+  client?: Executor,
 ): Promise<T | null> {
-  const rows = await query<T>(sql, params);
+  const rows = await query<T>(sql, params, client);
   return rows[0] ?? null;
 }
 
-export async function exec(sql: string, params?: unknown[]): Promise<number> {
-  const res = await pool.query(sql, params as never);
+export async function exec(
+  sql: string,
+  params?: unknown[],
+  client?: Executor,
+): Promise<number> {
+  const res = await (client ?? pool).query(sql, params as never);
   return res.rowCount ?? 0;
+}
+
+/**
+ * Run `fn` inside a single transaction: acquires a pooled client, BEGINs,
+ * COMMITs on success, ROLLBACKs on throw, and always releases the client.
+ * Pass the supplied client through to repo write functions to compose
+ * multiple writes atomically.
+ */
+export async function withTx<T>(
+  fn: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      /* connection may already be dead; release will discard it */
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 const SCHEMA = `
@@ -285,11 +330,54 @@ CREATE INDEX IF NOT EXISTS idx_test_task_results_session ON test_task_results(se
 
 CREATE INDEX IF NOT EXISTS idx_frames_board ON frames(board_id);
 CREATE INDEX IF NOT EXISTS idx_comments_frame ON comments(frame_id);
+CREATE INDEX IF NOT EXISTS idx_comments_board ON comments(board_id);
 CREATE INDEX IF NOT EXISTS idx_dispatches_board ON dispatches(board_id);
+
+-- Layers / plugin metadata. z is the stacking order (higher = on top), hidden
+-- toggles visibility from the layers panel, locked blocks pointer interactions,
+-- style_json holds the design-plugin overrides (border, fill, font, layout).
+-- All are optional; legacy frames default to z=0, hidden/locked=false.
+ALTER TABLE frames ADD COLUMN IF NOT EXISTS z INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE frames ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE frames ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE frames ADD COLUMN IF NOT EXISTS style_json TEXT;
+CREATE INDEX IF NOT EXISTS idx_frames_board_z ON frames(board_id, z);
+
+-- Single-use tokens for account-lifecycle emails: password reset and email
+-- verification. Each token is consumed once (consumed_at set) and expires.
+CREATE TABLE IF NOT EXISTS auth_action_tokens (
+  token TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('password_reset','email_verify')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user ON auth_action_tokens(user_id);
 `;
 
+// Fixed advisory-lock key for schema migration. Any constant works as long
+// as it's stable across deploys; this is the low-order bits of "foldo".
+const SCHEMA_LOCK_KEY = 0x666f6c64;
+
+/**
+ * Apply the schema. Wrapped in a Postgres advisory lock so two instances
+ * booting at once (Railway rolling deploy) serialise instead of deadlocking
+ * each other on concurrent ALTER TABLE / CREATE INDEX. The lock is held on a
+ * single dedicated connection for the migration's whole lifetime.
+ */
 export async function initSchema(): Promise<void> {
-  await pool.query(SCHEMA);
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_KEY]);
+    try {
+      await client.query(SCHEMA);
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_KEY]);
+    }
+  } finally {
+    client.release();
+  }
 }
 
 export async function closePool(): Promise<void> {

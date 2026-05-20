@@ -1,10 +1,13 @@
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import type { Readable } from 'node:stream';
 import type { Storage, StoredObject } from './index.ts';
 
 /**
@@ -73,6 +76,31 @@ export class S3Storage implements Storage {
     return { key, size: body.length, contentType };
   }
 
+  async putStream(
+    key: string,
+    body: Readable,
+    contentType: string,
+  ): Promise<StoredObject> {
+    let size = 0;
+    body.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+    });
+    // `Upload` does a streaming multipart PUT — it never needs the total
+    // length up front, so a recording is uploaded as it arrives rather than
+    // buffered whole in memory.
+    const upload = new Upload({
+      client: this.client,
+      params: {
+        Bucket: this.bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+      },
+    });
+    await upload.done();
+    return { key, size, contentType };
+  }
+
   async get(
     key: string,
   ): Promise<{ body: Buffer; contentType: string } | null> {
@@ -99,6 +127,16 @@ export class S3Storage implements Storage {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async remove(key: string): Promise<void> {
+    try {
+      await this.client.send(
+        new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+    } catch {
+      // best-effort: S3 DELETE is already idempotent for missing keys
     }
   }
 

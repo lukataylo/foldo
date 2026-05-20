@@ -5,7 +5,9 @@ import {
   getUserByEmail,
   getUserById,
   getUserPasswordHash,
+  isEmailVerified,
   listUsers,
+  markEmailVerified,
   setUserPasswordHash,
   updateUserProfile,
   upsertUser,
@@ -19,10 +21,23 @@ import {
   listApiTokensForUser,
   listSessionsForUser,
 } from '../repo/sessions.ts';
+import {
+  consumeAuthActionToken,
+  consumePendingTokensForUser,
+  createAuthActionToken,
+} from '../repo/authActionTokens.ts';
 import { addBoardMember } from '../repo/members.ts';
 import { DEMO_BOARD_ID } from '../seed.ts';
 import { extractBearerToken, requireUser } from '../auth.ts';
+import { rateLimitPreHandler } from '../rateLimit.ts';
 import { nowIso } from '../util.ts';
+import {
+  isDevMailTransport,
+  lastEmailTo,
+  passwordResetEmail,
+  sendEmail,
+  verifyEmailEmail,
+} from '../email/index.ts';
 
 const scrypt = promisify(scryptCb) as (
   pw: string,
@@ -63,6 +78,39 @@ function newSessionToken(): string {
 
 function newUserId(): string {
   return `u-${randomBytes(8).toString('hex')}`;
+}
+
+/** Opaque, high-entropy token for password-reset / email-verify links. */
+function newActionToken(): string {
+  return randomBytes(32).toString('hex');
+}
+
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
+const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Mint a fresh email-verification token for a user and send the email. Any
+ * older pending verification tokens are invalidated first so only the latest
+ * link works. Best-effort: a mail failure is logged, never thrown to callers.
+ */
+async function issueVerificationEmail(
+  userId: string,
+  email: string,
+): Promise<void> {
+  try {
+    await consumePendingTokensForUser(userId, 'email_verify');
+    const token = newActionToken();
+    await createAuthActionToken({
+      token,
+      userId,
+      kind: 'email_verify',
+      expiresAt: new Date(Date.now() + EMAIL_VERIFY_TTL_MS),
+    });
+    const msg = verifyEmailEmail(token);
+    await sendEmail({ to: email, subject: msg.subject, html: msg.html });
+  } catch (err) {
+    console.warn('[auth] could not send verification email:', String(err));
+  }
 }
 
 function deriveInitial(name: string): string {
@@ -106,7 +154,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ users: await listUsers() });
   });
 
-  app.post<{ Body: SignupBody }>('/api/auth/signup', async (req, reply) => {
+  app.post<{ Body: SignupBody }>(
+    '/api/auth/signup',
+    { preHandler: rateLimitPreHandler('auth-signup', 8, 60_000) },
+    async (req, reply) => {
     const email = (req.body?.email ?? '').trim();
     const password = req.body?.password ?? '';
     const name = (req.body?.name ?? '').trim();
@@ -154,11 +205,22 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     const token = newSessionToken();
     await createSession(token, id, req.headers['user-agent']);
 
+    // Soft email verification: send a verify link, but don't block login.
+    await issueVerificationEmail(id, email);
+
     const user = await getUserById(id);
-    return reply.send({ token, user, createdAt: nowIso() });
+    return reply.send({
+      token,
+      user,
+      emailVerified: false,
+      createdAt: nowIso(),
+    });
   });
 
-  app.post<{ Body: LoginBody }>('/api/auth/login', async (req, reply) => {
+  app.post<{ Body: LoginBody }>(
+    '/api/auth/login',
+    { preHandler: rateLimitPreHandler('auth-login', 12, 60_000) },
+    async (req, reply) => {
     const email = (req.body?.email ?? '').trim();
     const password = req.body?.password ?? '';
     if (!email || !password) {
@@ -180,7 +242,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
     const token = newSessionToken();
     await createSession(token, user.id, req.headers['user-agent']);
-    return reply.send({ token, user });
+    const emailVerified = await isEmailVerified(user.id);
+    return reply.send({ token, user, emailVerified });
   });
 
   app.post('/api/auth/logout', async (req, reply) => {
@@ -188,6 +251,158 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     if (token) await deleteSession(token);
     return reply.send({ ok: true });
   });
+
+  // ---------- password reset ----------
+
+  // ALWAYS returns 200 with the same shape, whether or not the email maps to
+  // an account — so the endpoint can't be used to enumerate registered users.
+  // The token + email work is fire-and-forget (not awaited) so response
+  // timing doesn't differ between a hit and a miss — closing a timing oracle.
+  app.post<{ Body: { email?: string } }>(
+    '/api/auth/request-password-reset',
+    { preHandler: rateLimitPreHandler('auth-request-reset', 5, 60_000) },
+    async (req, reply) => {
+      const email = (req.body?.email ?? '').trim();
+      if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        // Deliberately NOT awaited — see comment above.
+        void (async () => {
+          try {
+            const user = await getUserByEmail(email);
+            if (!user) return;
+            // Only accounts that actually have a password can be reset
+            // (demo / agent accounts have none).
+            const hash = await getUserPasswordHash(user.id);
+            if (!hash) return;
+            await consumePendingTokensForUser(user.id, 'password_reset');
+            const token = newActionToken();
+            await createAuthActionToken({
+              token,
+              userId: user.id,
+              kind: 'password_reset',
+              expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+            });
+            const msg = passwordResetEmail(token);
+            await sendEmail({ to: email, subject: msg.subject, html: msg.html });
+          } catch (err) {
+            console.warn('[auth] password-reset email failed:', String(err));
+          }
+        })();
+      }
+      return reply.send({
+        ok: true,
+        message:
+          'If an account exists for that email, a reset link is on its way.',
+      });
+    },
+  );
+
+  app.post<{ Body: { token?: string; password?: string } }>(
+    '/api/auth/reset-password',
+    { preHandler: rateLimitPreHandler('auth-reset-password', 10, 60_000) },
+    async (req, reply) => {
+      const token = (req.body?.token ?? '').trim();
+      const password = req.body?.password ?? '';
+      if (!token) {
+        return reply
+          .code(400)
+          .send({ error: 'Reset token required', code: 'BAD_REQUEST' });
+      }
+      if (password.length < PASSWORD_MIN || password.length > PASSWORD_MAX) {
+        return reply.code(400).send({
+          error: `Password must be ${PASSWORD_MIN}–${PASSWORD_MAX} characters`,
+          code: 'BAD_REQUEST',
+        });
+      }
+      const row = await consumeAuthActionToken(token, 'password_reset');
+      if (!row) {
+        return reply.code(400).send({
+          error: 'This reset link is invalid or has expired. Request a new one.',
+          code: 'INVALID_TOKEN',
+        });
+      }
+      const newHash = await hashPassword(password);
+      await setUserPasswordHash(row.user_id, newHash);
+      // Revoke every existing session — a reset means the prior password
+      // (and any session minted with it) is no longer trusted.
+      const revoked = await deleteAllSessionsForUserExcept(row.user_id, '');
+      return reply.send({ ok: true, revokedSessions: revoked });
+    },
+  );
+
+  // ---------- email verification ----------
+
+  app.post<{ Body: { token?: string } }>(
+    '/api/auth/verify-email',
+    { preHandler: rateLimitPreHandler('auth-verify-email', 20, 60_000) },
+    async (req, reply) => {
+      const token = (req.body?.token ?? '').trim();
+      if (!token) {
+        return reply
+          .code(400)
+          .send({ error: 'Verification token required', code: 'BAD_REQUEST' });
+      }
+      const row = await consumeAuthActionToken(token, 'email_verify');
+      if (!row) {
+        return reply.code(400).send({
+          error:
+            'This verification link is invalid or has expired. Request a new one.',
+          code: 'INVALID_TOKEN',
+        });
+      }
+      await markEmailVerified(row.user_id);
+      return reply.send({ ok: true });
+    },
+  );
+
+  app.post(
+    '/api/auth/resend-verification',
+    { preHandler: rateLimitPreHandler('auth-resend-verification', 4, 60_000) },
+    async (req, reply) => {
+    const me = requireUser(req);
+    if (await isEmailVerified(me.id)) {
+      return reply.send({ ok: true, alreadyVerified: true });
+    }
+    if (!me.email) {
+      return reply
+        .code(400)
+        .send({ error: 'This account has no email address', code: 'NO_EMAIL' });
+    }
+    await issueVerificationEmail(me.id, me.email);
+    return reply.send({ ok: true });
+  });
+
+  // Authenticated identity + verification status, so the client can decide
+  // whether to show the "verify your email" banner.
+  app.get('/api/auth/me', async (req, reply) => {
+    const me = requireUser(req);
+    return reply.send({ user: me, emailVerified: await isEmailVerified(me.id) });
+  });
+
+  // ---------- dev-only mail inspection ----------
+  //
+  // Returns the most recent email sent to an address so E2E specs can extract
+  // reset / verification links. 404 in production — never exposes mail there.
+  app.get<{ Querystring: { to?: string } }>(
+    '/api/dev/last-email',
+    async (req, reply) => {
+      if (process.env.NODE_ENV === 'production' || !isDevMailTransport()) {
+        return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' });
+      }
+      const to = (req.query?.to ?? '').trim();
+      if (!to) {
+        return reply
+          .code(400)
+          .send({ error: 'Query param "to" required', code: 'BAD_REQUEST' });
+      }
+      const email = lastEmailTo(to);
+      if (!email) {
+        return reply
+          .code(404)
+          .send({ error: 'No email for that address', code: 'NOT_FOUND' });
+      }
+      return reply.send({ email });
+    },
+  );
 
   // ---------- authenticated routes ----------
 

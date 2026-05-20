@@ -1,5 +1,5 @@
 import type { Branch, Commit } from '@foldo/protocol';
-import { query, queryOne, exec } from '../db.ts';
+import { query, queryOne, exec, type Executor } from '../db.ts';
 import { nowIso } from '../util.ts';
 
 interface BranchRow {
@@ -43,7 +43,7 @@ export async function getBranchById(id: string): Promise<Branch | null> {
   return r ? rowToBranch(r) : null;
 }
 
-export async function upsertBranch(b: Branch): Promise<Branch> {
+export async function upsertBranch(b: Branch, client?: Executor): Promise<Branch> {
   await exec(
     `INSERT INTO branches (id, board_id, name, authored_by, author_user_id, agent_name, color, head_sha, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -68,16 +68,21 @@ export async function upsertBranch(b: Branch): Promise<Branch> {
       b.createdAt,
       b.updatedAt,
     ],
+    client,
   );
   return b;
 }
 
-export async function updateBranchHead(branchId: string, sha: string): Promise<void> {
-  await exec(`UPDATE branches SET head_sha = $1, updated_at = $2 WHERE id = $3`, [
-    sha,
-    nowIso(),
-    branchId,
-  ]);
+export async function updateBranchHead(
+  branchId: string,
+  sha: string,
+  client?: Executor,
+): Promise<void> {
+  await exec(
+    `UPDATE branches SET head_sha = $1, updated_at = $2 WHERE id = $3`,
+    [sha, nowIso(), branchId],
+    client,
+  );
 }
 
 interface CommitRow {
@@ -100,7 +105,7 @@ function rowToCommit(r: CommitRow): Commit {
   };
 }
 
-export async function upsertCommit(c: Commit): Promise<Commit> {
+export async function upsertCommit(c: Commit, client?: Executor): Promise<Commit> {
   await exec(
     `INSERT INTO commits (sha, branch_id, message, author_user_id, parent_sha, created_at)
      VALUES ($1, $2, $3, $4, $5, $6)
@@ -109,6 +114,7 @@ export async function upsertCommit(c: Commit): Promise<Commit> {
        author_user_id = EXCLUDED.author_user_id,
        parent_sha = EXCLUDED.parent_sha`,
     [c.sha, c.branchId, c.message, c.authorUserId, c.parentSha ?? null, c.createdAt],
+    client,
   );
   return c;
 }

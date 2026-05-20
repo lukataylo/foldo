@@ -4,10 +4,11 @@ import type {
   CommentPin,
   CommentReply,
   CommentTarget,
+  User,
 } from '@foldo/protocol';
 import { query, queryOne, exec } from '../db.ts';
 import { nowIso, parseJson } from '../util.ts';
-import { getUserById } from './users.ts';
+import { getUserById, listUsers } from './users.ts';
 
 interface CommentRow {
   id: string;
@@ -29,8 +30,16 @@ interface CommentRow {
   replies_json: string;
 }
 
-async function rowToComment(r: CommentRow): Promise<Comment> {
-  const author = await getUserById(r.author_user_id);
+/**
+ * Build a Comment from a row, resolving author display fields via the
+ * supplied lookup. The lookup is in-memory (from an already-loaded user
+ * list) so per-comment hydration costs no extra query — see W3.1.
+ */
+function rowToComment(
+  r: CommentRow,
+  resolveUser: (id: string) => User | undefined,
+): Comment {
+  const author = resolveUser(r.author_user_id);
   const pin: CommentPin | undefined =
     r.pin_x != null && r.pin_y != null ? { x: Number(r.pin_x), y: Number(r.pin_y) } : undefined;
   const anchor: CommentAnchor | undefined = r.anchor_section
@@ -63,17 +72,31 @@ async function rowToComment(r: CommentRow): Promise<Comment> {
   };
 }
 
-export async function listCommentsForBoard(boardId: string): Promise<Comment[]> {
+/**
+ * List a board's comments. Pass `users` (the board route already loads the
+ * full user list) to resolve author info in memory — without it, this falls
+ * back to a single `listUsers()` query. Either way it's one query for
+ * authors, never one-per-comment.
+ */
+export async function listCommentsForBoard(
+  boardId: string,
+  users?: User[],
+): Promise<Comment[]> {
   const rows = await query<CommentRow>(
     `SELECT * FROM comments WHERE board_id = $1 ORDER BY created_at`,
     [boardId],
   );
-  return Promise.all(rows.map(rowToComment));
+  const userList = users ?? (await listUsers());
+  const byId = new Map(userList.map((u) => [u.id, u]));
+  return rows.map((r) => rowToComment(r, (id) => byId.get(id)));
 }
 
 export async function getCommentById(id: string): Promise<Comment | null> {
   const r = await queryOne<CommentRow>(`SELECT * FROM comments WHERE id = $1`, [id]);
-  return r ? rowToComment(r) : null;
+  if (!r) return null;
+  // Single-comment fetch: resolve just this one author.
+  const author = await getUserById(r.author_user_id);
+  return rowToComment(r, (id) => (id === author?.id ? author : undefined));
 }
 
 export interface CommentInsert {

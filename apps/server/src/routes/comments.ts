@@ -39,10 +39,15 @@ async function requireMember(userId: string, boardId: string): Promise<void> {
 }
 
 export async function registerCommentRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: CreateCommentRequest }>('/api/comments', async (req, reply) => {
+  app.post<{ Body: CreateCommentRequest }>('/api/comments', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
     const user = requireUser(req);
     const body = req.body;
-    if (!body?.boardId || !body?.frameId || !body?.text) {
+    // `text` may be empty when the client opens a fresh drop-pin in compose
+    // mode — the actual body lands via the subsequent PATCH. Require the
+    // field to be a string but allow ''.
+    if (!body?.boardId || !body?.frameId || typeof body?.text !== 'string') {
       return reply.code(400).send({ error: 'Invalid comment body', code: 'BAD_REQUEST' });
     }
     // Comments require membership; even viewers can leave them in this MVP.

@@ -2,6 +2,7 @@
 // Demo auth: the "token" is the userId; the server accepts it as `Bearer <userId>`.
 
 import type { ApiError } from '@foldo/protocol';
+import { handleExpiredSession } from '../lib/session';
 
 export const API_BASE =
   (typeof window !== 'undefined' &&
@@ -66,6 +67,12 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     signal: opts.signal,
   });
   if (!res.ok) {
+    // A 401 on an authenticated request means the stored session is dead —
+    // clear it and bounce to /login rather than leaving the app stuck
+    // showing logged-in chrome. Auth endpoints (login etc.) 401 legitimately.
+    if (res.status === 401 && !path.includes('/api/auth/')) {
+      handleExpiredSession();
+    }
     let bodyJson: ApiError = { error: res.statusText, code: 'http_error' };
     try {
       bodyJson = (await res.json()) as ApiError;

@@ -1,4 +1,5 @@
 import { API_BASE, readToken, type AuthUser } from '../marketing/auth';
+import { handleExpiredSession } from '../lib/session';
 
 export interface HomeBoardSummary {
   id: string;
@@ -35,6 +36,9 @@ function authHeaders(): Record<string, string> {
 
 async function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
+    // A dead session → clear it and redirect to /login (the home dashboard
+    // only ever calls authenticated endpoints, so any 401 here is that).
+    if (res.status === 401) handleExpiredSession();
     let msg = `Request failed (${res.status})`;
     try {
       const data = (await res.json()) as { error?: string };

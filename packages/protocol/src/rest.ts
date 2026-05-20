@@ -11,6 +11,7 @@ import type {
   CommentTarget,
   Dispatch,
   Frame,
+  FrameStyle,
   RecipeStep,
   SourceFile,
   User,
@@ -19,6 +20,7 @@ import type {
   ArrowFrameContent,
   FrameContent,
   FrameKind,
+  HtmlFrameContent,
   ImageFrameContent,
   MarkdownFrameContent,
   StickyFrameContent,
@@ -81,7 +83,13 @@ export interface UpdateFrameRequest {
     | Partial<MarkdownFrameContent>
     | Partial<StickyFrameContent>
     | Partial<ArrowFrameContent>
-    | Partial<ImageFrameContent>;
+    | Partial<ImageFrameContent>
+    | Partial<HtmlFrameContent>;
+  z?: number;
+  hidden?: boolean;
+  locked?: boolean;
+  /** Pass `null` to clear, an object to set, omit to leave unchanged. */
+  style?: FrameStyle | null;
 }
 
 // ---------- Comments ----------

@@ -56,7 +56,13 @@ export interface Commit {
 }
 
 // ---------- Frames ----------
-export type FrameKind =
+/**
+ * Frame kind. Built-in kinds are listed below as the `BuiltinFrameKind` union;
+ * the wire type is widened to `string` so plugins can register their own
+ * (e.g. "html", "table") without protocol bumps. Servers store this opaquely;
+ * the canvas renders whichever plugin claims the kind.
+ */
+export type BuiltinFrameKind =
   | 'app'
   | 'markdown'
   | 'sticky'
@@ -64,6 +70,8 @@ export type FrameKind =
   | 'image'
   | 'test_summary'
   | 'test_session';
+
+export type FrameKind = BuiltinFrameKind | (string & {});
 
 export type Variant = 'baseline' | 'cta-revamp' | 'pro-highlight';
 
@@ -181,6 +189,12 @@ export interface TestSessionFrameContent {
   completedAt?: string;
 }
 
+export interface HtmlFrameContent {
+  kind: 'html';
+  /** Sanitised HTML body (host runs DOMPurify before rendering). */
+  html: string;
+}
+
 export type FrameContent =
   | AppFrameContent
   | MarkdownFrameContent
@@ -188,7 +202,38 @@ export type FrameContent =
   | ArrowFrameContent
   | ImageFrameContent
   | TestSummaryFrameContent
-  | TestSessionFrameContent;
+  | TestSessionFrameContent
+  | HtmlFrameContent;
+
+/**
+ * Visual / layout overrides applied by the Design plugin. All fields are
+ * optional; the canvas reads `frame.style` and merges it onto the outer
+ * wrapper via CSS variables, so a plugin can ship without persisting style
+ * and an existing frame can opt in to one field at a time.
+ */
+export interface FrameStyle {
+  /** Background fill. Any CSS color. */
+  fill?: string;
+  /** Border config. `width:0` removes the border. */
+  border?: {
+    width?: number;
+    color?: string;
+    radius?: number;
+    style?: 'solid' | 'dashed' | 'dotted';
+  };
+  /** Padding inside the frame's content box. */
+  padding?: { top?: number; right?: number; bottom?: number; left?: number };
+  /** Text styling applied to the frame's body (where it makes sense). */
+  font?: {
+    family?: string;
+    size?: number;
+    weight?: number;
+    lineHeight?: number;
+    color?: string;
+  };
+  /** Opacity 0..1. */
+  opacity?: number;
+}
 
 export interface Frame {
   id: FrameId;
@@ -206,6 +251,14 @@ export interface Frame {
   generatedByDispatchId?: DispatchId;
   /** Coming from extension capture, no repo origin */
   capturedFromUrl?: string;
+  /** Stacking order (higher = on top of lower). Default 0. */
+  z?: number;
+  /** Hidden from the canvas (still in the layers panel). */
+  hidden?: boolean;
+  /** Pointer interaction is disabled on this frame. */
+  locked?: boolean;
+  /** Design-plugin styling overrides. */
+  style?: FrameStyle;
   createdAt: string;
   updatedAt: string;
 }

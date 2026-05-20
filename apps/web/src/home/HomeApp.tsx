@@ -16,10 +16,17 @@ import { Sidebar } from './Sidebar';
 import { BoardCard } from './BoardCard';
 import { AccountMenu } from './AccountMenu';
 import { NewBoardModal } from './NewBoardModal';
+import { MembersModal } from './MembersModal';
+import { RenameBoardModal } from './RenameBoardModal';
+import { DeleteBoardModal } from './DeleteBoardModal';
 import { CommandPalette } from './CommandPalette';
+import VerifyEmailBanner from '../marketing/VerifyEmailBanner';
 import { IconSearch } from './icons';
+import { searchComments, type CommentSearchResult } from './api';
 
 type View = 'all' | 'recents' | 'starred';
+/** Sidebar membership filters — orthogonal to View. */
+export type Scope = 'everything' | 'owned' | 'shared';
 
 const RECENTS_KEY = 'foldo:recents';
 const STARRED_KEY = 'foldo:starred';
@@ -56,11 +63,19 @@ export default function HomeApp() {
   const [boards, setBoards] = useState<HomeBoardSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>('recents');
+  const [scope, setScope] = useState<Scope>('everything');
   const [search, setSearch] = useState('');
-  const [me, setMe] = useState<{ name: string; initial: string; color: string; email?: string } | null>(null);
+  const [me, setMe] = useState<{ id: string; name: string; initial: string; color: string; email?: string } | null>(null);
   const [starred, setStarred] = useState<Set<string>>(() => readStringSet(STARRED_KEY));
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Board-card kebab actions open one of these (board id being acted on).
+  const [membersFor, setMembersFor] = useState<HomeBoardSummary | null>(null);
+  const [renameFor, setRenameFor] = useState<HomeBoardSummary | null>(null);
+  const [deleteFor, setDeleteFor] = useState<HomeBoardSummary | null>(null);
+  // Comment-search results (populated when the query matches no board names
+  // by name/repo, so the search box honours its "…comments" promise).
+  const [commentHits, setCommentHits] = useState<CommentSearchResult[]>([]);
   const [newBoardOpen, setNewBoardOpen] = useState(() => {
     if (typeof location === 'undefined') return false;
     return new URLSearchParams(location.search).get('new') === '1';
@@ -80,6 +95,7 @@ export default function HomeApp() {
         if (cancelled) return;
         setBoards(b);
         setMe({
+          id: m.user.id,
           name: m.user.name,
           initial: m.user.initial,
           color: m.user.color,
@@ -97,10 +113,37 @@ export default function HomeApp() {
 
   const recents = useMemo(() => readStringSet(RECENTS_KEY), []);
 
+  // Comment search: the box promises "boards, repos, comments". Board name +
+  // repo are filtered locally; comment text needs the server. We debounce and
+  // only show comment hits for boards that DIDN'T already match by name/repo,
+  // so the result list never double-counts a board.
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) {
+      setCommentHits([]);
+      return;
+    }
+    const controller = new AbortController();
+    const handle = window.setTimeout(() => {
+      searchComments(q, controller.signal)
+        .then(setCommentHits)
+        .catch(() => {
+          // Aborted or failed — board-name search still works, so stay quiet.
+        });
+    }, 220);
+    return () => {
+      window.clearTimeout(handle);
+      controller.abort();
+    };
+  }, [search]);
+
   const filtered = useMemo(() => {
     if (!boards) return [] as HomeBoardSummary[];
     const q = search.trim().toLowerCase();
     let list = boards;
+    // Sidebar membership scope.
+    if (scope === 'owned') list = list.filter((b) => b.role === 'owner');
+    if (scope === 'shared') list = list.filter((b) => b.role !== 'owner');
     if (view === 'starred') list = list.filter((b) => starred.has(b.id));
     if (view === 'recents') {
       list = [...list].sort((a, b) => {
@@ -111,13 +154,28 @@ export default function HomeApp() {
       });
     }
     if (q.length > 0) {
+      // A board matches if its name/repo matches, OR a comment on it matches.
+      const commentBoardIds = new Set(commentHits.map((h) => h.boardId));
       list = list.filter(
         (b) =>
-          b.name.toLowerCase().includes(q) || b.repoSlug.toLowerCase().includes(q),
+          b.name.toLowerCase().includes(q) ||
+          b.repoSlug.toLowerCase().includes(q) ||
+          commentBoardIds.has(b.id),
       );
     }
     return list;
-  }, [boards, view, search, starred, recents]);
+  }, [boards, view, scope, search, starred, recents, commentHits]);
+
+  // Count of result boards surfaced purely because a comment matched.
+  const commentMatchCount = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (q.length < 2) return 0;
+    return filtered.filter(
+      (b) =>
+        !b.name.toLowerCase().includes(q) &&
+        !b.repoSlug.toLowerCase().includes(q),
+    ).length;
+  }, [filtered, search]);
 
   const toggleStar = (id: string): void => {
     setStarred((prev) => {
@@ -230,6 +288,8 @@ export default function HomeApp() {
         }
       `}</style>
 
+      <VerifyEmailBanner />
+
       <div
         className="home-shell"
         style={{
@@ -241,6 +301,8 @@ export default function HomeApp() {
         <Sidebar
           view={view}
           onView={setView}
+          scope={scope}
+          onScope={setScope}
           starredCount={starred.size}
           boards={boards}
         />
@@ -334,6 +396,12 @@ export default function HomeApp() {
               {boards == null
                 ? 'Loading the pack…'
                 : `${filtered.length} board${filtered.length === 1 ? '' : 's'}`}
+              {commentMatchCount > 0 && (
+                <span style={{ color: '#999' }}>
+                  {' '}
+                  · {commentMatchCount} matched by comment
+                </span>
+              )}
             </p>
           </div>
 
@@ -379,6 +447,9 @@ export default function HomeApp() {
                   onOpen={() => openBoard(b.id)}
                   onToggleStar={() => toggleStar(b.id)}
                   onToast={(m) => setToast(m)}
+                  onManageMembers={() => setMembersFor(b)}
+                  onRename={() => setRenameFor(b)}
+                  onDelete={() => setDeleteFor(b)}
                 />
               ))}
               <button
@@ -430,10 +501,55 @@ export default function HomeApp() {
           }
         }}
         onCreated={(b) => {
-          setBoards((prev) => (prev ? [b, ...prev] : [b]));
+          // The creator is always the owner — NewBoardModal builds a summary
+          // without a role, so stamp it here or the kebab hides owner actions.
+          const owned: HomeBoardSummary = { ...b, role: 'owner' };
+          setBoards((prev) => (prev ? [owned, ...prev] : [owned]));
           setToast(`Board "${b.name}" created.`);
         }}
       />
+      {membersFor && me && (
+        <MembersModal
+          boardId={membersFor.id}
+          boardName={membersFor.name}
+          myRole={membersFor.role ?? 'viewer'}
+          myUserId={me.id}
+          onClose={() => setMembersFor(null)}
+          onToast={(m) => setToast(m)}
+        />
+      )}
+      {renameFor && (
+        <RenameBoardModal
+          boardId={renameFor.id}
+          currentName={renameFor.name}
+          onClose={() => setRenameFor(null)}
+          onRenamed={(name) => {
+            setBoards((prev) =>
+              prev
+                ? prev.map((b) =>
+                    b.id === renameFor.id ? { ...b, name } : b,
+                  )
+                : prev,
+            );
+            setToast(`Board renamed to "${name}".`);
+          }}
+        />
+      )}
+      {deleteFor && (
+        <DeleteBoardModal
+          boardId={deleteFor.id}
+          boardName={deleteFor.name}
+          onClose={() => setDeleteFor(null)}
+          onDeleted={() => {
+            const name = deleteFor.name;
+            setBoards((prev) =>
+              prev ? prev.filter((b) => b.id !== deleteFor.id) : prev,
+            );
+            setDeleteFor(null);
+            setToast(`Board "${name}" deleted.`);
+          }}
+        />
+      )}
     </div>
   );
 }

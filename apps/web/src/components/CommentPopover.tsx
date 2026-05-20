@@ -39,11 +39,15 @@ export function CommentPopover({
   const [bodyDraft, setBodyDraft] = useState(comment.text);
   const composeRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Reset the draft if a different comment is loaded into the same popover
-  // instance (e.g. after an optimistic id → server id swap on drop-pin).
+  // Sync the draft from the incoming comment. Two cases matter:
+  //   - Opening the popover on an existing comment: take its text.
+  //   - The optimistic-to-server id swap right after a drop-pin: we MUST NOT
+  //     stomp the user's in-flight typing. While `composing` is true, the
+  //     textarea is the source of truth.
   useEffect(() => {
+    if (composing) return;
     setBodyDraft(comment.text);
-  }, [comment.id, comment.text]);
+  }, [comment.id, comment.text, composing]);
 
   // Auto-focus the compose textarea when the popover opens for a new pin.
   useEffect(() => {
@@ -107,7 +111,7 @@ export function CommentPopover({
         </div>
         <button
           onClick={onClose}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+          className="touch-target flex h-6 w-6 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
         >
           <svg width="11" height="11" viewBox="0 0 16 16">
             <path

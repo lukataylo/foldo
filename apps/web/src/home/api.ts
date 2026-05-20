@@ -178,3 +178,119 @@ export async function revokeBoardShare(
   );
   await asJson<{ ok: boolean }>(res);
 }
+
+// ---------- Board rename / delete ----------
+
+export async function renameBoard(
+  boardId: string,
+  name: string,
+): Promise<HomeBoardSummary['name']> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ name }),
+    },
+  );
+  const data = await asJson<{ board: { name: string } }>(res);
+  return data.board.name;
+}
+
+export async function deleteBoard(boardId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+  await asJson<{ ok: boolean }>(res);
+}
+
+// ---------- Board members ----------
+
+export type BoardRole = 'owner' | 'editor' | 'viewer';
+
+export interface BoardMember {
+  userId: string;
+  name: string;
+  initial: string;
+  color: string;
+  email?: string;
+  kind: 'human' | 'agent';
+  role: BoardRole;
+  joinedAt: string;
+}
+
+export async function listBoardMembers(
+  boardId: string,
+): Promise<BoardMember[]> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/members`,
+    { headers: authHeaders() },
+  );
+  const data = await asJson<{ members: BoardMember[] }>(res);
+  return data.members;
+}
+
+export async function inviteBoardMember(
+  boardId: string,
+  email: string,
+  role: 'editor' | 'viewer',
+): Promise<BoardMember> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/members`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ email, role }),
+    },
+  );
+  const data = await asJson<{ member: BoardMember }>(res);
+  return data.member;
+}
+
+export async function changeMemberRole(
+  boardId: string,
+  userId: string,
+  role: BoardRole,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/members/${encodeURIComponent(userId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ role }),
+    },
+  );
+  await asJson<{ ok: boolean }>(res);
+}
+
+export async function removeBoardMember(
+  boardId: string,
+  userId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/members/${encodeURIComponent(userId)}`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+  await asJson<{ ok: boolean }>(res);
+}
+
+// ---------- Comment search ----------
+
+export interface CommentSearchResult {
+  id: string;
+  boardId: string;
+  text: string;
+}
+
+export async function searchComments(
+  q: string,
+  signal?: AbortSignal,
+): Promise<CommentSearchResult[]> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/search/comments?q=${encodeURIComponent(q)}`,
+    { headers: authHeaders(), signal },
+  );
+  const data = await asJson<{ results: CommentSearchResult[] }>(res);
+  return data.results;
+}

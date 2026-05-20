@@ -1,42 +1,35 @@
+import type { HTMLAttributes } from 'react';
 import type { Branch, Comment, Frame, ImageFrameContent } from '@foldo/protocol';
-import { FrameMeta } from './FrameMeta';
+import { FrameShell } from './FrameShell';
 import { CommentPin } from './CommentPin';
 import { useFrameDrag } from './useFrameDrag';
+import { frameStyleToCss } from '../plugins/frameStyle';
 import type { Tool } from '../types';
 
 interface Props {
   frame: Frame;
   branch: Branch;
-  zoom?: number;
   tool?: Tool;
   comments?: Comment[];
   onDropPin?: (frameId: string, xRel: number, yRel: number) => void;
   onCommentClick?: (frameId: string, comment: Comment) => void;
+  wrapperProps?: HTMLAttributes<HTMLDivElement>;
 }
 
 export function ImageFrame({
   frame,
   branch,
-  zoom = 1,
   tool = 'select',
   comments = [],
   onDropPin,
   onCommentClick,
+  wrapperProps,
 }: Props) {
   const c = frame.content as ImageFrameContent;
   const src = c.url ?? c.dataUrl ?? '';
-  const { handlers: dragHandlers } = useFrameDrag({ frame, zoom });
+  const { handlers: dragHandlers } = useFrameDrag({ frame });
   return (
-    <div
-      className="absolute"
-      style={{
-        left: frame.position.x,
-        top: frame.position.y,
-        width: frame.size.width,
-        height: frame.size.height,
-      }}
-    >
-      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
+    <FrameShell frame={frame} branch={branch} wrapperProps={wrapperProps}>
       <div
         {...dragHandlers}
         className="relative"
@@ -52,6 +45,7 @@ export function ImageFrame({
           pointerEvents: 'auto',
           cursor: 'grab',
           userSelect: 'none',
+          ...frameStyleToCss(frame.style),
         }}
       >
         {src ? (
@@ -121,6 +115,6 @@ export function ImageFrame({
             />
           ))}
       </div>
-    </div>
+    </FrameShell>
   );
 }

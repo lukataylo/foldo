@@ -16,7 +16,7 @@ export function CommentPin({ comment, frameSize, onClick }: Props) {
         e.stopPropagation();
         onClick();
       }}
-      className="absolute z-30 flex h-7 w-7 -translate-x-1/2 -translate-y-full items-center justify-center"
+      className="touch-target absolute z-30 flex h-7 w-7 -translate-x-1/2 -translate-y-full items-center justify-center"
       style={{ left: cx, top: cy }}
       aria-label={`Comment by ${comment.authorName}`}
     >

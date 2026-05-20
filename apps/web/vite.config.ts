@@ -17,4 +17,24 @@ export default defineConfig({
     // (vite preview rejects unknown hosts by default in v5.)
     allowedHosts: true,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // Core React runtime — loaded on every page.
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
+            return 'vendor-react';
+          }
+          // Router / navigation utilities.
+          if (id.includes('node_modules/react-router')) {
+            return 'vendor-router';
+          }
+          // All remaining node_modules go into a shared vendor chunk.
+          if (id.includes('node_modules/')) {
+            return 'vendor';
+          }
+        },
+      },
+    },
+  },
 });

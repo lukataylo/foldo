@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react';
 import type {
   Board,
   Branch,
@@ -6,13 +6,15 @@ import type {
   Frame,
   MarkdownFrameContent,
 } from '@foldo/protocol';
-import { FrameMeta } from './FrameMeta';
+import { FrameShell } from './FrameShell';
 import { CommentPin } from './CommentPin';
 import { MarkdownView, parseMarkdown } from './Markdown';
 import { getSource } from '../api/sources';
 import { updateFrame as apiUpdateFrame } from '../api/frames';
 import { boardStore } from '../state/BoardStore';
 import { useBoardSelector } from '../state/useBoardStore';
+import { mutate } from '../lib/mutate';
+import { frameStyleToCss } from '../plugins/frameStyle';
 import type { Tool } from '../types';
 
 interface Props {
@@ -22,7 +24,6 @@ interface Props {
   comments: Comment[];
   tool: Tool;
   inViewport: boolean;
-  zoom?: number;
   onSelectMdLine: (
     frameId: string,
     sectionId: string,
@@ -31,6 +32,7 @@ interface Props {
   ) => void;
   onCommentClick: (frameId: string, comment: Comment) => void;
   onDropPin?: (frameId: string, xRel: number, yRel: number) => void;
+  wrapperProps?: HTMLAttributes<HTMLDivElement>;
 }
 
 export function MarkdownFrame({
@@ -40,10 +42,10 @@ export function MarkdownFrame({
   comments,
   tool,
   inViewport,
-  zoom = 1,
   onSelectMdLine,
   onCommentClick,
   onDropPin,
+  wrapperProps,
 }: Props) {
   const content = frame.content as MarkdownFrameContent;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -104,43 +106,36 @@ export function MarkdownFrame({
   const saveEdit = async (): Promise<void> => {
     if (saving) return;
     setSaving(true);
-    try {
-      const nextContent: MarkdownFrameContent = {
-        ...content,
-        body: draft,
-      };
+    const prev = boardStore.getSnapshot().frames.get(frame.id) ?? frame;
+    const nextContent: MarkdownFrameContent = { ...content, body: draft };
+    const updated = await mutate({
       // Optimistic local update so the UX feels snappy.
-      boardStore.upsertFrame({
-        ...frame,
-        content: nextContent,
-        updatedAt: new Date().toISOString(),
-      });
-      const updated = await apiUpdateFrame(frame.id, { content: nextContent });
+      optimistic: () =>
+        boardStore.upsertFrame({
+          ...frame,
+          content: nextContent,
+          updatedAt: new Date().toISOString(),
+        }),
+      commit: () => apiUpdateFrame(frame.id, { content: nextContent }),
+      // Restore the pre-edit frame if the server rejected the save, so the
+      // store never keeps a body the server never accepted.
+      rollback: () => boardStore.upsertFrame(prev),
+      // eslint-disable-next-line no-console
+      onError: (err) => console.warn('[foldo] save markdown failed', err),
+    });
+    if (updated) {
       // Server returns the canonical frame with lineAuthors stamped.
       boardStore.upsertFrame(updated);
       setEditing(false);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn('[foldo] save markdown failed', err);
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
   };
 
   return (
-    <div
-      className="absolute"
-      style={{
-        left: frame.position.x,
-        top: frame.position.y,
-        width: frame.size.width,
-        height: frame.size.height,
-      }}
-    >
-      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
+    <FrameShell frame={frame} branch={branch} wrapperProps={wrapperProps}>
       <div
         className="relative h-full w-full overflow-hidden rounded-md border border-black/15 bg-markdown frame-shadow"
-        style={{ pointerEvents: 'auto' }}
+        style={{ pointerEvents: 'auto', ...frameStyleToCss(frame.style) }}
       >
         <DocHeader
           path={content.docPath}
@@ -256,7 +251,7 @@ export function MarkdownFrame({
               />
             ))}
       </div>
-    </div>
+    </FrameShell>
   );
 }
 

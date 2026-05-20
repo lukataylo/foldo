@@ -12,6 +12,9 @@ html,
 body,
 #root {
   height: 100%;
+  /* Use the dynamic viewport unit where supported so the iOS Safari URL bar
+   * collapsing doesn't leave the canvas a phantom 60px short. */
+  height: 100dvh;
   margin: 0;
   background: var(--canvas);
   color: #e8e8e8;
@@ -19,6 +22,41 @@ body,
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
+  /* iOS rubber-banding makes the whole page bounce when you swipe past the
+   * canvas; we render the entire app inside #root so contain the scroll here. */
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+}
+
+/* Canvas surface only. We handle pan + pinch via pointer events, so swallow
+ * the browser's native gestures here. Scrollable frame bodies opt back in by
+ * setting `touch-action: pan-y` themselves (see `[data-canvas-scroll]`). */
+.canvas-surface {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+[data-canvas-scroll] {
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Bottom-anchored floating UI needs to dodge the iPad home indicator. */
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+.safe-top {
+  padding-top: max(env(safe-area-inset-top), 0px);
+}
+
+/* Touch ergonomics: bump small tool buttons to 44×44 on coarse pointers
+ * (iPad, phones) so they hit Apple's HIG minimum. Mouse layouts stay tight. */
+@media (pointer: coarse) {
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 * {

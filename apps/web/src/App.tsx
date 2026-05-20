@@ -1,215 +1,82 @@
 // Foldo canvas, multiplayer, server-backed Figma-style review surface.
 //
-// Boot sequence:
-//   1. Parse the URL to find the desired board / frame / comment.
-//   2. Authenticate (demo: use a stable per-browser userId+token).
-//   3. GET /api/boards to discover an active board (if none specified).
-//   4. GET /api/boards/:id to hydrate the store.
-//   5. Open the canvas WebSocket and apply incoming ServerMessages.
-//
-// Fallback: if step 3 or 4 fails (server not running), show the offline panel
-// with a "Use offline demo" button that hydrates from local mock data.
+// App is a thin shell: it wires together a set of custom hooks (see ./app/),
+// assembles the plugin runtime + tool contexts, and renders. The heavy lifting
+// — boot sequence, viewport bookkeeping, comments, dispatches, canvas tools,
+// keyboard shortcuts — lives in the hooks under ./app/.
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type {
-  Branch,
-  Comment,
-  CommentTarget,
-  CreateCommentRequest,
-  CreateDispatchRequest,
-  Dispatch,
-  Frame,
-  ServerMessage,
-  TestSessionIssue,
-  UserId,
-} from '@foldo/protocol';
-import { Canvas, type CanvasHandle, type ViewportState } from './components/Canvas';
-import { AppFrame } from './components/AppFrame';
-import { ArrowFrame } from './components/ArrowFrame';
-import { ImageFrame } from './components/ImageFrame';
-import { MarkdownFrame } from './components/MarkdownFrame';
-import { StickyFrame } from './components/StickyFrame';
-import { TestSummaryFrame } from './components/TestSummaryFrame';
-import { TestSessionFrame } from './components/TestSessionFrame';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Branch, Frame, UserId } from '@foldo/protocol';
+import { Canvas, type CanvasHandle } from './components/Canvas';
 import { TopBar } from './components/TopBar';
 import { LeftRail } from './components/LeftRail';
 import { ZoomControl } from './components/ZoomControl';
 import { EditPanel } from './components/EditPanel';
 import { CaptureModal } from './components/CaptureModal';
+import { EmptyBoardState } from './components/EmptyBoardState';
 import { TestsPanel } from './components/TestsPanel';
 import { Connectors } from './components/Connectors';
 import { CommentPopover } from './components/CommentPopover';
 import { CursorLayer } from './multiplayer/CursorLayer';
 import { SelectionGhosts } from './multiplayer/SelectionGhosts';
+import { FrameLayer } from './components/FrameLayer';
+import {
+  PluginRuntimeProvider,
+  type PluginRuntimeValue,
+} from './plugins/runtime';
+import { SidePanelHost } from './plugins/SidePanelHost';
 import { useRoute } from './routing/Router';
 import { boardStore, useBoardSnapshot } from './state/useBoardStore';
-import { applyServerMessage } from './state/reducers';
-import { setAuth } from './api/client';
-import { listBoards, getBoard } from './api/boards';
-import {
-  createComment as apiCreateComment,
-  deleteComment as apiDeleteComment,
-  replyToComment as apiReplyToComment,
-  updateComment as apiUpdateComment,
-} from './api/comments';
-import { createDispatch as apiCreateDispatch } from './api/dispatches';
-import { createFrame as apiCreateFrame } from './api/frames';
-import { uploadImage as apiUploadImage } from './api/uploads';
-import { FoldoWsClient, type WsStatus } from './api/ws';
-import {
-  mockBoardSnapshot,
-  mockPresence,
-  MOCK_BOARD_ID,
-  MOCK_ME_USER_ID,
-} from './data/mockData';
+import { updateComment as apiUpdateComment } from './api/comments';
+import type { Comment } from '@foldo/protocol';
 import type { SelectedElement, Tool } from './types';
+import { useBoardBootstrap, setDemoUserId } from './app/useBoardBootstrap';
+import { useCanvasViewport } from './app/useCanvasViewport';
+import { useComments } from './app/useComments';
+import { useDispatches } from './app/useDispatches';
+import { useCanvasTools } from './app/useCanvasTools';
+import { useCanvasInteractions } from './app/useCanvasInteractions';
+import { useKeyboardShortcuts } from './app/useKeyboardShortcuts';
+import {
+  BootLoadingOverlay,
+  UnreachableOverlay,
+  FirstRunHint,
+} from './app/uiHelpers';
 
-interface StoredUser {
-  id: string;
-  name?: string;
-  initial?: string;
-  color?: string;
-  email?: string;
-}
-
-function readStoredAuth(): { userId: string; token: string } | null {
-  try {
-    const token = localStorage.getItem('foldo:token');
-    const userRaw = localStorage.getItem('foldo:user');
-    if (!token || !userRaw) return null;
-    const user = JSON.parse(userRaw) as StoredUser;
-    if (!user.id) return null;
-    return { userId: user.id, token };
-  } catch {
-    return null;
-  }
-}
-
-const REAL_AUTH = readStoredAuth();
-const DEMO_USER_ID = REAL_AUTH?.userId ?? readOrCreateDemoUserId();
-const DEMO_TOKEN = REAL_AUTH?.token ?? DEMO_USER_ID; // demo: token == userId
-setAuth(DEMO_USER_ID, DEMO_TOKEN);
-
-type BootState =
-  | { kind: 'loading' }
-  | { kind: 'unreachable'; error: string }
-  | { kind: 'ready' }
-  | { kind: 'offline' };
+export { setDemoUserId };
 
 export default function App() {
   const snap = useBoardSnapshot();
   const { route, navigate } = useRoute();
 
-  const [boot, setBoot] = useState<BootState>({ kind: 'loading' });
+  // ---------- cross-cutting state owned by the shell ----------
+
   const [tool, setTool] = useState<Tool>('select');
   const [selectedElement, setSelectedElementRaw] =
     useState<SelectedElement | null>(null);
-  const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null);
+  const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [testsOpen, setTestsOpen] = useState(false);
-  const [viewport, setViewport] = useState<ViewportState>({
-    x: 0,
-    y: 0,
-    zoom: 0.6,
-  });
-  const [commentPopover, setCommentPopover] = useState<{
-    frameId: string;
-    commentId: string;
-    /** Open in compose mode (auto-focused empty textarea) for newly-dropped pins. */
-    composing?: boolean;
-  } | null>(null);
-  const [initialIntent, setInitialIntent] = useState<string | undefined>(
-    undefined,
-  );
   const [toast, setToast] = useState<string | null>(null);
   const [followingUserId, setFollowingUserId] = useState<UserId | null>(null);
-  const [containerSize, setContainerSize] = useState({
-    width: typeof window !== 'undefined' ? window.innerWidth : 1440,
-    height: typeof window !== 'undefined' ? window.innerHeight : 900,
-  });
+  /** True while any left-slot side panel (e.g. Layers) is open. Flips the
+   * LeftRail from its default left-edge column to a bottom-centred row so
+   * the panel has the left dock to itself. */
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
 
   const canvasRef = useRef<CanvasHandle>(null);
-  const wsRef = useRef<FoldoWsClient | null>(null);
   const lastBroadcastSelectionRef = useRef<string | null>(null);
-  const viewportBroadcastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
 
-  // ---------- bootstrapping ----------
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        // Determine which board to load
-        let boardId = route.boardId;
-        if (!boardId) {
-          const list = await listBoards();
-          boardId =
-            list.boards[0]?.id ??
-            (() => {
-              throw new Error('No boards on server.');
-            })();
-          // replace the URL with the canonical board path
-          navigate({ boardId }, { replace: true });
-        }
-
-        // Hydrate from REST
-        const snapshot = await getBoard(boardId);
-        if (cancelled) return;
-
-        hydrateStoreFromRest(snapshot, DEMO_USER_ID);
-
-        // Open the WS
-        let wasOpenOnce = false;
-        const ws = new FoldoWsClient({
-          boardId,
-          userId: DEMO_USER_ID,
-          token: DEMO_TOKEN,
-          onStatusChange: (s: WsStatus) => {
-            boardStore.setWsStatus(s);
-            // On reconnect (already had a session), pull a fresh snapshot so
-            // any frames/comments created while we were offline land in the store.
-            if (s === 'open') {
-              if (wasOpenOnce) {
-                void getBoard(boardId!)
-                  .then((fresh) => hydrateStoreFromRest(fresh, DEMO_USER_ID))
-                  .catch(() => {
-                    /* ignore, WS will keep us live */
-                  });
-              }
-              wasOpenOnce = true;
-            }
-          },
-        });
-        wsRef.current = ws;
-        ws.subscribeAll((msg: ServerMessage) => applyServerMessage(msg));
-        ws.connect();
-
-        setBoot({ kind: 'ready' });
-      } catch (err) {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn('[foldo] could not reach cloud:', msg);
-        setBoot({ kind: 'unreachable', error: msg });
-      }
-    })();
-    return () => {
-      cancelled = true;
-      wsRef.current?.close();
-      wsRef.current = null;
-    };
-    // We only want to bootstrap once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 1400);
   }, []);
 
-  const useOfflineDemo = useCallback(() => {
-    hydrateStoreFromMock();
-    navigate({ boardId: MOCK_BOARD_ID }, { replace: true });
-    setBoot({ kind: 'offline' });
-  }, [navigate]);
+  // ---------- boot sequence + WebSocket ----------
 
-  // ---------- derived: bounds / frames-by-id / near-viewport ----------
+  const { boot, useOfflineDemo, wsRef } = useBoardBootstrap(route, navigate);
+
+  // ---------- derived: frames / comments-by-frame ----------
 
   const frames = useMemo(() => Array.from(snap.frames.values()), [snap.frames]);
   const commentsByFrame = useMemo(() => {
@@ -222,224 +89,136 @@ export default function App() {
     return m;
   }, [snap.comments]);
 
-  const bounds = useMemo(() => {
-    if (!frames.length) return { x: 0, y: 0, width: 1, height: 1 };
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    for (const f of frames) {
-      minX = Math.min(minX, f.position.x);
-      minY = Math.min(minY, f.position.y - 36);
-      maxX = Math.max(maxX, f.position.x + f.size.width);
-      maxY = Math.max(maxY, f.position.y + f.size.height);
-    }
-    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-  }, [frames]);
-
-  /** Near-viewport set: frames within ~1.5× the viewport on each side. */
-  const inViewportSet = useMemo(() => {
-    const w = containerSize.width;
-    const h = containerSize.height;
-    const padX = w * 1.5;
-    const padY = h * 1.5;
-    // Visible world rect:
-    const worldLeft = -viewport.x / viewport.zoom - padX / viewport.zoom;
-    const worldTop = -viewport.y / viewport.zoom - padY / viewport.zoom;
-    const worldRight =
-      (-viewport.x + w) / viewport.zoom + padX / viewport.zoom;
-    const worldBottom =
-      (-viewport.y + h) / viewport.zoom + padY / viewport.zoom;
-    const set = new Set<string>();
-    for (const f of frames) {
-      const fr = f.position.x + f.size.width;
-      const fb = f.position.y + f.size.height;
-      const overlaps =
-        f.position.x < worldRight &&
-        fr > worldLeft &&
-        f.position.y < worldBottom &&
-        fb > worldTop;
-      if (overlaps) set.add(f.id);
-    }
-    return set;
-  }, [frames, viewport, containerSize.width, containerSize.height]);
-
-  // Track window size for the viewport bookkeeping
-  useEffect(() => {
-    const onResize = () => {
-      setContainerSize({ width: window.innerWidth, height: window.innerHeight });
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  // ---------- fit-to / focus a frame ----------
-
-  const focusedFrameRef = useRef<string | null>(null);
-  const fitToFrame = useCallback(
-    (frame: Frame, padding = 60) => {
-      canvasRef.current?.fitTo({
-        x: frame.position.x - padding,
-        y: frame.position.y - padding - 40,
-        width: frame.size.width + padding * 2,
-        height: frame.size.height + padding * 2 + 40,
-      });
-    },
-    [],
-  );
-
-  // Apply the URL's focused frame once hydrated
-  useEffect(() => {
-    if (boot.kind !== 'ready' && boot.kind !== 'offline') return;
-    if (!snap.hydrated) return;
-    if (!route.frameId) {
-      // No focus, fit to all frames once.
-      if (focusedFrameRef.current !== '__all__') {
-        focusedFrameRef.current = '__all__';
-        setTimeout(() => canvasRef.current?.zoomToFit(), 60);
-      }
-      return;
-    }
-    const f = snap.frames.get(route.frameId);
-    if (!f) return;
-    if (focusedFrameRef.current === route.frameId) return;
-    focusedFrameRef.current = route.frameId;
-    setTimeout(() => fitToFrame(f), 60);
-    // If a commentId is set, open the popover
-    if (route.commentId) {
-      const c = snap.comments.get(route.commentId);
-      if (c) setCommentPopover({ frameId: c.frameId, commentId: c.id });
-    } else {
-      setCommentPopover(null);
-    }
-  }, [
-    boot.kind,
-    route.frameId,
-    route.commentId,
-    snap.hydrated,
-    snap.frames,
-    snap.comments,
-    fitToFrame,
-  ]);
-
-  // Keep a ref to the live selection so the keyboard handler (mounted once)
-  // can read the latest value without re-binding.
-  const selectionRef = useRef<SelectedElement | null>(null);
-  useEffect(() => {
-    selectionRef.current = selectedElement;
-  }, [selectedElement]);
-
-  // ---------- keyboard shortcuts ----------
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLElement) {
-        const tag = e.target.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable)
-          return;
-      }
-      if (e.key === 'v' || e.key === 'V') setTool('select');
-      else if (e.key === 'h' || e.key === 'H') setTool('hand');
-      else if (e.key === 'c' || e.key === 'C') setTool('comment');
-      else if (e.key === 'e' || e.key === 'E') {
-        setTool('edit');
-        if (!selectionRef.current) {
-          showToast(setToast, 'Click an element first, then press E');
-        }
-      } else if (e.key === 's' || e.key === 'S') setTool('sticky');
-      else if (e.key === 'a' || e.key === 'A') setTool('arrow');
-      else if (e.key === 'i' || e.key === 'I') setTool('image');
-      else if (e.key === 'Escape') {
-        setSelectedElementRaw(null);
-        setCommentPopover(null);
-        setInitialIntent(undefined);
-      } else if (e.key === '0' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        canvasRef.current?.zoomToFit();
-      } else if (e.key === '=' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        canvasRef.current?.zoomIn();
-      } else if (e.key === '-' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        canvasRef.current?.zoomOut();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
   // ---------- multiplayer outbound ----------
 
-  const onCursorMove = useCallback((x: number, y: number) => {
-    wsRef.current?.send({
-      type: 'cursor.move',
-      cursor: { x, y },
-    });
-  }, []);
+  const onCursorMove = useCallback(
+    (x: number, y: number) => {
+      wsRef.current?.send({
+        type: 'cursor.move',
+        cursor: { x, y },
+      });
+    },
+    [wsRef],
+  );
 
   // Broadcast selection updates to the server
-  const setSelectedElement = useCallback((sel: SelectedElement | null) => {
-    setSelectedElementRaw(sel);
-    const key = sel ? `${sel.frameId}|${sel.label}` : null;
-    if (lastBroadcastSelectionRef.current !== key) {
-      lastBroadcastSelectionRef.current = key;
-      wsRef.current?.send({
-        type: 'selection.update',
-        selection: sel
-          ? { frameId: sel.frameId, elementSelector: sel.label }
-          : null,
-      });
-    }
-  }, []);
-
-  // Debounced viewport broadcast (used for follow-me)
-  useEffect(() => {
-    if (viewportBroadcastTimerRef.current) {
-      clearTimeout(viewportBroadcastTimerRef.current);
-    }
-    viewportBroadcastTimerRef.current = setTimeout(() => {
-      wsRef.current?.send({
-        type: 'viewport.update',
-        x: viewport.x,
-        y: viewport.y,
-        zoom: viewport.zoom,
-      });
-    }, 120);
-    return () => {
-      if (viewportBroadcastTimerRef.current) {
-        clearTimeout(viewportBroadcastTimerRef.current);
-        viewportBroadcastTimerRef.current = null;
+  const setSelectedElement = useCallback(
+    (sel: SelectedElement | null) => {
+      setSelectedElementRaw(sel);
+      const key = sel ? `${sel.frameId}|${sel.label}` : null;
+      if (lastBroadcastSelectionRef.current !== key) {
+        lastBroadcastSelectionRef.current = key;
+        wsRef.current?.send({
+          type: 'selection.update',
+          selection: sel
+            ? { frameId: sel.frameId, elementSelector: sel.label }
+            : null,
+        });
       }
-    };
-  }, [viewport.x, viewport.y, viewport.zoom]);
+    },
+    [wsRef],
+  );
 
-  // Follow-me: react to the followed user's viewport updates
+  // ---------- comments ----------
+
+  const {
+    commentPopover,
+    setCommentPopover,
+    initialIntent,
+    setInitialIntent,
+    handleDropPin,
+    handleCommentClick,
+    onReplyToComment,
+    onResolveComment,
+    onDeleteComment,
+    onMakeEditFromComment,
+    onMakeEditFromIssue,
+  } = useComments({
+    snap,
+    boot,
+    navigate,
+    setTool,
+    setSelectedElement,
+    toast: showToast,
+  });
+
+  // ---------- canvas viewport ----------
+
   const followedViewport = followingUserId
     ? (snap.presence.get(followingUserId)?.viewport ?? null)
     : null;
-  useEffect(() => {
-    if (!followingUserId || !followedViewport) return;
-    const v = followedViewport;
-    const c = canvasRef.current;
-    if (!c) return;
-    const rect = canvasContainerRectFallback();
-    // Compute the followed user's screen-center in world coords and fit a
-    // viewport-sized rect around it.
-    const wx = (rect.width / 2 - v.x) / v.zoom;
-    const wy = (rect.height / 2 - v.y) / v.zoom;
-    c.fitTo({
-      x: wx - rect.width / (2 * v.zoom),
-      y: wy - rect.height / (2 * v.zoom),
-      width: rect.width / v.zoom,
-      height: rect.height / v.zoom,
-    });
-  }, [
-    followingUserId,
-    followedViewport?.x,
-    followedViewport?.y,
-    followedViewport?.zoom,
-  ]);
 
-  // ---------- comments ----------
+  const { viewport, setViewport, bounds, fitToFrame } = useCanvasViewport({
+    snap,
+    frames,
+    route,
+    navigate,
+    canvasRef,
+    wsRef,
+    boot,
+    followedViewport,
+    followingUserId,
+    setSelectedFrameId,
+    setCommentPopover,
+  });
+
+  // ---------- dispatches ----------
+
+  const { activeDispatch, sendDispatch, closeEditPanel, onJumpToResult } =
+    useDispatches({
+      snap,
+      boot,
+      selectedElement,
+      navigate,
+      setSelectedElement,
+      setInitialIntent,
+      fitToFrame,
+      toast: showToast,
+    });
+
+  // ---------- host-handled canvas tools (arrow drag-preview / image picker) ----------
+
+  const {
+    createArrowFrame,
+    imageInputRef,
+    openImagePicker,
+    onImageFileChange,
+    arrowDraft,
+    arrowDraftRef,
+    setArrowDraft,
+  } = useCanvasTools({ snap, setTool, toast: showToast });
+
+  // ---------- keyboard shortcuts ----------
+
+  useKeyboardShortcuts({
+    canvasRef,
+    selectedElement,
+    setTool,
+    onEscape: useCallback(() => {
+      setSelectedElementRaw(null);
+      setCommentPopover(null);
+      setInitialIntent(undefined);
+    }, [setCommentPopover, setInitialIntent]),
+    toast: showToast,
+  });
+
+  // The Comments inbox plugin asks the host to open a comment popover via a
+  // window event (it has no ref into the shell). The frame is focused
+  // separately by `foldo:focusFrame`; here we just open the popover + deep-link.
+  useEffect(() => {
+    const onOpenComment = (e: Event) => {
+      const detail = (e as CustomEvent<{ frameId: string; commentId: string }>)
+        .detail;
+      if (!detail?.commentId) return;
+      const c = boardStore.getSnapshot().comments.get(detail.commentId);
+      if (!c) return;
+      handleCommentClick(c.frameId, c);
+    };
+    window.addEventListener('foldo:openComment', onOpenComment);
+    return () => window.removeEventListener('foldo:openComment', onOpenComment);
+  }, [handleCommentClick]);
+
+  // ---------- selection helpers ----------
 
   const onSelectElement = useCallback(
     (sel: SelectedElement | null) => {
@@ -447,311 +226,24 @@ export default function App() {
       if (!sel) setInitialIntent(undefined);
       setCommentPopover(null);
     },
-    [setSelectedElement],
+    [setSelectedElement, setInitialIntent, setCommentPopover],
   );
 
-  const handleDropPin = useCallback(
-    async (frameId: string, xRel: number, yRel: number) => {
-      // Always render optimistically: the pin should appear under the cursor
-      // the instant the user clicks, before any network round-trip. The popover
-      // opens in compose mode so the user can type the actual body straight
-      // away (no "New comment" placeholder, no extra click into Reply).
-      const me = snap.meUserId ? snap.users.get(snap.meUserId) : undefined;
-      const now = new Date().toISOString();
-      const tempId = `c-local-${Date.now()}`;
-      const optimistic: Comment = {
-        id: tempId,
-        boardId: snap.board?.id ?? MOCK_BOARD_ID,
+  const onSelectMdLineFromPlugin = useCallback(
+    (frameId: string, sectionId: string, lineIndex: number, label: string) => {
+      const ff = snap.frames.get(frameId);
+      if (!ff || ff.content.kind !== 'markdown') return;
+      setSelectedElement({
         frameId,
-        authorUserId: me?.id ?? DEMO_USER_ID,
-        authorName: me?.name ?? 'You',
-        authorInitial: me?.initial ?? 'Y',
-        authorColor: me?.color ?? '#7fd49a',
-        text: '',
-        createdAt: now,
-        updatedAt: now,
-        resolved: false,
-        pin: { x: xRel, y: yRel },
-        replies: [],
-      };
-      boardStore.upsertComment(optimistic);
-      setCommentPopover({ frameId, commentId: tempId, composing: true });
-      setTool('select');
-
-      if (boot.kind === 'offline') return; // local-only, no swap needed.
-      try {
-        const body: CreateCommentRequest = {
-          boardId: snap.board?.id ?? '',
-          frameId,
-          text: '',
-          pin: { x: xRel, y: yRel },
-        };
-        const c = await apiCreateComment(body);
-        // Swap the temp comment for the server-issued one, then point the
-        // popover at the real id so subsequent edits PATCH the right row.
-        boardStore.removeComment(tempId);
-        boardStore.upsertComment(c);
-        setCommentPopover({ frameId, commentId: c.id, composing: true });
-      } catch (e) {
-        console.warn('[foldo] create comment failed', e);
-        boardStore.removeComment(tempId);
-        setCommentPopover(null);
-        showToast(setToast, 'Failed to add comment');
-      }
-    },
-    [boot.kind, snap.board?.id, snap.meUserId, snap.users],
-  );
-
-  const handleCommentClick = useCallback(
-    (frameId: string, comment: Comment) => {
-      setCommentPopover({ frameId, commentId: comment.id });
-      // Update URL deep-link
-      if (snap.board) {
-        navigate({
-          boardId: snap.board.id,
-          frameId,
-          commentId: comment.id,
-        });
-      }
-    },
-    [navigate, snap.board],
-  );
-
-  const onMakeEditFromComment = useCallback(() => {
-    if (!commentPopover) return;
-    const c = snap.comments.get(commentPopover.commentId);
-    if (!c) return;
-    const f = snap.frames.get(c.frameId);
-    if (!f) return;
-    if (c.target?.elementLabel && f.kind === 'app') {
-      // Synthesise a small highlight rect around the comment's pin if we have one.
-      const rect = c.pin
-        ? {
-            x: c.pin.x * f.size.width - 18,
-            y: c.pin.y * f.size.height - 18,
-            width: 36,
-            height: 36,
-          }
-        : { x: 0, y: 0, width: 0, height: 0 };
-      setSelectedElement({
-        frameId: f.id,
-        label: c.target.elementLabel,
-        file: c.target.elementFile ?? 'src/components/Pricing.tsx',
-        line: c.target.elementLine ?? 0,
-        currentSource: c.target.elementLabel,
-        rect,
-      });
-    } else if (c.anchor && f.kind === 'markdown' && f.content.kind === 'markdown') {
-      setSelectedElement({
-        frameId: f.id,
-        label: `${f.content.docPath} · ${c.anchor.sectionId} · L${c.anchor.lineStart ?? 1}`,
-        file: f.content.docPath,
-        line: c.anchor.lineStart ?? 1,
-        currentSource: c.text,
+        label: `${ff.content.docPath} · ${sectionId} · L${lineIndex}`,
+        file: ff.content.docPath,
+        line: lineIndex,
+        currentSource: label,
         rect: { x: 0, y: 0, width: 0, height: 0 },
       });
-    }
-    setInitialIntent(c.text);
-    setCommentPopover(null);
-  }, [commentPopover, snap.comments, snap.frames, setSelectedElement]);
-
-  // "Make this an edit" from a test_session synthesis issue: drop a comment on
-  // the session frame carrying the issue text, so it flows into the existing
-  // comment → dispatch loop.
-  const onMakeEditFromIssue = useCallback(
-    async (frame: Frame, issue: TestSessionIssue) => {
-      const text = `From testing — ${issue.text}`;
-      if (boot.kind === 'offline') {
-        const optimistic: Comment = {
-          id: `c-local-${Date.now()}`,
-          boardId: snap.board?.id ?? MOCK_BOARD_ID,
-          frameId: frame.id,
-          authorUserId: DEMO_USER_ID,
-          authorName: 'You',
-          authorInitial: 'Y',
-          authorColor: '#7fd49a',
-          text,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          resolved: false,
-          replies: [],
-        };
-        boardStore.upsertComment(optimistic);
-        showToast(setToast, 'Issue added as a comment');
-        return;
-      }
-      try {
-        const body: CreateCommentRequest = {
-          boardId: snap.board?.id ?? '',
-          frameId: frame.id,
-          text,
-        };
-        const c = await apiCreateComment(body);
-        boardStore.upsertComment(c);
-        showToast(setToast, 'Issue added as a comment');
-      } catch (e) {
-        console.warn('[foldo] make-edit-from-issue failed', e);
-        showToast(setToast, 'Failed to add comment');
-      }
     },
-    [boot.kind, snap.board?.id],
+    [snap.frames, setSelectedElement],
   );
-
-  const onReplyToComment = useCallback(
-    async (commentId: string, text: string) => {
-      if (boot.kind === 'offline') {
-        const c = snap.comments.get(commentId);
-        if (!c) return;
-        const reply = {
-          id: `r-local-${Date.now()}`,
-          authorUserId: DEMO_USER_ID,
-          authorName: 'You',
-          authorInitial: 'Y',
-          authorColor: '#7fd49a',
-          text,
-          createdAt: new Date().toISOString(),
-        };
-        boardStore.upsertComment({
-          ...c,
-          replies: [...c.replies, reply],
-        });
-        return;
-      }
-      try {
-        const r = await apiReplyToComment(commentId, { text });
-        const c = boardStore.getSnapshot().comments.get(commentId);
-        if (c) {
-          boardStore.upsertComment({ ...c, replies: [...c.replies, r] });
-        }
-      } catch (e) {
-        console.warn('[foldo] reply failed', e);
-      }
-    },
-    [boot.kind, snap.comments],
-  );
-
-  const onResolveComment = useCallback(
-    async (commentId: string) => {
-      const c = boardStore.getSnapshot().comments.get(commentId);
-      if (!c) return;
-      const next = !c.resolved;
-      if (boot.kind === 'offline') {
-        boardStore.upsertComment({ ...c, resolved: next });
-        return;
-      }
-      try {
-        const updated = await apiUpdateComment(commentId, { resolved: next });
-        boardStore.upsertComment(updated);
-      } catch (e) {
-        console.warn('[foldo] resolve failed', e);
-      }
-    },
-    [boot.kind],
-  );
-
-  const onDeleteComment = useCallback(
-    async (commentId: string) => {
-      const c = boardStore.getSnapshot().comments.get(commentId);
-      if (!c) return;
-      boardStore.removeComment(commentId);
-      setCommentPopover(null);
-      if (boot.kind === 'offline') return;
-      try {
-        await apiDeleteComment(commentId);
-      } catch (e) {
-        console.warn('[foldo] delete comment failed', e);
-        // Re-insert on failure so UI doesn't silently lose state.
-        boardStore.upsertComment(c);
-      }
-    },
-    [boot.kind],
-  );
-
-  // ---------- dispatches ----------
-
-  const sendDispatch = useCallback(
-    async (intent: string) => {
-      if (!selectedElement || !snap.board) return;
-      const f = snap.frames.get(selectedElement.frameId);
-      if (!f) return;
-      const branchObj = snap.branches.get(f.branchId);
-      if (!branchObj) return;
-      const target: CommentTarget = {
-        elementLabel: selectedElement.label,
-        elementFile: selectedElement.file,
-        elementLine: selectedElement.line,
-      };
-      if (boot.kind === 'offline') {
-        // Synthesise dispatch lifecycle locally
-        runOfflineDispatch(
-          snap.board.id,
-          f,
-          branchObj,
-          intent,
-          target,
-          setActiveDispatchId,
-          (childFrame) => {
-            setTimeout(() => fitToFrame(childFrame, 40), 250);
-          },
-        );
-        return;
-      }
-      try {
-        const body: CreateDispatchRequest = {
-          boardId: snap.board.id,
-          frameId: f.id,
-          branchId: f.branchId,
-          baseCommitSha: f.commitSha,
-          intent,
-          target,
-        };
-        const d = await apiCreateDispatch(body);
-        boardStore.upsertDispatch(d);
-        setActiveDispatchId(d.id);
-      } catch (e) {
-        console.warn('[foldo] dispatch failed', e);
-        showToast(setToast, 'Failed to send dispatch');
-      }
-    },
-    [selectedElement, snap.board, snap.frames, snap.branches, boot.kind, fitToFrame],
-  );
-
-  const activeDispatch: Dispatch | undefined = activeDispatchId
-    ? snap.dispatches.get(activeDispatchId)
-    : undefined;
-
-  const closeEditPanel = useCallback(() => {
-    setSelectedElement(null);
-    setInitialIntent(undefined);
-    if (activeDispatch?.status === 'done') setActiveDispatchId(null);
-  }, [activeDispatch?.status, setSelectedElement]);
-
-  const onJumpToResult = useCallback(() => {
-    if (!activeDispatch?.resultFrameId) return;
-    const child = snap.frames.get(activeDispatch.resultFrameId);
-    if (!child) return;
-    fitToFrame(child, 40);
-    if (snap.board) {
-      navigate({ boardId: snap.board.id, frameId: child.id });
-    }
-  }, [activeDispatch, snap.frames, snap.board, navigate, fitToFrame]);
-
-  // Auto-pan to the new frame once a dispatch completes, mirrors the
-  // offline-mode behavior so the demo's "watch new frame appear" beat works
-  // without the user clicking "Jump to it".
-  const autoJumpedDispatchRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!activeDispatch) return;
-    if (activeDispatch.status !== 'done') return;
-    if (!activeDispatch.resultFrameId) return;
-    if (autoJumpedDispatchRef.current === activeDispatch.id) return;
-    const child = snap.frames.get(activeDispatch.resultFrameId);
-    if (!child) return;
-    autoJumpedDispatchRef.current = activeDispatch.id;
-    // Defer slightly so the frame.added animation can flush first.
-    const t = setTimeout(() => fitToFrame(child, 60), 300);
-    return () => clearTimeout(t);
-  }, [activeDispatch, snap.frames, fitToFrame]);
 
   // ---------- capture ----------
 
@@ -759,177 +251,82 @@ export default function App() {
     (frame: Frame) => {
       boardStore.upsertFrame(frame);
       setCaptureOpen(false);
-      showToast(setToast, 'Frame captured');
+      showToast('Frame captured');
       setTimeout(() => fitToFrame(frame, 80), 250);
       if (snap.board) navigate({ boardId: snap.board.id, frameId: frame.id });
     },
-    [snap.board, navigate, fitToFrame],
+    [snap.board, navigate, fitToFrame, showToast],
   );
 
-  // ---------- new-frame tools (sticky / arrow / image) ----------
+  // ---------- plugin runtime + tool contexts ----------
 
-  const arrowDraftRef = useRef<{
-    startX: number;
-    startY: number;
-    endX: number;
-    endY: number;
-  } | null>(null);
-  const [arrowDraft, setArrowDraft] = useState<typeof arrowDraftRef.current>(null);
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
-  const imagePendingPosRef = useRef<{ x: number; y: number } | null>(null);
-
-  const ensureCanvasBranch = useCallback((): Branch | null => {
-    if (!snap.board) return null;
-    // Prefer the captures branch; if it doesn't exist, fall back to the first.
-    const captures = snap.branches.get('captures');
-    if (captures) return captures;
-    const first = snap.branches.values().next().value as Branch | undefined;
-    return first ?? null;
-  }, [snap.board, snap.branches]);
-
-  const createStickyFrame = useCallback(
-    async (pos: { x: number; y: number }) => {
-      const board = snap.board;
-      const branch = ensureCanvasBranch();
-      if (!board || !branch) return;
-      const now = new Date().toISOString();
-      const W = 220;
-      const H = 180;
-      try {
-        const frame = await apiCreateFrame({
-          boardId: board.id,
-          branchId: branch.id,
-          commitSha: branch.headSha,
-          commitMessage: 'sticky note',
-          kind: 'sticky',
-          position: { x: pos.x - W / 2, y: pos.y - H / 2 },
-          size: { width: W, height: H },
-          content: { kind: 'sticky', body: '', color: 'yellow' },
-        });
-        boardStore.upsertFrame(frame);
-        setTool('select');
-      } catch (err) {
-        console.warn('[foldo] sticky create failed', err);
-      }
-    },
-    [snap.board, ensureCanvasBranch],
+  // The plugin runtime context value. Deliberately excludes the camera
+  // (zoom / inViewportSet) — those live in viewportStore so a pan/zoom tick
+  // never invalidates this object and never re-renders the frame plugins.
+  const runtimeValue: PluginRuntimeValue = useMemo(
+    () => ({
+      tool,
+      board: snap.board ?? null,
+      selectedElement,
+      selectedFrameId,
+      commentsByFrame,
+      actions: {
+        dropPin: handleDropPin,
+        openComment: handleCommentClick,
+        selectElement: onSelectElement,
+        selectMarkdownLine: onSelectMdLineFromPlugin,
+        makeEditFromIssue: onMakeEditFromIssue,
+        selectFrame: setSelectedFrameId,
+      },
+    }),
+    [
+      tool,
+      snap.board,
+      selectedElement,
+      selectedFrameId,
+      commentsByFrame,
+      handleDropPin,
+      handleCommentClick,
+      onSelectElement,
+      onSelectMdLineFromPlugin,
+      onMakeEditFromIssue,
+    ],
   );
 
-  const createArrowFrame = useCallback(
-    async (startX: number, startY: number, endX: number, endY: number) => {
-      const board = snap.board;
-      const branch = ensureCanvasBranch();
-      if (!board || !branch) return;
-      const minX = Math.min(startX, endX);
-      const minY = Math.min(startY, endY);
-      const w = Math.max(Math.abs(endX - startX), 40);
-      const h = Math.max(Math.abs(endY - startY), 40);
-      try {
-        const frame = await apiCreateFrame({
-          boardId: board.id,
-          branchId: branch.id,
-          commitSha: branch.headSha,
-          commitMessage: 'arrow',
-          kind: 'arrow',
-          position: { x: minX, y: minY },
-          size: { width: w, height: h },
-          content: {
-            kind: 'arrow',
-            from: { x: startX - minX, y: startY - minY },
-            to: { x: endX - minX, y: endY - minY },
-            color: '#111111',
-            thickness: 2.5,
-          },
-        });
-        boardStore.upsertFrame(frame);
-        setTool('select');
-      } catch (err) {
-        console.warn('[foldo] arrow create failed', err);
-      }
-    },
-    [snap.board, ensureCanvasBranch],
+  // Build the ToolContext that plugin-contributed tools receive on each
+  // canvas interaction. Memoised so identity is stable across renders.
+  const toolCtx = useMemo(
+    () => ({
+      board: snap.board ?? null,
+      activeBranch: () => {
+        if (!snap.board) return null;
+        return (
+          snap.branches.get('captures') ??
+          (snap.branches.values().next().value as Branch | undefined) ??
+          null
+        );
+      },
+      setTool: (id: string) => setTool(id),
+      upsertFrame: (frame: Frame) => boardStore.upsertFrame(frame),
+      toast: (msg: string) => showToast(msg),
+    }),
+    [snap.board, snap.branches, showToast],
   );
 
-  const createImageFrame = useCallback(
-    async (
-      pos: { x: number; y: number },
-      src: { url: string; previewDataUrl: string },
-      name?: string,
-    ) => {
-      const board = snap.board;
-      const branch = ensureCanvasBranch();
-      if (!board || !branch) return;
-      // Resolve natural dimensions before placing, so the frame matches the
-      // image's ratio. Use the local data URL because the uploaded URL won't
-      // hit the browser cache yet on the very first paint.
-      const dims = await new Promise<{ w: number; h: number }>((resolve) => {
-        const img = new Image();
-        img.onload = () =>
-          resolve({ w: img.naturalWidth || 480, h: img.naturalHeight || 320 });
-        img.onerror = () => resolve({ w: 480, h: 320 });
-        img.src = src.previewDataUrl;
-      });
-      const maxW = 600;
-      const scale = dims.w > maxW ? maxW / dims.w : 1;
-      const W = Math.round(dims.w * scale);
-      const H = Math.round(dims.h * scale);
-      try {
-        const frame = await apiCreateFrame({
-          boardId: board.id,
-          branchId: branch.id,
-          commitSha: branch.headSha,
-          commitMessage: name ? `image: ${name}` : 'image upload',
-          kind: 'image',
-          position: { x: pos.x - W / 2, y: pos.y - H / 2 },
-          size: { width: W, height: H },
-          content: { kind: 'image', url: src.url, alt: name },
-        });
-        boardStore.upsertFrame(frame);
-        setTool('select');
-      } catch (err) {
-        console.warn('[foldo] image create failed', err);
-      }
-    },
-    [snap.board, ensureCanvasBranch],
-  );
+  // ---------- canvas background interactions ----------
 
-  const openImagePicker = useCallback((world: { x: number; y: number }) => {
-    imagePendingPosRef.current = world;
-    imageInputRef.current?.click();
-  }, []);
-
-  const onImageFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      e.target.value = '';
-      const pos = imagePendingPosRef.current;
-      imagePendingPosRef.current = null;
-      if (!file || !pos) return;
-      // Server's /api/uploads cap is 8 MB; mirror it client-side so we fail
-      // fast with a friendly toast instead of a 413.
-      if (file.size > 8 * 1024 * 1024) {
-        showToast(setToast, 'Image too large (8 MB max).');
-        return;
-      }
-      // Read once: we use the data URL purely to measure natural dimensions
-      // for the frame's aspect ratio while the upload is in flight.
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const previewDataUrl =
-          typeof reader.result === 'string' ? reader.result : '';
-        if (!previewDataUrl) return;
-        try {
-          const { url } = await apiUploadImage(file);
-          await createImageFrame(pos, { url, previewDataUrl }, file.name);
-        } catch (err) {
-          console.warn('[foldo] image upload failed', err);
-          showToast(setToast, 'Image upload failed');
-        }
-      };
-      reader.readAsDataURL(file);
-    },
-    [createImageFrame],
-  );
+  const canvasInteractions = useCanvasInteractions({
+    tool,
+    snap,
+    navigate,
+    toolCtx,
+    createArrowFrame,
+    openImagePicker,
+    arrowDraftRef,
+    setArrowDraft,
+    setSelectedElement,
+    setCommentPopover,
+  });
 
   // ---------- popover screen-positioning ----------
 
@@ -959,71 +356,20 @@ export default function App() {
     : null;
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden">
+    <PluginRuntimeProvider value={runtimeValue}>
+    <div className="relative w-screen overflow-hidden" style={{ height: '100dvh' }}>
       <Canvas
         ref={canvasRef}
         tool={tool}
         contentBounds={bounds}
         onViewportChange={setViewport}
         onCursorMove={onCursorMove}
-        onBackgroundClick={(world) => {
-          if (tool === 'sticky') {
-            void createStickyFrame(world);
-            return;
-          }
-          if (tool === 'image') {
-            openImagePicker(world);
-            return;
-          }
-          if (tool !== 'comment') {
-            setSelectedElement(null);
-            setCommentPopover(null);
-            if (snap.board) {
-              navigate({ boardId: snap.board.id });
-            }
-          }
-        }}
-        onBackgroundDragStart={
-          tool === 'arrow'
-            ? (world) => {
-                arrowDraftRef.current = {
-                  startX: world.x,
-                  startY: world.y,
-                  endX: world.x,
-                  endY: world.y,
-                };
-                setArrowDraft(arrowDraftRef.current);
-              }
-            : undefined
-        }
-        onBackgroundDragMove={
-          tool === 'arrow'
-            ? (world) => {
-                if (!arrowDraftRef.current) return;
-                arrowDraftRef.current = {
-                  ...arrowDraftRef.current,
-                  endX: world.x,
-                  endY: world.y,
-                };
-                setArrowDraft({ ...arrowDraftRef.current });
-              }
-            : undefined
-        }
-        onBackgroundDragEnd={
-          tool === 'arrow'
-            ? (world) => {
-                const d = arrowDraftRef.current;
-                arrowDraftRef.current = null;
-                setArrowDraft(null);
-                if (!d) return;
-                const dist = Math.hypot(world.x - d.startX, world.y - d.startY);
-                if (dist < 24) return; // ignore stray taps
-                void createArrowFrame(d.startX, d.startY, world.x, world.y);
-              }
-            : undefined
-        }
+        onBackgroundClick={canvasInteractions.onBackgroundClick}
+        onBackgroundDragStart={canvasInteractions.onBackgroundDragStart}
+        onBackgroundDragMove={canvasInteractions.onBackgroundDragMove}
+        onBackgroundDragEnd={canvasInteractions.onBackgroundDragEnd}
       >
-        <Connectors frames={frames} />
+        <Connectors />
         <SelectionGhosts meUserId={snap.meUserId} />
         {arrowDraft && (
           <svg
@@ -1052,100 +398,7 @@ export default function App() {
             />
           </svg>
         )}
-        {frames.map((f) => {
-          const branch = snap.branches.get(f.branchId);
-          if (!branch) return null;
-          const comments = commentsByFrame.get(f.id) ?? [];
-          const inViewport = inViewportSet.has(f.id);
-          if (f.kind === 'app') {
-            return (
-              <MemoAppFrame
-                key={f.id}
-                frame={f}
-                branch={branch}
-                comments={comments}
-                tool={tool}
-                selectedElement={selectedElement}
-                onSelectElement={onSelectElement}
-                onDropPin={handleDropPin}
-                onCommentClick={handleCommentClick}
-                inViewport={inViewport}
-                zoom={viewport.zoom}
-              />
-            );
-          }
-          if (f.kind === 'sticky') {
-            return (
-              <MemoStickyFrame key={f.id} frame={f} branch={branch} zoom={viewport.zoom} />
-            );
-          }
-          if (f.kind === 'arrow') {
-            return (
-              <MemoArrowFrame key={f.id} frame={f} branch={branch} zoom={viewport.zoom} />
-            );
-          }
-          if (f.kind === 'image') {
-            return (
-              <MemoImageFrame
-                key={f.id}
-                frame={f}
-                branch={branch}
-                zoom={viewport.zoom}
-                tool={tool}
-                comments={comments}
-                onDropPin={handleDropPin}
-                onCommentClick={handleCommentClick}
-              />
-            );
-          }
-          if (f.kind === 'test_summary') {
-            return (
-              <MemoTestSummaryFrame
-                key={f.id}
-                frame={f}
-                branch={branch}
-                zoom={viewport.zoom}
-              />
-            );
-          }
-          if (f.kind === 'test_session') {
-            return (
-              <MemoTestSessionFrame
-                key={f.id}
-                frame={f}
-                branch={branch}
-                zoom={viewport.zoom}
-                onMakeEditFromIssue={onMakeEditFromIssue}
-              />
-            );
-          }
-          return (
-            <MemoMarkdownFrame
-              key={f.id}
-              frame={f}
-              branch={branch}
-              board={snap.board}
-              comments={comments}
-              tool={tool}
-              inViewport={inViewport}
-              zoom={viewport.zoom}
-              onSelectMdLine={(frameId, sectionId, lineIndex, label) => {
-                const ff = snap.frames.get(frameId);
-                if (!ff || ff.content.kind !== 'markdown') return;
-                setSelectedElement({
-                  frameId,
-                  label: `${ff.content.docPath} · ${sectionId} · L${lineIndex}`,
-                  file: ff.content.docPath,
-                  line: lineIndex,
-                  currentSource: label,
-                  rect: { x: 0, y: 0, width: 0, height: 0 },
-                });
-              }}
-              onCommentClick={handleCommentClick}
-              onDropPin={handleDropPin}
-            />
-          );
-        })}
+        <FrameLayer />
         <CursorLayer meUserId={snap.meUserId} zoom={viewport.zoom} />
       </Canvas>
 
@@ -1171,7 +424,13 @@ export default function App() {
         wsStatus={snap.wsStatus}
         offline={boot.kind === 'offline'}
       />
-      <LeftRail tool={tool} onChange={setTool} />
+      <SidePanelHost slot="left" onOpenStateChange={setLeftPanelOpen} />
+      <SidePanelHost slot="right" />
+      <LeftRail
+        tool={tool}
+        onChange={setTool}
+        orientation={leftPanelOpen ? 'horizontal' : 'vertical'}
+      />
       <input
         ref={imageInputRef}
         type="file"
@@ -1224,7 +483,7 @@ export default function App() {
               boardStore.upsertComment(updated);
             } catch (err) {
               console.warn('[foldo] update comment failed', err);
-              showToast(setToast, 'Failed to save comment');
+              showToast('Failed to save comment');
             }
           }}
           onClose={() => {
@@ -1262,6 +521,12 @@ export default function App() {
         <UnreachableOverlay error={boot.error} onOffline={useOfflineDemo} />
       )}
 
+      {/* Brand-new board: hydrated but zero frames. Gated on `hydrated` so it
+          never flickers in during board hydration. */}
+      {snap.hydrated && frames.length === 0 && !captureOpen && (
+        <EmptyBoardState onCapture={() => setCaptureOpen(true)} />
+      )}
+
       {snap.hydrated &&
         frames.length > 0 &&
         !selectedElement &&
@@ -1274,370 +539,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </PluginRuntimeProvider>
   );
-}
-
-// ----- memoised frame children so unrelated frame updates don't re-render every frame -----
-
-const MemoAppFrame = memo(AppFrame);
-const MemoMarkdownFrame = memo(MarkdownFrame);
-const MemoStickyFrame = memo(StickyFrame);
-const MemoArrowFrame = memo(ArrowFrame);
-const MemoImageFrame = memo(ImageFrame);
-const MemoTestSummaryFrame = memo(TestSummaryFrame);
-const MemoTestSessionFrame = memo(TestSessionFrame);
-
-// ----- bootstrapping helpers -----
-
-function hydrateStoreFromRest(
-  snapshot: {
-    board: import('@foldo/protocol').Board;
-    branches: Branch[];
-    frames: Frame[];
-    comments: Comment[];
-    users: import('@foldo/protocol').User[];
-    mcpConnected: boolean;
-  },
-  meUserId: string,
-) {
-  const frameMap = new Map(snapshot.frames.map((f) => [f.id, f]));
-  const commentMap = new Map(snapshot.comments.map((c) => [c.id, c]));
-  const branchMap = new Map(snapshot.branches.map((b) => [b.id, b]));
-  const userMap = new Map(snapshot.users.map((u) => [u.id, u]));
-  // Presence will be supplied by the WS welcome; seed a basic record for ourselves.
-  const me = userMap.get(meUserId);
-  const presence = new Map<string, import('@foldo/protocol').PresenceUser>();
-  if (me) {
-    presence.set(meUserId, {
-      userId: me.id,
-      name: me.name,
-      initial: me.initial,
-      color: me.color,
-      online: true,
-      lastSeenAt: new Date().toISOString(),
-    });
-  }
-  boardStore.set({
-    hydrated: true,
-    offline: false,
-    wsStatus: 'connecting',
-    meUserId,
-    board: snapshot.board,
-    frames: frameMap,
-    comments: commentMap,
-    branches: branchMap,
-    users: userMap,
-    presence,
-    dispatches: new Map(),
-    mcpConnected: snapshot.mcpConnected,
-    activeTestSessions: new Set(),
-  });
-}
-
-function hydrateStoreFromMock() {
-  const s = mockBoardSnapshot;
-  const frameMap = new Map(s.frames.map((f) => [f.id, f]));
-  const commentMap = new Map(s.comments.map((c) => [c.id, c]));
-  const branchMap = new Map(s.branches.map((b) => [b.id, b]));
-  const userMap = new Map(s.users.map((u) => [u.id, u]));
-  const presence = new Map(mockPresence().map((p) => [p.userId, p]));
-  boardStore.set({
-    hydrated: true,
-    offline: true,
-    wsStatus: 'closed',
-    meUserId: MOCK_ME_USER_ID,
-    board: s.board,
-    frames: frameMap,
-    comments: commentMap,
-    branches: branchMap,
-    users: userMap,
-    presence,
-    dispatches: new Map(),
-    mcpConnected: false,
-    activeTestSessions: new Set(),
-  });
-}
-
-// ----- offline dispatch simulation -----
-
-function runOfflineDispatch(
-  boardId: string,
-  parent: Frame,
-  branch: Branch,
-  intent: string,
-  target: CommentTarget,
-  setActiveDispatchId: (id: string) => void,
-  onResultReady: (frame: Frame) => void,
-) {
-  const id = `d-local-${Date.now()}`;
-  const start = new Date().toISOString();
-  const d0: Dispatch = {
-    id,
-    boardId,
-    frameId: parent.id,
-    branchId: branch.id,
-    initiatorUserId: DEMO_USER_ID,
-    target,
-    baseCommitSha: parent.commitSha,
-    intent,
-    status: 'sending',
-    events: [
-      { ts: start, level: 'info', message: 'Queued dispatch to local MCP…' },
-    ],
-    createdAt: start,
-    startedAt: start,
-  };
-  boardStore.upsertDispatch(d0);
-  setActiveDispatchId(id);
-
-  setTimeout(() => {
-    const existing = boardStore.getSnapshot().dispatches.get(id);
-    if (!existing) return;
-    boardStore.upsertDispatch({
-      ...existing,
-      status: 'running',
-      events: [
-        ...existing.events,
-        {
-          ts: new Date().toISOString(),
-          level: 'info',
-          message: 'Claude Code running…',
-        },
-      ],
-    });
-  }, 700);
-
-  setTimeout(() => {
-    const existing = boardStore.getSnapshot().dispatches.get(id);
-    if (!existing) return;
-    const finishedAt = new Date().toISOString();
-    const sha = Math.random().toString(16).slice(2, 9);
-
-    let result: Frame;
-    if (parent.kind === 'markdown' && parent.content.kind === 'markdown') {
-      // Update the doc in place rather than spawning a sibling markdown frame;
-      // keeps the row's "docs left, screens right" shape intact.
-      result = {
-        ...parent,
-        commitSha: sha,
-        commitMessage: 'docs: applied edit from canvas',
-        age: 'just now',
-        content: {
-          ...parent.content,
-          body:
-            (parent.content.body ?? '') +
-            `\n\n## Update (from canvas)\n\n${intent}`,
-        },
-        updatedAt: finishedAt,
-      };
-    } else {
-      const sameRow: Frame[] = [];
-      for (const f of boardStore.getSnapshot().frames.values()) {
-        if (
-          Math.abs(f.position.y - parent.position.y) < parent.size.height / 2 &&
-          f.branchId === parent.branchId
-        ) {
-          sameRow.push(f);
-        }
-      }
-      const rightmost = sameRow.reduce(
-        (acc, f) => Math.max(acc, f.position.x + f.size.width),
-        parent.position.x + parent.size.width,
-      );
-      const newX = rightmost + 100;
-      const childId = `f-local-${Date.now()}`;
-      result = {
-        id: childId,
-        boardId,
-        kind: 'app',
-        branchId: parent.branchId,
-        commitSha: sha,
-        commitMessage: trimCommit(intent),
-        age: 'just now',
-        position: { x: newX, y: parent.position.y },
-        size: parent.size,
-        content: {
-          kind: 'app',
-          variant:
-            parent.content.kind === 'app' ? parent.content.variant : 'baseline',
-          route: parent.content.kind === 'app' ? parent.content.route : '/',
-          viewport:
-            parent.content.kind === 'app'
-              ? parent.content.viewport
-              : { width: 1280, height: 900 },
-          recipe:
-            parent.content.kind === 'app' ? parent.content.recipe : undefined,
-          stateLabel:
-            parent.content.kind === 'app'
-              ? parent.content.stateLabel
-              : undefined,
-          overrides:
-            parent.content.kind === 'app' ? parent.content.overrides : undefined,
-        },
-        parentFrameId: parent.id,
-        generatedByDispatchId: id,
-        createdAt: finishedAt,
-        updatedAt: finishedAt,
-      };
-    }
-
-    boardStore.upsertFrame(result);
-    boardStore.upsertDispatch({
-      ...existing,
-      status: 'done',
-      finishedAt,
-      resultFrameId: result.id,
-      resultCommitSha: sha,
-      events: [
-        ...existing.events,
-        { ts: finishedAt, level: 'info', message: 'Done.' },
-      ],
-    });
-    onResultReady(result);
-  }, 2200);
-}
-
-function trimCommit(s: string) {
-  return s.split('\n')[0].slice(0, 60) || 'apply canvas edit';
-}
-
-// ----- misc UI helpers -----
-
-function BootLoadingOverlay() {
-  return (
-    <div className="pointer-events-auto absolute inset-0 z-[80] flex items-center justify-center bg-canvas/80 backdrop-blur-sm">
-      <div className="rounded-xl border border-hairlineSoft bg-panel px-6 py-4 text-[13px] text-inkMute shadow-panel">
-        Loading board…
-      </div>
-    </div>
-  );
-}
-
-function UnreachableOverlay({
-  error,
-  onOffline,
-}: {
-  error: string;
-  onOffline: () => void;
-}) {
-  return (
-    <div className="pointer-events-auto absolute inset-0 z-[80] flex items-center justify-center bg-canvas/85 backdrop-blur-sm">
-      <div className="w-[420px] rounded-xl border border-hairline bg-panel p-5 shadow-panel">
-        <div className="flex items-center gap-2 text-[12.5px] font-medium text-ink">
-          <span
-            className="inline-block h-2 w-2 rounded-full"
-            style={{ background: '#ef6f6f' }}
-          />
-          Cloud unreachable
-        </div>
-        <div className="mt-2 text-[12.5px] leading-relaxed text-inkMute">
-          Couldn't reach the Foldo server on <code>localhost:4000</code>. Start
-          it with{' '}
-          <code className="rounded bg-canvas/80 px-1 py-px font-mono text-[11.5px] text-ink">
-            npm run dev
-          </code>
-          .
-        </div>
-        <div className="mt-2 font-mono text-[10.5px] text-inkFaint">{error}</div>
-        <div className="mt-4 flex items-center justify-end gap-2">
-          <button
-            onClick={() => location.reload()}
-            className="rounded-md border border-hairlineSoft bg-canvas px-3 py-1.5 text-[12px] text-ink hover:bg-white/5"
-          >
-            Retry
-          </button>
-          <button
-            onClick={onOffline}
-            className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accentSoft"
-          >
-            Use offline demo
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FirstRunHint({ count }: { count: number }) {
-  const [dismissed, setDismissed] = useState(false);
-  if (dismissed) return null;
-  return (
-    <div className="pointer-events-auto absolute bottom-4 right-4 z-40 w-[300px] rounded-xl border border-hairline bg-panel p-3.5 shadow-panel fade-in">
-      <div className="mb-1 flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-accent">
-          <Sparkle /> Try this
-        </div>
-        <button
-          onClick={() => setDismissed(true)}
-          className="text-inkFaint hover:text-ink"
-          aria-label="Dismiss"
-        >
-          <svg width="10" height="10" viewBox="0 0 16 16">
-            <path
-              d="M4 4l8 8M12 4l-8 8"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
-      </div>
-      <div className="text-[12.5px] leading-relaxed text-ink">
-        Click an orange comment pin, hit{' '}
-        <span className="rounded bg-accent/15 px-1 py-px font-medium text-accent">
-          Make this an edit
-        </span>
-        , then{' '}
-        <span className="rounded bg-accent/15 px-1 py-px font-medium text-accent">
-          Send to Claude Code
-        </span>{' '}
-        . A new frame appears connected to its parent.
-      </div>
-      <div className="mt-2 text-[11px] text-inkFaint">
-        {count} frames · scroll to pan · ⌘+scroll to zoom
-      </div>
-    </div>
-  );
-}
-
-function Sparkle() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M8 2.5l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" />
-    </svg>
-  );
-}
-
-function showToast(setter: (s: string | null) => void, msg: string) {
-  setter(msg);
-  setTimeout(() => setter(null), 1400);
-}
-
-/**
- * Demo identity picker. Defaults to `u-you` (the seeded "You" user). Open multiple
- * browsers / windows and switch to `u-anna` / `u-mateo` / `u-priya` to demo
- * multiplayer with distinct cursors. Selection persists in localStorage.
- */
-function readOrCreateDemoUserId(): string {
-  try {
-    const KEY = 'foldo:demoUserId';
-    const stored = localStorage.getItem(KEY);
-    const valid = ['u-you', 'u-anna', 'u-mateo', 'u-priya'];
-    if (stored && valid.includes(stored)) return stored;
-    // Default to u-you so the first paint always authenticates against the seed.
-    return 'u-you';
-  } catch {
-    return 'u-you';
-  }
-}
-
-export function setDemoUserId(id: string): void {
-  try {
-    localStorage.setItem('foldo:demoUserId', id);
-  } catch { /* ignore */ }
-}
-
-function canvasContainerRectFallback() {
-  if (typeof window === 'undefined') return { width: 1440, height: 900 };
-  return { width: window.innerWidth, height: window.innerHeight };
 }

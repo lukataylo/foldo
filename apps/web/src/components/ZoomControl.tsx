@@ -8,7 +8,10 @@ interface Props {
 
 export function ZoomControl({ zoom, onZoomIn, onZoomOut, onZoomToFit, onReset }: Props) {
   return (
-    <div className="pointer-events-none absolute bottom-4 left-1/2 z-40 -translate-x-1/2">
+    <div
+      className="pointer-events-none absolute left-1/2 z-40 -translate-x-1/2"
+      style={{ bottom: `calc(1rem + env(safe-area-inset-bottom, 0px))` }}
+    >
       <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-hairlineSoft bg-panel px-1 py-1 text-[12px] text-ink shadow-panel">
         <Button title="Zoom out (⌘-)" onClick={onZoomOut}>
           <Minus />
@@ -44,7 +47,7 @@ function Button({
     <button
       title={title}
       onClick={onClick}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+      className="touch-target flex h-7 w-7 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
     >
       {children}
     </button>

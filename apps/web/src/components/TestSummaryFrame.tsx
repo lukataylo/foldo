@@ -2,6 +2,7 @@
 // canvas. Read-only: aggregate session counts + per-task completion stats.
 // Session frames cluster beneath it (connector-lined via parentFrameId).
 
+import type { HTMLAttributes } from 'react';
 import type {
   Branch,
   Frame,
@@ -9,12 +10,13 @@ import type {
   TestSummaryFrameContent,
   TestTaskStat,
 } from '@foldo/protocol';
-import { FrameMeta } from './FrameMeta';
+import { FrameShell } from './FrameShell';
+import { frameStyleToCss } from '../plugins/frameStyle';
 
 interface Props {
   frame: Frame;
   branch: Branch;
-  zoom?: number;
+  wrapperProps?: HTMLAttributes<HTMLDivElement>;
 }
 
 const STATUS_STYLE: Record<TestStatus, { label: string; cls: string }> = {
@@ -32,24 +34,15 @@ const STATUS_STYLE: Record<TestStatus, { label: string; cls: string }> = {
   },
 };
 
-export function TestSummaryFrame({ frame, branch, zoom = 1 }: Props) {
+export function TestSummaryFrame({ frame, branch, wrapperProps }: Props) {
   const content = frame.content as TestSummaryFrameContent;
   const status = STATUS_STYLE[content.status] ?? STATUS_STYLE.draft;
 
   return (
-    <div
-      className="absolute"
-      style={{
-        left: frame.position.x,
-        top: frame.position.y,
-        width: frame.size.width,
-        height: frame.size.height,
-      }}
-    >
-      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
+    <FrameShell frame={frame} branch={branch} wrapperProps={wrapperProps}>
       <div
         className="flex h-full w-full flex-col overflow-hidden rounded-md border border-hairlineSoft bg-panel frame-shadow"
-        style={{ pointerEvents: 'auto' }}
+        style={{ pointerEvents: 'auto', ...frameStyleToCss(frame.style) }}
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-3 border-b border-hairlineSoft bg-panelMute px-4 py-3">
@@ -103,7 +96,7 @@ export function TestSummaryFrame({ frame, branch, zoom = 1 }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </FrameShell>
   );
 }
 

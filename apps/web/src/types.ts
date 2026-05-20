@@ -28,14 +28,22 @@ export type {
   VariantOverrides,
 } from '@foldo/protocol';
 
-export type Tool =
-  | 'select'
-  | 'hand'
-  | 'comment'
-  | 'edit'
-  | 'sticky'
-  | 'arrow'
-  | 'image';
+/**
+ * Tool id. The built-ins keep their narrow names; plugins are free to add new
+ * tools (e.g. "design"), so the public type is `string`. Built-in id constants
+ * are exported below for autocomplete in host code.
+ */
+export type Tool = string;
+
+export const BUILTIN_TOOLS = {
+  select: 'select',
+  hand: 'hand',
+  comment: 'comment',
+  edit: 'edit',
+  sticky: 'sticky',
+  arrow: 'arrow',
+  image: 'image',
+} as const;
 
 export interface SelectedElement {
   frameId: string;

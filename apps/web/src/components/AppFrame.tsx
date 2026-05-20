@@ -1,14 +1,14 @@
 // App frame, renders the sample app inside an iframe and forwards element
 // click/hover events from the sample app's postMessage bridge.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react';
 import type {
   AppFrameContent,
   Branch,
   Comment,
   Frame,
 } from '@foldo/protocol';
-import { FrameMeta } from './FrameMeta';
+import { FrameShell } from './FrameShell';
 import { CommentPin } from './CommentPin';
 import {
   isSampleAppOutbound,
@@ -30,7 +30,7 @@ interface Props {
   onCommentClick: (frameId: string, comment: Comment) => void;
   /** When false the frame is far from the camera, render a static placeholder. */
   inViewport: boolean;
-  zoom: number;
+  wrapperProps?: HTMLAttributes<HTMLDivElement>;
 }
 
 const SAMPLE_APP_BASE =
@@ -49,7 +49,7 @@ export function AppFrame({
   onDropPin,
   onCommentClick,
   inViewport,
-  zoom,
+  wrapperProps,
 }: Props) {
   const content = frame.content as AppFrameContent;
   const [testMode, setTestMode] = useState(false);
@@ -178,17 +178,7 @@ export function AppFrame({
   const showSelectionOnThisFrame = selectedElement?.frameId === frame.id;
 
   return (
-    <div
-      className="absolute"
-      style={{
-        left: frame.position.x,
-        top: frame.position.y,
-        width: frame.size.width,
-        height: frame.size.height,
-      }}
-    >
-      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
-
+    <FrameShell frame={frame} branch={branch} wrapperProps={wrapperProps}>
       <div
         className="relative h-full w-full overflow-hidden rounded-md border border-black/15 bg-white frame-shadow"
         style={{ pointerEvents: 'auto' }}
@@ -290,9 +280,7 @@ export function AppFrame({
           />
         ))}
       </div>
-      {/* Suppress unused-warning */}
-      <span style={{ display: 'none' }}>{zoom}</span>
-    </div>
+    </FrameShell>
   );
 }
 

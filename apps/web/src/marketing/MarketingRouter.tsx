@@ -15,8 +15,10 @@ import Login from './Login';
 import NotFound from './NotFound';
 import Pricing from './Pricing';
 import Privacy from './Privacy';
+import Reset from './Reset';
 import Signup from './Signup';
 import Terms from './Terms';
+import VerifyEmail from './VerifyEmail';
 
 const KNOWN_MARKETING_PATHS = new Set([
   '/',
@@ -27,6 +29,8 @@ const KNOWN_MARKETING_PATHS = new Set([
   '/demo',
   '/docs',
   '/forgot',
+  '/reset',
+  '/verify-email',
   '/terms',
   '/privacy',
   '/about',
@@ -62,6 +66,8 @@ export default function MarketingRouter() {
   if (path === '/pricing') return <Pricing />;
   if (path === '/demo') return <Demo />;
   if (path === '/forgot') return <Forgot />;
+  if (path === '/reset') return <Reset />;
+  if (path === '/verify-email') return <VerifyEmail />;
   if (path === '/terms') return <Terms />;
   if (path === '/privacy') return <Privacy />;
   if (path === '/cookies' || path === '/cookie-policy') return <CookiePolicy />;

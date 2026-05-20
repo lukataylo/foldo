@@ -12,7 +12,6 @@ const PERKS = [
 export default function Signup() {
   useMarketingTheme('Sign up · Foldo');
   const [name, setName] = useState('');
-  const [team, setTeam] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -100,36 +99,19 @@ export default function Signup() {
           </p>
 
           <form onSubmit={onSubmit}>
-            <div
-              className="stack-sm"
-              style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}
-            >
-              <div>
-                <label className="field-label" htmlFor="name">Your name</label>
-                <input
-                  id="name"
-                  className="field-input"
-                  type="text"
-                  placeholder="Anna Cole"
-                  autoComplete="name"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={submitting}
-                />
-              </div>
-              <div>
-                <label className="field-label" htmlFor="team">Team or repo</label>
-                <input
-                  id="team"
-                  className="field-input"
-                  type="text"
-                  placeholder="acme/landing"
-                  value={team}
-                  onChange={(e) => setTeam(e.target.value)}
-                  disabled={submitting}
-                />
-              </div>
+            <div style={{ marginBottom: 16 }}>
+              <label className="field-label" htmlFor="name">Your name</label>
+              <input
+                id="name"
+                className="field-input"
+                type="text"
+                placeholder="Anna Cole"
+                autoComplete="name"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={submitting}
+              />
             </div>
             <div style={{ marginBottom: 16 }}>
               <label className="field-label" htmlFor="email">Work email</label>

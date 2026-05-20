@@ -2,35 +2,37 @@ import { useState } from 'react';
 import type { Branch, Frame } from '@foldo/protocol';
 import { boardStore } from '../state/BoardStore';
 import { deleteFrame as apiDeleteFrame } from '../api/frames';
+import { mutate } from '../lib/mutate';
 import { useFrameDrag } from './useFrameDrag';
 
 interface Props {
   frame: Frame;
   branch: Branch;
-  /** Current canvas zoom, needed to convert screen-pixel drags to world units. */
-  zoom?: number;
   /** When true, header acts as a drag handle and exposes the actions menu. */
   canEdit?: boolean;
 }
 
-export function FrameMeta({ frame, branch, zoom = 1, canEdit = true }: Props) {
+export function FrameMeta({ frame, branch, canEdit = true }: Props) {
   const isAgent = branch.authoredBy === 'agent';
   const isCapture = !!frame.capturedFromUrl;
 
-  const { handlers } = useFrameDrag({ frame, zoom, enabled: canEdit });
+  const { handlers } = useFrameDrag({ frame, enabled: canEdit });
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function onConfirmDelete(): Promise<void> {
-    boardStore.removeFrame(frame.id);
-    try {
-      await apiDeleteFrame(frame.id);
-    } catch (err) {
-      // best-effort: re-fetch board on failure; for now log + reinsert
+    const prev = boardStore.getSnapshot().frames.get(frame.id);
+    await mutate({
+      optimistic: () => boardStore.removeFrame(frame.id),
+      commit: () => apiDeleteFrame(frame.id),
+      // Re-insert the frame if the server rejected the delete.
+      rollback: () => {
+        if (prev) boardStore.upsertFrame(prev);
+      },
       // eslint-disable-next-line no-console
-      console.error('delete frame failed', err);
-    }
+      onError: (err) => console.error('delete frame failed', err),
+    });
   }
 
   return (

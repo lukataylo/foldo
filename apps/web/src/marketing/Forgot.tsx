@@ -1,22 +1,35 @@
 import { useState, type FormEvent } from 'react';
 import SimplePage from './SimplePage';
+import { apiRequestPasswordReset } from './auth';
 
 export default function Forgot() {
   const [email, setEmail] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const onSubmit = (e: FormEvent): void => {
+  async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault();
-    // Honest UX: we don't have email infrastructure wired yet. Show a friendly
-    // confirmation but be clear we'll follow up by hand.
-    setSubmitted(true);
-  };
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      // The server always responds 200 and never reveals whether the email
+      // matches an account, so we show the same confirmation either way.
+      await apiRequestPasswordReset(email);
+      setSubmitted(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <SimplePage
       title="Forgot it?"
       chip="🐕 Help"
-      intro="Drop your email and we'll get you back into the canvas. Email-based reset isn't fully automated yet. A human will reach out within a business day."
+      intro="Drop your email and we'll send a link to reset your password. The link works once and expires in an hour."
     >
       {submitted ? (
         <div
@@ -27,11 +40,11 @@ export default function Forgot() {
             padding: '20px 22px',
           }}
         >
-          <strong>Got it.</strong>
+          <strong>Check your inbox.</strong>
           <p style={{ marginTop: 8, color: '#555', lineHeight: 1.55 }}>
-            If <code>{email}</code> matches an account, we'll send a reset
-            link as soon as a human ack's the queue. Sit, stay, refresh your
-            inbox.
+            If <code>{email}</code> matches an account, a password-reset link
+            is on its way. It expires in an hour, so don't dawdle. Didn't get
+            it? Check spam, then try again.
           </p>
         </div>
       ) : (
@@ -46,21 +59,38 @@ export default function Forgot() {
             placeholder="you@company.com"
             required
             autoFocus
+            disabled={submitting}
           />
+          {error && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 12,
+                padding: '10px 14px',
+                borderRadius: 10,
+                background: '#fff0f0',
+                border: '1px solid #ffd2d2',
+                color: '#a02020',
+                fontSize: 13.5,
+              }}
+            >
+              {error}
+            </div>
+          )}
           <button
             type="submit"
             className="btn-primary"
-            style={{ marginTop: 14 }}
+            style={{ marginTop: 14, opacity: submitting ? 0.6 : 1 }}
+            disabled={submitting}
           >
-            Send me a reset
+            {submitting ? 'Sending…' : 'Send me a reset link'}
           </button>
         </form>
       )}
 
       <p style={{ marginTop: 26, fontSize: 13, color: '#777' }}>
-        In the meantime: if you remember your password, just{' '}
-        <a href="/login">log in</a>. If you're truly stuck, email{' '}
-        <a href="mailto:hi@foldo.dev">hi@foldo.dev</a> and we'll reset by hand.
+        Remembered it? Just <a href="/login">log in</a>. Truly stuck? Email{' '}
+        <a href="mailto:hi@foldo.dev">hi@foldo.dev</a>.
       </p>
     </SimplePage>
   );

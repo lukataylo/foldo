@@ -13,6 +13,12 @@ interface BoardCardProps {
   onOpen: () => void;
   onToggleStar: () => void;
   onToast?: (msg: string) => void;
+  /** Open the Members modal for this board. */
+  onManageMembers?: () => void;
+  /** Open the rename modal for this board. */
+  onRename?: () => void;
+  /** Open the delete-confirm modal for this board. */
+  onDelete?: () => void;
 }
 
 const DEFAULT_COLORS = ['#9a9a9a', '#b08cff', '#5db0ff', '#f5b86b'];
@@ -23,8 +29,14 @@ export function BoardCard({
   onOpen,
   onToggleStar,
   onToast,
+  onManageMembers,
+  onRename,
+  onDelete,
 }: BoardCardProps) {
   const colors = board.branchColors.length > 0 ? board.branchColors : DEFAULT_COLORS;
+  // Rename + delete are owner-only; the server enforces this too, but hiding
+  // the actions keeps non-owners from hitting a guaranteed 403.
+  const isOwner = board.role === 'owner';
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -203,6 +215,47 @@ export function BoardCard({
               >
                 Revoke share link
               </button>
+              <button
+                role="menuitem"
+                type="button"
+                disabled={busy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onManageMembers?.();
+                }}
+              >
+                Members
+              </button>
+              {isOwner && (
+                <>
+                  <button
+                    role="menuitem"
+                    type="button"
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      onRename?.();
+                    }}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    role="menuitem"
+                    type="button"
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      onDelete?.();
+                    }}
+                    style={{ color: '#c0392b' }}
+                  >
+                    Delete board
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

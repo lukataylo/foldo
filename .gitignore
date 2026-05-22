@@ -19,5 +19,8 @@ apps/extension/dist/
 test-results/
 playwright-report/
 
+# Generated DOM/screenshot captures (scripts/capture-dom.mjs)
+dom-capture/
+
 # Editor lock files
 *~lock~

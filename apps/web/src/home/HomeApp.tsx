@@ -285,6 +285,7 @@ export default function HomeApp() {
               type="button"
               onClick={() => setNewBoardOpen(true)}
               style={{ padding: '11px 16px', fontSize: 14, gap: 6 }}
+              data-testid="foldo-home-newboard-trigger"
             >
               <span style={{ fontSize: 16, fontWeight: 700 }}>+</span> New board
             </button>

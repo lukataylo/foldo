@@ -68,7 +68,7 @@ export function TopBar({
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] font-medium text-ink hover:bg-white/5"
         >
           <RepoIcon />
-          <span>{repoName}</span>
+          <span data-testid="foldo-canvas-topbar-boardname">{repoName}</span>
           <Chevron />
         </button>
         <ConnectionDot status={wsStatus} offline={offline} />

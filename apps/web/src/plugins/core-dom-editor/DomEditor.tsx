@@ -4,12 +4,13 @@
 // Flow:
 //   1. User clicks "Pick element" → bridge broadcasts a pick request
 //      to every iframe on the page.
-//   2. The iframe-side handler (fast-follow — see inspect-bridge.ts
-//      TODO) replies with `foldo:inspect:picked` carrying a selector
-//      and a computed-style snapshot.
+//   2. The iframe-side handler (apps/sample-app/src/inspect-listener.ts)
+//      replies with `foldo:inspect:picked` carrying a selector and a
+//      computed-style snapshot.
 //   3. The panel renders Figma-style controls populated from the
 //      computed style. Every edit broadcasts a `foldo:inspect:apply`
-//      message — the iframe applies the styles as a live CSS overlay.
+//      message — the iframe writes the styles as inline-style overlays
+//      (in-memory; lost on reload, which is correct for v1).
 //   4. "Save to source" packages the override set as a Claude Code
 //      dispatch. v1 placeholder only — see onSaveToSource below.
 

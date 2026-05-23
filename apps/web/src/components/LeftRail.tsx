@@ -9,12 +9,10 @@
 //   2. Every e2e spec clicks `getByTestId('foldo-rail-tool-<id>')` — those
 //      testids stay alive here so the test suite doesn't churn.
 //
-// Active-state highlight uses `tool === t.id`, which works because the
-// plugin's ToolSpec ids match the canvas `Tool` union one-to-one. `onChange`
-// is no longer wired to the buttons (each ToolSpec.activate() hits
-// `window.__foldoSetTool` instead), but the prop stays in the signature for
-// the App.tsx call site — it's a free hook for any future direct-from-rail
-// tool changes.
+// /* A+W1 features */ — the legacy `onChange` prop was dead (the buttons
+// route through `window.__foldoSetTool` via the plugin's ToolSpec.activate),
+// so it was removed from the signature. App.tsx's call site no longer
+// passes it either.
 
 import { Fragment } from 'react';
 import { usePluginSurfaces } from '../plugins/registry';
@@ -22,8 +20,6 @@ import type { Tool } from '../types';
 
 interface Props {
   tool: Tool;
-  /** Retained for back-compat; plugin tools route through window.__foldoSetTool. */
-  onChange?: (t: Tool) => void;
 }
 
 export function LeftRail({ tool }: Props) {

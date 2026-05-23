@@ -134,9 +134,49 @@ export default function Verify() {
         >
           <strong>That didn't work.</strong>
           <p style={{ marginTop: 6, lineHeight: 1.55 }}>{state.message}</p>
-          <p style={{ marginTop: 10, fontSize: 13 }}>
-            Open Foldo, click the "Verify your email" banner, and request a
-            fresh link.
+          {/* A+W1 features — primary action to request a new verification
+              link. /api/auth/resend-verification needs an authenticated
+              user; HomeApp already implements the resend flow, so the
+              cleanest path is to bounce the user there with a hint flag. */}
+          <div style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              data-testid="foldo-verify-request-new-link"
+              onClick={() => {
+                try {
+                  window.location.assign('/home?verify=resend');
+                } catch {
+                  /* ignore — server-rendered fallback below covers this. */
+                }
+              }}
+              style={{
+                background: '#a02020',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 8,
+                padding: '8px 14px',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Request a new verification link
+            </button>
+            <a
+              href="/login"
+              style={{
+                color: '#a02020',
+                fontSize: 13,
+                alignSelf: 'center',
+                textDecoration: 'underline',
+              }}
+            >
+              Log in instead
+            </a>
+          </div>
+          <p style={{ marginTop: 10, fontSize: 12, color: '#7a3a3a' }}>
+            We'll send a fresh link to your account email — the new link
+            invalidates any prior unused one.
           </p>
         </div>
       )}

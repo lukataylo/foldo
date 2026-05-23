@@ -259,13 +259,33 @@ export function CommentPopover({
             Delete
           </button>
         )}
-        <button
-          data-testid="foldo-comment-make-edit"
-          onClick={onMakeEdit}
-          className="flex items-center gap-1.5 rounded-md bg-accent/15 px-2 py-1 text-[11.5px] font-medium text-accent hover:bg-accent/25"
-        >
-          <Sparkle /> Make this an edit
-        </button>
+        {/* A+W1 features — disable when the comment has no element target
+            and no markdown anchor; the handler in useCommentHandlers also
+            short-circuits with a toast for keyboard / programmatic callers. */}
+        {(() => {
+          const canMakeEdit = !!(comment.target?.elementLabel || comment.anchor);
+          return (
+            <button
+              data-testid="foldo-comment-make-edit"
+              data-foldo-can-make-edit={canMakeEdit ? 'yes' : 'no'}
+              onClick={onMakeEdit}
+              disabled={!canMakeEdit}
+              title={
+                canMakeEdit
+                  ? 'Turn this comment into a Claude Code edit'
+                  : 'Pin the comment to an element or a markdown line to make it editable.'
+              }
+              className={
+                'flex items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-medium ' +
+                (canMakeEdit
+                  ? 'bg-accent/15 text-accent hover:bg-accent/25'
+                  : 'cursor-not-allowed bg-white/5 text-inkFaint')
+              }
+            >
+              <Sparkle /> Make this an edit
+            </button>
+          );
+        })()}
       </div>
     </div>
   );

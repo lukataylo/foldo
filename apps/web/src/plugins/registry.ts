@@ -105,6 +105,28 @@ export function getSelectFrameHook(): ((frameId: string) => void) | null {
   );
 }
 
+/* A+W1 features — layer-nav action hooks. The Layer Navigator's toolbar
+   buttons (Delete/Rename/Reorder) call these window-level escape hatches
+   when they need to mutate frames. The hook implementations live in
+   App.tsx and route to the REST API + optimistic BoardStore writes. */
+
+export interface LayerActionHooks {
+  delete?: (frameId: string) => Promise<void> | void;
+  rename?: (frameId: string, newName: string) => Promise<void> | void;
+  reorder?: (frameId: string, newIndex: number) => Promise<void> | void;
+}
+
+export function registerLayerActionHooks(hooks: LayerActionHooks): void {
+  const w = window as unknown as {
+    __foldoDeleteFrame?: LayerActionHooks['delete'];
+    __foldoRenameFrame?: LayerActionHooks['rename'];
+    __foldoReorderFrame?: LayerActionHooks['reorder'];
+  };
+  if (hooks.delete) w.__foldoDeleteFrame = hooks.delete;
+  if (hooks.rename) w.__foldoRenameFrame = hooks.rename;
+  if (hooks.reorder) w.__foldoReorderFrame = hooks.reorder;
+}
+
 
 // Re-export useEffect so any plugin module that needs it doesn't need a
 // duplicate React import. (Kept for backwards-compat across plugin files.)

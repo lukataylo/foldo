@@ -117,6 +117,16 @@ export default function CaptureViewer() {
         boardId: payload.frame.boardId,
         frameId: payload.frame.id,
       });
+      /* A+W1 features — auto-redirect to the board after a brief "Saved to
+         board" affordance. Previously the user had to click "Open on canvas",
+         which was an unnecessary extra step for the happy path. */
+      try {
+        window.setTimeout(() => {
+          window.location.href = `/board/${payload.frame.boardId}#frame=${payload.frame.id}`;
+        }, 1000);
+      } catch {
+        /* ignore — fallback button still works */
+      }
     } catch (err) {
       setSavingState({
         kind: 'error',
@@ -173,12 +183,16 @@ export default function CaptureViewer() {
         </code>
         <span style={{ flex: 1 }} />
         {savingState.kind === 'saved' ? (
+          /* A+W1 features — surface the redirect intent so the user knows
+             the page is about to navigate. The href is still clickable as
+             an immediate-take, in case the 1s timer is intercepted. */
           <a
             href={`/board/${savingState.boardId}`}
             className="btn-primary"
+            data-testid="foldo-capture-saved-redirect"
             style={{ padding: '8px 14px', fontSize: 13 }}
           >
-            Open on canvas →
+            Saved to board · opening…
           </a>
         ) : (
           <button

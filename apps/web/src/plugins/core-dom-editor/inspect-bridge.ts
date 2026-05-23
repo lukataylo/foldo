@@ -8,11 +8,11 @@
 //
 //    { type: 'foldo:inspect:pick' }
 //
-//    The iframe-side handler (TODO: see fast-follow note below) is
-//    expected to attach a one-shot click listener that, on the next
-//    user click, captures the target element's CSS selector and its
-//    computed style snapshot, posts back the `picked` message below,
-//    and detaches the listener.
+//    The iframe-side handler (apps/sample-app/src/inspect-listener.ts)
+//    attaches a capture-phase mousemove + click pair. The next user
+//    click captures the target element's CSS selector and computed
+//    style snapshot, posts back the `picked` message below, and
+//    detaches both listeners.
 //
 // 2. Iframe → canvas: an element was picked.
 //
@@ -31,28 +31,18 @@
 //      selector: string,
 //      styles: Record<string, string> }
 //
-//    The iframe-side handler is expected to maintain a single shared
-//    <style> element and rewrite the selector's rule on each call.
-//    Persisting the overlay back to source is OUT OF SCOPE for v1 —
-//    a future "Save to source" pipeline will package the styles as
-//    an MCP dispatch (see DomEditor.tsx > onSaveToSource).
+//    The iframe-side handler queries `document.querySelectorAll(selector)`
+//    and writes each (k, v) into the matching elements' inline style.
+//    Persistence is in-memory only — on iframe reload, every overlay
+//    vanishes, which is the correct v1 behaviour. Persisting the
+//    overlay back to source is OUT OF SCOPE for v1 — a future "Save
+//    to source" pipeline will package the styles as an MCP dispatch
+//    (see DomEditor.tsx > onSaveToSource).
 //
-// ============================================================
-// Fast-follow TODO: iframe-side handler
-// ============================================================
-//
-// apps/sample-app/src/bridge/parentBridge.ts doesn't yet listen for
-// any `foldo:inspect:*` messages. A follow-up PR should:
-//   - On `foldo:inspect:pick`, attach a one-shot click handler that
-//     computes a stable selector for the clicked element (data-attr
-//     first, then nth-of-type fallback) and reads getComputedStyle
-//     for DEFAULT_PICK_KEYS, then posts `foldo:inspect:picked`.
-//   - On `foldo:inspect:apply`, upsert a rule in a managed <style>
-//     element scoped to the selector.
-//
-// The plugin side (this file + DomEditor.tsx) is fully functional
-// and tested today; the iframe-side wiring is a separate PR so each
-// half can land independently.
+// Origin discipline: the iframe-side listener allowlists the canvas's
+// origin (mirroring sample-app's existing PARENT_ORIGIN); broadcasts
+// from this file use the iframe's own `iframe.src` origin instead of
+// '*'. Together the two halves refuse any cross-origin chatter.
 
 // ---------- Message types ----------
 

@@ -1,21 +1,28 @@
 // Tool: foldo_apply_edit_prompt, the headline tool. Given an intent and a
 // target, generate a follow-up frame on the canvas representing the edit's
-// result. Real impl would shell out to the `claude` CLI; the prototype uses
-// the shared editSim logic so the cloud sees a sensible new frame.
+// result. Routes through the runner orchestrator: real `claude` CLI when
+// available (or always, unless `FOLDO_MCP_FORCE_SIM=1`), heuristic sim
+// runner otherwise. Either way produces the same `ApplyEditResult` shape
+// + a synthetic `resultFrame` for the cloud to pin on the canvas.
 
 import { z } from 'zod';
+import { nanoid } from 'nanoid';
 import type {
   ApplyEditArgs,
   ApplyEditResult,
   Dispatch,
   Frame,
+  AppFrameContent,
+  VariantOverrides,
 } from '@foldo/protocol';
 import type { FoldoMcpConfig } from '../../config.ts';
 import type { CloudClient } from '../../cloud/wsClient.ts';
 import {
   dispatchToBaseFrame,
-  simulateEdit,
+  buildIframeUrl,
+  inferEdit,
 } from '../../runner/editSim.ts';
+import { runDispatch } from '../../runner/index.ts';
 import { fakeCommitAndPush } from '../../git/ops.ts';
 
 const recipeStepSchema = z.object({
@@ -113,6 +120,69 @@ export interface ApplyEditExtras {
 const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Build a result frame from a real-runner output. The sim path already
+ * produces a richer frame (via simulateEdit) but the real-runner path has
+ * to fabricate one from the dispatch metadata + the new SHA.
+ */
+function buildResultFrameFromReal(
+  baseFrame: Frame,
+  args: ApplyEditArgs,
+  newSha: string,
+  shortSha: string,
+  commitMessage: string,
+  dispatchId: string | undefined,
+  sampleAppUrl: string,
+): Frame {
+  const now = new Date().toISOString();
+  const app =
+    baseFrame.content.kind === 'app' ? (baseFrame.content as AppFrameContent) : null;
+  const nextContent: AppFrameContent = app
+    ? {
+        ...app,
+        iframeUrl: buildIframeUrl(sampleAppUrl, app, shortSha, app.overrides ?? {}),
+      }
+    : {
+        kind: 'app',
+        variant: 'baseline',
+        route: '/',
+        viewport: { width: baseFrame.size.width, height: baseFrame.size.height },
+        iframeUrl: buildIframeUrl(
+          sampleAppUrl,
+          {
+            kind: 'app',
+            variant: 'baseline',
+            route: '/',
+            viewport: {
+              width: baseFrame.size.width,
+              height: baseFrame.size.height,
+            },
+          },
+          shortSha,
+          {},
+        ),
+      };
+  return {
+    id: `frame-${nanoid(8)}`,
+    boardId: args.boardId,
+    kind: 'app',
+    branchId: args.branchId,
+    commitSha: newSha,
+    commitMessage,
+    age: 'just now',
+    position: {
+      x: baseFrame.position.x + baseFrame.size.width + 100,
+      y: baseFrame.position.y,
+    },
+    size: { ...baseFrame.size },
+    content: nextContent,
+    parentFrameId: baseFrame.id,
+    generatedByDispatchId: dispatchId,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export async function runApplyEdit(
   args: ApplyEditArgs,
   deps: ApplyEditDeps,
@@ -122,37 +192,63 @@ export async function runApplyEdit(
   const streaming = !!opts?.emitProgress;
 
   emit('reading target…');
-  if (streaming) await sleep(250);
+  if (streaming) await sleep(150);
 
   const baseFrame = opts?.dispatch
     ? dispatchToBaseFrame(opts.dispatch)
     : fakeBaseFromArgs(args);
 
-  emit('inferring overrides from intent…');
-  if (streaming) await sleep(400);
+  emit('dispatching to runner…');
 
-  const sim = simulateEdit({
-    baseFrame,
-    target: args.target,
-    intent: args.intent,
-    dispatchId: opts?.dispatch?.id,
-    sampleAppUrl: deps.config.sampleAppUrl,
-  });
+  const result = await runDispatch(
+    {
+      dispatchId: opts?.dispatch?.id ?? `local-${nanoid(8)}`,
+      branchId: args.branchId,
+      baseCommitSha: args.baseCommitSha,
+      target: args.target,
+      intent: args.intent,
+      sampleAppUrl: deps.config.sampleAppUrl,
+      baseFrame,
+      dispatchToBase: opts?.dispatch,
+      emitProgress: emit,
+    },
+  );
 
-  emit(sim.note);
-  if (streaming) await sleep(450);
-  emit(`committing as ${sim.sha}…`);
-  if (streaming) await sleep(350);
-  await fakeCommitAndPush(sim.sha, sim.commitMessage);
-  emit('pushed (simulated)');
-  if (streaming) await sleep(150);
+  // When the sim ran, reuse its rich frame; when the real CLI ran,
+  // fabricate one with the same shape so the cloud is none the wiser.
+  let resultFrame: Frame;
+  let overrides: VariantOverrides = {};
+  if (result.sim) {
+    resultFrame = result.sim.newFrame;
+    overrides = result.sim.overrides;
+  } else {
+    resultFrame = buildResultFrameFromReal(
+      baseFrame,
+      args,
+      result.newCommitSha,
+      result.shortSha,
+      result.commitMessage,
+      opts?.dispatch?.id,
+      deps.config.sampleAppUrl,
+    );
+    // Heuristic override inference is still useful even on the real path,
+    // for the sample-app preview iframe overlay; treat it as a hint only.
+    overrides = inferEdit(baseFrame, args.target, args.intent).overrides;
+  }
+
+  // Sim path still needs the fake push hook (no real git), real path
+  // already pushed inside the runner.
+  if (!result.realClaude) {
+    await fakeCommitAndPush(result.shortSha, result.commitMessage);
+    emit('pushed (simulated)');
+  }
 
   return {
     ok: true,
-    newCommitSha: sim.sha,
-    overrides: sim.overrides,
-    commitMessage: sim.commitMessage,
-    diffSummary: '+12 -3',
-    resultFrame: sim.newFrame,
+    newCommitSha: result.newCommitSha,
+    overrides,
+    commitMessage: result.commitMessage,
+    diffSummary: result.realClaude ? '' : '+12 -3',
+    resultFrame,
   };
 }

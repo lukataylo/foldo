@@ -21,6 +21,7 @@ import { startMcpStdioServer } from './mcp/server.ts';
 import { createCloudClient } from './cloud/wsClient.ts';
 import { runApplyEdit } from './mcp/tools/applyEdit.ts';
 import { runFreeze } from './mcp/tools/freeze.ts';
+import { runClaudeDoctor } from './runner/claudeDoctor.ts';
 import type { Dispatch, RecipeStep } from '@foldo/protocol';
 
 type Mode = 'stdio' | 'bridge' | 'both';
@@ -65,6 +66,11 @@ async function main(): Promise<void> {
   log(
     `starting mode=${mode} cloudUrl=${config.cloudUrl} boardId=${config.boardId}`,
   );
+
+  // Preflight: check claude CLI availability and version. Logs but never
+  // throws — a missing binary is fine if the user has FOLDO_MCP_FORCE_SIM=1.
+  const forceSim = process.env.FOLDO_MCP_FORCE_SIM === '1';
+  await runClaudeDoctor(log, { forceSim });
 
   let cloud: ReturnType<typeof createCloudClient> | null = null;
 

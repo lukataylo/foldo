@@ -7,7 +7,10 @@ interface Props {
 
 export function LeftRail({ tool, onChange }: Props) {
   return (
-    <div className="pointer-events-none absolute left-3 top-1/2 z-40 -translate-y-1/2">
+    <div
+      data-testid="foldo-canvas-leftrail"
+      className="pointer-events-none absolute left-3 top-1/2 z-40 -translate-y-1/2"
+    >
       <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-hairlineSoft bg-panel p-1 shadow-panel">
         <RailButton
           label="Select (V)"

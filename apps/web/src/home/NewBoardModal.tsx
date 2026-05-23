@@ -151,6 +151,7 @@ export function NewBoardModal({ open, onClose, onCreated }: NewBoardModalProps) 
               required
               disabled={busy}
               style={inputStyle}
+              data-testid="foldo-home-newboard-name"
             />
           </Field>
           <Field label="Repo (owner / repo)">
@@ -162,6 +163,7 @@ export function NewBoardModal({ open, onClose, onCreated }: NewBoardModalProps) 
               required
               disabled={busy}
               style={inputStyle}
+              data-testid="foldo-home-newboard-repo"
             />
           </Field>
           <Field
@@ -215,6 +217,7 @@ export function NewBoardModal({ open, onClose, onCreated }: NewBoardModalProps) 
                 fontSize: 14,
                 opacity: busy ? 0.6 : 1,
               }}
+              data-testid="foldo-home-newboard-submit"
             >
               {busy ? 'Creating…' : 'Create board'}
             </button>

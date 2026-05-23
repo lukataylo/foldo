@@ -108,6 +108,7 @@ export function BoardCard({
       role="button"
       tabIndex={0}
       className="home-card"
+      data-testid="foldo-home-boardcard"
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {

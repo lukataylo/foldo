@@ -1,14 +1,9 @@
-// Step 9 no-regression gate. Asserts the plugin substrate landed without
-// breaking the canvas: existing LeftRail tools render, the TopBar still
-// shows the board name, and the plugin-toolbar slot is mounted with the
-// core/tools plugin's tools after the fast-follow (LeftRail now reads from
-// the same registry, but its `foldo-rail-tool-*` testids stay alive for
-// the existing e2e suite).
-//
-// Updated for Step 11: the core/dom-editor plugin now contributes a
-// `rightPanel` tab labelled "Inspect", so the right panel transitions
-// from absent to visible. The left panel stays absent until Step 10's
-// Layer Navigator lands.
+// Step 9 / 10 / 11 no-regression gate. Locks in that the plugin substrate
+// (Step 9) keeps working as each subsequent plugin (Step 10 Layer
+// Navigator, Step 11 DOM Editor) lands. The canvas must still mount, the
+// existing LeftRail testids must still resolve, the bottom PluginToolBar
+// must render the core/tools contributions, and BOTH side panels must
+// host their respective tabs (Layers on the left, Inspect on the right).
 //
 // Locking this spec in protects against three specific regressions:
 //   1. A future plugin's activate() crash takes down the canvas
@@ -55,13 +50,14 @@ test.describe('plugin substrate: no regression', () => {
       page.getByTestId('foldo-plugin-toolbar-tool-select'),
     ).toBeVisible();
 
-    // LeftPanel — still no tab contributions until Step 10's Layer
-    // Navigator lands, so the panel stays absent.
-    await expect(page.getByTestId('foldo-plugin-left-panel')).toHaveCount(0);
+    // LeftPanel — Step 10's coreLayersPlugin contributes the "Layers" tab.
+    await expect(page.getByTestId('foldo-plugin-left-panel')).toBeVisible();
+    await expect(page.getByTestId('foldo-plugin-left-tab-layers')).toBeVisible();
+    await expect(
+      page.getByTestId('foldo-plugin-left-tab-layers'),
+    ).toContainText('Layers');
 
-    // RightPanel — Step 11's core/dom-editor plugin contributes the
-    // "Inspect" tab, so the panel is now expected to be VISIBLE and
-    // its tab strip shows the "Inspect" label.
+    // RightPanel — Step 11's domEditorPlugin contributes the "Inspect" tab.
     await expect(page.getByTestId('foldo-plugin-right-panel')).toBeVisible();
     await expect(
       page.getByTestId('foldo-plugin-right-tab-inspect'),

@@ -7,8 +7,10 @@ import { defineConfig } from 'vitest/config';
 //
 // apps/web is mostly excluded (its React component tests will need jsdom +
 // testing-library — Phase 4), but the plugins/ subtree is opted IN because
-// each plugin is a self-contained module exercising pure logic (postMessage
-// helpers, style serialisers, …) that Node-only Vitest can run as-is.
+// each plugin owns its own unit tests (postMessage helpers, style
+// serialisers, tree renderers, …). Plugin tests that touch the DOM use a
+// per-file `// @vitest-environment jsdom` directive; the rest of the suite
+// stays on Node.
 export default defineConfig({
   test: {
     include: ['**/*.{test,spec}.{ts,tsx}'],

@@ -4,6 +4,11 @@
 
 import type { Plugin } from '@foldo/plugin';
 import { coreToolsPlugin } from './core-tools/index';
+import { coreLayersPlugin } from './core-layers/index';
 import { domEditorPlugin } from './core-dom-editor/index';
 
-export const BUILTIN_PLUGINS: Plugin[] = [coreToolsPlugin, domEditorPlugin];
+export const BUILTIN_PLUGINS: Plugin[] = [
+  coreToolsPlugin,
+  coreLayersPlugin,
+  domEditorPlugin,
+];

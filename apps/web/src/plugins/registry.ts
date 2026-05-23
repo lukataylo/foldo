@@ -84,6 +84,28 @@ export function registerSetToolHook(fn: (tool: string) => void): void {
     fn;
 }
 
+/**
+ * Plugins (Layer Navigator and friends) need a way to drive the canvas's
+ * selection + pan-to-frame without importing App.tsx's setState. App.tsx
+ * registers this hook on mount; the Layer Navigator (and any future panel
+ * with a "click row → reveal on canvas" affordance) calls
+ * `window.__foldoSelectFrame(frameId)`. Same pattern as registerToastHook,
+ * deliberately kept window-level so the v1 PluginContext stays tiny.
+ */
+export function registerSelectFrameHook(fn: (frameId: string) => void): void {
+  (window as unknown as { __foldoSelectFrame?: (id: string) => void }).__foldoSelectFrame =
+    fn;
+}
+
+/** Read the currently-registered select-frame hook, or null if App hasn't mounted. */
+export function getSelectFrameHook(): ((frameId: string) => void) | null {
+  return (
+    (window as unknown as { __foldoSelectFrame?: (id: string) => void })
+      .__foldoSelectFrame ?? null
+  );
+}
+
+
 // Re-export useEffect so any plugin module that needs it doesn't need a
 // duplicate React import. (Kept for backwards-compat across plugin files.)
 export { useEffect };

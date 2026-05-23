@@ -44,10 +44,14 @@ export async function registerHomeRoutes(app: FastifyInstance): Promise<void> {
          (SELECT COUNT(*) FROM branches WHERE board_id = b.id) AS branch_count,
          (SELECT COUNT(*) FROM frames   WHERE board_id = b.id) AS frame_count,
          (SELECT COUNT(*) FROM comments WHERE board_id = b.id) AS comment_count,
+         -- updated_at columns are now TIMESTAMPTZ (Phase 2); we can't
+         -- COALESCE with '' anymore (TIMESTAMPTZ rejects empty strings).
+         -- GREATEST ignores NULL inputs in Postgres 14+, so leaving them
+         -- as NULL is correct: an empty board yields NULL last_activity.
          GREATEST(
-           (SELECT COALESCE(MAX(updated_at), '') FROM frames   WHERE board_id = b.id),
-           (SELECT COALESCE(MAX(updated_at), '') FROM comments WHERE board_id = b.id),
-           (SELECT COALESCE(MAX(updated_at), '') FROM branches WHERE board_id = b.id)
+           (SELECT MAX(updated_at) FROM frames   WHERE board_id = b.id),
+           (SELECT MAX(updated_at) FROM comments WHERE board_id = b.id),
+           (SELECT MAX(updated_at) FROM branches WHERE board_id = b.id)
          ) AS last_activity,
          (
            SELECT ARRAY_AGG(color ORDER BY created_at)
@@ -69,8 +73,10 @@ export async function registerHomeRoutes(app: FastifyInstance): Promise<void> {
       branchCount: Number(r.branch_count),
       frameCount: Number(r.frame_count),
       commentCount: Number(r.comment_count),
-      lastActivity:
-        r.last_activity && r.last_activity.length > 0 ? r.last_activity : null,
+      // pg returns TIMESTAMPTZ as an ISO string per our parser override
+      // (db.ts setTypeParser). NULL when the board has zero frames /
+      // comments / branches activity yet.
+      lastActivity: r.last_activity ?? null,
       branchColors: r.branch_colors ?? [],
     }));
     return reply.send({ boards: summaries });

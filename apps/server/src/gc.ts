@@ -1,5 +1,7 @@
 import { sweepAbandonedSessions } from './repo/testSessions.ts';
 import { deleteExpiredSessions } from './repo/sessions.ts';
+import { deleteExpiredPasswordResetTokens } from './repo/passwordResets.ts';
+import { deleteExpiredEmailVerifications } from './repo/emailVerifications.ts';
 import { jobLogger } from './log.ts';
 
 const log = jobLogger('gc');
@@ -34,6 +36,16 @@ export function startSessionGc(): void {
         if (removed > 0) log.info({ removed }, 'removed expired auth sessions');
       })
       .catch((err) => log.error({ err }, 'expired-session sweep failed'));
+    void deleteExpiredPasswordResetTokens()
+      .then((removed) => {
+        if (removed > 0) log.info({ removed }, 'removed expired password-reset tokens');
+      })
+      .catch((err) => log.error({ err }, 'pw-reset-token sweep failed'));
+    void deleteExpiredEmailVerifications()
+      .then((removed) => {
+        if (removed > 0) log.info({ removed }, 'removed expired email-verification tokens');
+      })
+      .catch((err) => log.error({ err }, 'email-verification sweep failed'));
   }, SWEEP_INTERVAL_MS);
   // Don't keep the process alive just for the sweep.
   timer.unref?.();

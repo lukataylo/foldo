@@ -10,8 +10,8 @@ import {
   YELLOW,
   useMarketingTheme,
 } from '../marketing/shared';
-import { readToken, apiLogout } from '../marketing/auth';
-import { fetchHomeBoards, fetchMe, type HomeBoardSummary } from './api';
+import { API_BASE, readToken, apiLogout } from '../marketing/auth';
+import { authHeaders, fetchHomeBoards, fetchMe, type HomeBoardSummary } from './api';
 import { Sidebar } from './Sidebar';
 import { BoardCard } from './BoardCard';
 import { AccountMenu } from './AccountMenu';
@@ -57,7 +57,13 @@ export default function HomeApp() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>('recents');
   const [search, setSearch] = useState('');
-  const [me, setMe] = useState<{ name: string; initial: string; color: string; email?: string } | null>(null);
+  const [me, setMe] = useState<{
+    name: string;
+    initial: string;
+    color: string;
+    email?: string;
+    emailVerifiedAt?: string;
+  } | null>(null);
   const [starred, setStarred] = useState<Set<string>>(() => readStringSet(STARRED_KEY));
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -84,6 +90,7 @@ export default function HomeApp() {
           initial: m.user.initial,
           color: m.user.color,
           email: m.user.email,
+          emailVerifiedAt: m.user.emailVerifiedAt,
         });
       } catch (err) {
         if (cancelled) return;
@@ -229,6 +236,12 @@ export default function HomeApp() {
           .home-sidebar { display: none; }
         }
       `}</style>
+
+      <EmailVerificationBanner
+        email={me?.email}
+        verified={!!me?.emailVerifiedAt}
+        onToast={setToast}
+      />
 
       <div
         className="home-shell"
@@ -435,6 +448,85 @@ export default function HomeApp() {
           setToast(`Board "${b.name}" created.`);
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * Slim banner above the home shell prompting unverified users to confirm
+ * their email. Hidden once verified or for demo accounts with no email.
+ * The "Resend" action hits POST /api/auth/resend-verification — rate-limited
+ * server-side so a spam click can't flood Resend.
+ */
+function EmailVerificationBanner({
+  email,
+  verified,
+  onToast,
+}: {
+  email: string | undefined;
+  verified: boolean;
+  onToast: (msg: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  if (!email || verified) return null;
+  const onResend = async (): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/resend-verification`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        onToast('Verification email sent — check your inbox.');
+      } else if (res.status === 429) {
+        onToast('Slow down — try again in a minute.');
+      } else {
+        onToast('Could not send the email. Try again shortly.');
+      }
+    } catch {
+      onToast('Could not send the email. Check your connection.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      data-testid="foldo-home-verify-banner"
+      role="status"
+      style={{
+        background: '#fff5dc',
+        borderBottom: '1px solid #f0d782',
+        color: '#6b4d00',
+        padding: '10px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 16,
+        fontSize: 13.5,
+      }}
+    >
+      <span>
+        We sent a verification link to <strong>{email}</strong>. Confirm it to
+        unlock publishing User Tests.
+      </span>
+      <button
+        type="button"
+        data-testid="foldo-home-verify-resend"
+        onClick={onResend}
+        disabled={busy}
+        className="btn-ghost compact"
+        style={{
+          background: 'transparent',
+          border: '1px solid #d6b65a',
+          color: '#6b4d00',
+          padding: '6px 12px',
+          fontSize: 12.5,
+          opacity: busy ? 0.6 : 1,
+        }}
+      >
+        {busy ? 'Sending…' : 'Resend'}
+      </button>
     </div>
   );
 }

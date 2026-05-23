@@ -31,6 +31,12 @@ export interface User {
   initial: string;
   color: string; // hex
   email?: string;
+  /**
+   * ISO timestamp when the user clicked the verification link, or undefined
+   * if they haven't yet. Agents + grandfathered demo accounts have no email
+   * and are never required to verify.
+   */
+  emailVerifiedAt?: string;
   /** 'agent' for AI bot users (e.g. Claude Code) */
   kind: 'human' | 'agent';
 }

@@ -83,3 +83,29 @@ export function requireUser(req: FastifyRequest): User {
   }
   return req.user;
 }
+
+/**
+ * Throw a 403 unless the authenticated user's email is verified. Use this
+ * to gate actions that send outbound mail or share something publicly (publishing
+ * a User Test, minting a public board-share link, etc.) so a spam signup
+ * can't immediately weaponise the deploy. Demo accounts (no `email` on the
+ * record) and agent accounts (`kind === 'agent'`) are grandfathered through.
+ *
+ * The Phase-2 protocol exposes `emailVerifiedAt` on the User type — the
+ * client uses the same signal to render a "verify your email" banner.
+ */
+export function assertEmailVerified(req: FastifyRequest): User {
+  const user = requireUser(req);
+  // Agents (Claude Code, …) don't have human emails; demo accounts from the
+  // seed have no email at all — both are exempt.
+  if (user.kind === 'agent' || !user.email) return user;
+  if (!user.emailVerifiedAt) {
+    const err = new Error(
+      'Please verify your email before doing this',
+    ) as Error & { statusCode?: number; code?: string };
+    err.statusCode = 403;
+    err.code = 'EMAIL_NOT_VERIFIED';
+    throw err;
+  }
+  return user;
+}

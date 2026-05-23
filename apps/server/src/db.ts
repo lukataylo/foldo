@@ -285,6 +285,21 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 CREATE INDEX IF NOT EXISTS idx_pw_reset_user ON password_reset_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_pw_reset_expires ON password_reset_tokens(expires_at);
 
+-- Email-verification tokens — same shape as password resets but with a much
+-- longer TTL (24h is the industry sweet spot — short enough to invalidate a
+-- forgotten signup, long enough that a user who checks email in the morning
+-- still has a working link).
+CREATE TABLE IF NOT EXISTS email_verifications (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_email_verif_user ON email_verifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_email_verif_expires ON email_verifications(expires_at);
+
 CREATE TABLE IF NOT EXISTS demo_requests (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

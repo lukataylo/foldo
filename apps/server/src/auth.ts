@@ -12,21 +12,27 @@ declare module 'fastify' {
 /**
  * Convenience aliases used by demo flows / the in-directory MCP. Real users
  * authenticate via a session token stored in the `sessions` table.
+ *
+ * These — and the id-as-token fall-through in step 3 below — are EXPLICITLY
+ * disabled in production. In dev they let the demo dropdown and the in-dir
+ * MCP work without a signup; in prod they would let anyone who knows a user
+ * id impersonate that user.
  */
 const TOKEN_ALIASES: Record<string, string> = {
   'demo-user': 'u-you',
   'demo-mcp': 'u-claude',
 };
 
+const ALLOW_DEMO_AUTH = process.env.NODE_ENV !== 'production';
+
 /**
  * Resolve a bearer token to a user. Resolution order:
- *   1. Session token in `sessions` table → owning user
- *   2. Demo alias (demo-user / demo-mcp) → mapped user id
- *   3. Demo fall-through: token == existing user id (for the demo-account dropdown)
+ *   1. Session token in `sessions` table → owning user (always)
+ *   2. Demo alias (demo-user / demo-mcp) → mapped user id (dev only)
+ *   3. Demo fall-through: token == existing user id (dev only)
  *
- * Step 3 is intentional, anonymous canvas visitors who pick a demo identity
- * use that identity as their bearer. Real signups always use step 1 with a
- * cryptographically random token that can't be guessed.
+ * Steps 2 and 3 are gated by NODE_ENV. In production only real session tokens
+ * (cryptographically random, stored in the `sessions` table) authenticate.
  */
 export async function resolveUserFromToken(
   token: string | null | undefined,
@@ -37,6 +43,7 @@ export async function resolveUserFromToken(
     const u = await getUserById(sessionUserId);
     if (u) return u;
   }
+  if (!ALLOW_DEMO_AUTH) return null;
   const aliased = TOKEN_ALIASES[token];
   if (aliased) {
     const u = await getUserById(aliased);

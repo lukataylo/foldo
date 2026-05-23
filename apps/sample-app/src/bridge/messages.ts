@@ -45,7 +45,18 @@ export type SampleAppOutbound =
   | { type: 'foldo.sample.element.hover.clear' }
   | { type: 'foldo.sample.recipe.completed' }
   | { type: 'foldo.sample.recipe.failed'; message: string }
-  | { type: 'foldo.sample.scroll'; x: number; y: number };
+  | { type: 'foldo.sample.scroll'; x: number; y: number }
+  // A pinch / ctrl+wheel zoom gesture caught inside the iframe. Forwarded so
+  // the canvas can zoom itself instead of the browser zooming the whole page
+  // (which would push the toolbars off-screen). clientX/clientY are relative
+  // to the iframe's own viewport.
+  | {
+      type: 'foldo.sample.wheel';
+      deltaX: number;
+      deltaY: number;
+      clientX: number;
+      clientY: number;
+    };
 
 // canvas → sample-app
 export type SampleAppInbound =

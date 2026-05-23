@@ -1,4 +1,5 @@
 import { sweepAbandonedSessions } from './repo/testSessions.ts';
+import { deleteExpiredSessions } from './repo/sessions.ts';
 
 /**
  * Background sweep for test sessions a tester never finished.
@@ -30,6 +31,17 @@ export function startSessionGc(): void {
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[gc] session sweep failed:', err);
+      });
+    void deleteExpiredSessions()
+      .then((n) => {
+        if (n > 0) {
+          // eslint-disable-next-line no-console
+          console.log(`[gc] removed ${n} expired auth session(s)`);
+        }
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[gc] expired-session sweep failed:', err);
       });
   }, SWEEP_INTERVAL_MS);
   // Don't keep the process alive just for the sweep.

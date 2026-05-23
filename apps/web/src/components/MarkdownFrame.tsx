@@ -89,6 +89,13 @@ export function MarkdownFrame({
     };
   }, [inViewport, board, frame.commitSha, content.docPath, remoteBody]);
 
+  // If the frame is edited remotely (WS `frame.updated` from another user),
+  // its inline `content.body` changes. Invalidate our cached `remoteBody` so
+  // the lazy-fetch effect above pulls the fresh source.
+  useEffect(() => {
+    setRemoteBody(null);
+  }, [content.body, frame.updatedAt]);
+
   const body = remoteBody ?? content.body ?? '';
 
   const startEdit = (): void => {
@@ -118,6 +125,11 @@ export function MarkdownFrame({
       const updated = await apiUpdateFrame(frame.id, { content: nextContent });
       // Server returns the canonical frame with lineAuthors stamped.
       boardStore.upsertFrame(updated);
+      // MarkdownFrame renders `remoteBody` (lazy-fetched from /api/sources)
+      // in preference to `content.body`. Mirror the just-saved draft into
+      // remoteBody so the view reflects the edit immediately — otherwise the
+      // save succeeds but the canvas keeps showing the stale source.
+      setRemoteBody(draft);
       setEditing(false);
     } catch (err) {
       // eslint-disable-next-line no-console

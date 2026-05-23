@@ -22,6 +22,7 @@ import {
 import { addBoardMember } from '../repo/members.ts';
 import { DEMO_BOARD_ID } from '../seed.ts';
 import { extractBearerToken, requireUser } from '../auth.ts';
+import { rateLimitPreHandler } from '../rateLimit.ts';
 import { nowIso } from '../util.ts';
 
 const scrypt = promisify(scryptCb) as (
@@ -106,8 +107,13 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ users: await listUsers() });
   });
 
-  app.post<{ Body: SignupBody }>('/api/auth/signup', async (req, reply) => {
-    const email = (req.body?.email ?? '').trim();
+  app.post<{ Body: SignupBody }>(
+    '/api/auth/signup',
+    { preHandler: rateLimitPreHandler('auth-signup', 5, 60_000) },
+    async (req, reply) => {
+    // Normalize to lowercase so the stored value matches what the
+    // `lower(email)` unique index enforces and what lookups compare against.
+    const email = (req.body?.email ?? '').trim().toLowerCase();
     const password = req.body?.password ?? '';
     const name = (req.body?.name ?? '').trim();
 
@@ -156,10 +162,14 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
     const user = await getUserById(id);
     return reply.send({ token, user, createdAt: nowIso() });
-  });
+    },
+  );
 
-  app.post<{ Body: LoginBody }>('/api/auth/login', async (req, reply) => {
-    const email = (req.body?.email ?? '').trim();
+  app.post<{ Body: LoginBody }>(
+    '/api/auth/login',
+    { preHandler: rateLimitPreHandler('auth-login', 5, 60_000) },
+    async (req, reply) => {
+    const email = (req.body?.email ?? '').trim().toLowerCase();
     const password = req.body?.password ?? '';
     if (!email || !password) {
       return reply.code(400).send({ error: 'Email and password required', code: 'BAD_REQUEST' });
@@ -181,7 +191,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     const token = newSessionToken();
     await createSession(token, user.id, req.headers['user-agent']);
     return reply.send({ token, user });
-  });
+    },
+  );
 
   app.post('/api/auth/logout', async (req, reply) => {
     const token = extractBearerToken(req);
@@ -229,6 +240,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Body: ChangePasswordBody }>(
     '/api/auth/change-password',
+    { preHandler: rateLimitPreHandler('auth-change-pw', 10, 60_000) },
     async (req, reply) => {
       const me = requireUser(req);
       const currentPassword = req.body?.currentPassword ?? '';

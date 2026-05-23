@@ -198,11 +198,24 @@ export async function listSessionsForTest(
     `SELECT * FROM test_sessions WHERE test_id = $1 ORDER BY started_at DESC`,
     [testId],
   );
-  const sessions: TestSession[] = [];
-  for (const r of rows) {
-    sessions.push(rowToSession(r, await listTaskResults(r.id)));
+  if (rows.length === 0) return [];
+  // Batch-fetch every task result for these sessions in a single query rather
+  // than one `listTaskResults(sessionId)` per session (previous code was an
+  // N+1: 50 sessions → 51 queries). Group in app, then build each session.
+  const sessionIds = rows.map((r) => r.id);
+  const resultRows = await query<TestTaskResultRow>(
+    `SELECT * FROM test_task_results
+      WHERE session_id = ANY($1::text[])
+      ORDER BY recording_offset_ms`,
+    [sessionIds],
+  );
+  const resultsBySession = new Map<string, TestTaskResult[]>();
+  for (const r of resultRows) {
+    const bucket = resultsBySession.get(r.session_id);
+    if (bucket) bucket.push(rowToTaskResult(r));
+    else resultsBySession.set(r.session_id, [rowToTaskResult(r)]);
   }
-  return sessions;
+  return rows.map((r) => rowToSession(r, resultsBySession.get(r.id) ?? []));
 }
 
 export interface CompleteSessionInput {

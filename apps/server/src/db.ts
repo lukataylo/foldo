@@ -20,24 +20,38 @@ pool.on('error', (err) => {
   console.error('pg pool error:', err);
 });
 
+/**
+ * Either the shared pool or a transactional client. Repo functions accept this
+ * as an optional argument so a route handler can do several writes inside a
+ * single `withTransaction(...)` block — pass the client through and they all
+ * run on the same connection.
+ */
+export type SqlRunner = pg.Pool | pg.PoolClient;
+
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   sql: string,
   params?: unknown[],
+  runner: SqlRunner = pool,
 ): Promise<T[]> {
-  const res = await pool.query<T>(sql, params as never);
+  const res = await runner.query<T>(sql, params as never);
   return res.rows;
 }
 
 export async function queryOne<T extends pg.QueryResultRow = pg.QueryResultRow>(
   sql: string,
   params?: unknown[],
+  runner: SqlRunner = pool,
 ): Promise<T | null> {
-  const rows = await query<T>(sql, params);
+  const rows = await query<T>(sql, params, runner);
   return rows[0] ?? null;
 }
 
-export async function exec(sql: string, params?: unknown[]): Promise<number> {
-  const res = await pool.query(sql, params as never);
+export async function exec(
+  sql: string,
+  params?: unknown[],
+  runner: SqlRunner = pool,
+): Promise<number> {
+  const res = await runner.query(sql, params as never);
   return res.rowCount ?? 0;
 }
 
@@ -62,11 +76,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 days'),
   user_agent TEXT,
   kind TEXT NOT NULL DEFAULT 'browser' CHECK (kind IN ('browser','api')),
   label TEXT
 );
--- Additive migration for pre-existing dev databases.
+-- Additive migrations for pre-existing dev databases. Each block is idempotent.
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -81,8 +96,22 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE sessions ADD COLUMN label TEXT;
   END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'sessions' AND column_name = 'expires_at'
+  ) THEN
+    -- 30-day sliding-window expiry. Backfill existing rows to last_seen + 30d
+    -- so already-active sessions get a sensible expiry rather than immediately
+    -- becoming invalid.
+    ALTER TABLE sessions ADD COLUMN expires_at TIMESTAMPTZ;
+    UPDATE sessions SET expires_at = last_seen_at + interval '30 days' WHERE expires_at IS NULL;
+    ALTER TABLE sessions ALTER COLUMN expires_at SET NOT NULL;
+    ALTER TABLE sessions ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');
+  END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+-- Lets the GC sweep find expired sessions cheaply.
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
 CREATE TABLE IF NOT EXISTS boards (
   id TEXT PRIMARY KEY,
@@ -286,6 +315,93 @@ CREATE INDEX IF NOT EXISTS idx_test_task_results_session ON test_task_results(se
 CREATE INDEX IF NOT EXISTS idx_frames_board ON frames(board_id);
 CREATE INDEX IF NOT EXISTS idx_comments_frame ON comments(frame_id);
 CREATE INDEX IF NOT EXISTS idx_dispatches_board ON dispatches(board_id);
+
+-- ============================================================================
+-- Indexes for queries that were running unindexed (Phase 0 audit findings).
+-- ============================================================================
+CREATE INDEX IF NOT EXISTS idx_branches_board ON branches(board_id);
+CREATE INDEX IF NOT EXISTS idx_commits_branch ON commits(branch_id);
+CREATE INDEX IF NOT EXISTS idx_frames_parent ON frames(parent_frame_id);
+CREATE INDEX IF NOT EXISTS idx_frames_board_kind ON frames(board_id, kind);
+CREATE INDEX IF NOT EXISTS idx_test_sessions_status ON test_sessions(status);
+
+-- ============================================================================
+-- Foreign-key constraints. Until now frames / comments / dispatches were
+-- referenced by id without a constraint, so deleting a board / frame left
+-- silent orphans the app code had to guard around. Each block cleans existing
+-- orphans first (cheap on a healthy DB, defensive on a drifted one) then adds
+-- the constraint. Guarded by pg_constraint lookups so it's idempotent across
+-- restarts.
+-- ============================================================================
+DO $$ BEGIN
+  -- branches.board_id → boards
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'branches_board_id_fkey') THEN
+    DELETE FROM branches WHERE board_id NOT IN (SELECT id FROM boards);
+    ALTER TABLE branches
+      ADD CONSTRAINT branches_board_id_fkey
+      FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE;
+  END IF;
+
+  -- commits.branch_id → branches
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'commits_branch_id_fkey') THEN
+    DELETE FROM commits WHERE branch_id NOT IN (SELECT id FROM branches);
+    ALTER TABLE commits
+      ADD CONSTRAINT commits_branch_id_fkey
+      FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE;
+  END IF;
+
+  -- frames.board_id → boards
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'frames_board_id_fkey') THEN
+    DELETE FROM frames WHERE board_id NOT IN (SELECT id FROM boards);
+    ALTER TABLE frames
+      ADD CONSTRAINT frames_board_id_fkey
+      FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE;
+  END IF;
+
+  -- frames.parent_frame_id → frames(id). SET NULL not CASCADE: deleting a
+  -- parent shouldn't transitively delete children — the children just become
+  -- root frames again.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'frames_parent_frame_id_fkey') THEN
+    UPDATE frames SET parent_frame_id = NULL
+      WHERE parent_frame_id IS NOT NULL
+        AND parent_frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE frames
+      ADD CONSTRAINT frames_parent_frame_id_fkey
+      FOREIGN KEY (parent_frame_id) REFERENCES frames(id) ON DELETE SET NULL;
+  END IF;
+
+  -- comments.board_id → boards
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_board_id_fkey') THEN
+    DELETE FROM comments WHERE board_id NOT IN (SELECT id FROM boards);
+    ALTER TABLE comments
+      ADD CONSTRAINT comments_board_id_fkey
+      FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE;
+  END IF;
+
+  -- comments.frame_id → frames
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_frame_id_fkey') THEN
+    DELETE FROM comments WHERE frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE comments
+      ADD CONSTRAINT comments_frame_id_fkey
+      FOREIGN KEY (frame_id) REFERENCES frames(id) ON DELETE CASCADE;
+  END IF;
+
+  -- dispatches.board_id → boards
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dispatches_board_id_fkey') THEN
+    DELETE FROM dispatches WHERE board_id NOT IN (SELECT id FROM boards);
+    ALTER TABLE dispatches
+      ADD CONSTRAINT dispatches_board_id_fkey
+      FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE;
+  END IF;
+
+  -- dispatches.frame_id → frames
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dispatches_frame_id_fkey') THEN
+    DELETE FROM dispatches WHERE frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE dispatches
+      ADD CONSTRAINT dispatches_frame_id_fkey
+      FOREIGN KEY (frame_id) REFERENCES frames(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 `;
 
 export async function initSchema(): Promise<void> {
@@ -294,4 +410,36 @@ export async function initSchema(): Promise<void> {
 
 export async function closePool(): Promise<void> {
   await pool.end();
+}
+
+/**
+ * Run `fn` inside a single SQL transaction. The connection is released back to
+ * the pool either way. Use whenever a request handler does two or more writes
+ * that should succeed-or-fail as a unit — historically `routes/frames.ts`
+ * updated `frames` and `sources` in separate `exec()` calls, and a failure
+ * between them left the two tables permanently out of sync.
+ *
+ * Inside `fn`, use `q.query(sql, params)` to run SQL on the transactional
+ * connection. Calling the top-level `query/exec` would grab a *different*
+ * connection from the pool and miss the BEGIN.
+ */
+export async function withTransaction<T>(
+  fn: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // already-aborted etc.
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }

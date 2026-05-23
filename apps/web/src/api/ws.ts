@@ -61,6 +61,8 @@ export class FoldoWsClient {
    * across reconnects (lives on the instance, not the socket).
    */
   private highSeenSeq = 0;
+  /** Bound `online` listener so we can remove it on `close()`. */
+  private onOnline: (() => void) | null = null;
 
   constructor(cfg: FoldoWsConfig) {
     this.cfg = cfg;
@@ -93,6 +95,43 @@ export class FoldoWsClient {
   }
 
   connect() {
+    // Register an `online` listener on first connect. When the browser comes
+    // back online we want to immediately kick a reconnect rather than wait
+    // out the current backoff window. Without this hook, a long offline
+    // period inflates `reconnectAttempt` and the next attempt could be up
+    // to 5s away — the e2e replay-on-reconnect spec was racing this delay.
+    // It also recovers the case where an in-flight `WebSocket` is stuck in
+    // CONNECTING limbo because the offline-mode network stack never closed
+    // it: we force-close it here, which fires `onclose` → `scheduleReconnect`
+    // (now with `reconnectAttempt` reset to 0 → immediate retry).
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.addEventListener === 'function' &&
+      !this.onOnline
+    ) {
+      this.onOnline = () => {
+        if (this.closedByUser) return;
+        // Reset backoff so the retry fires immediately, not 5s out.
+        this.reconnectAttempt = 0;
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+        // If the previous socket is wedged in CONNECTING (offline-mode
+        // black hole), force-close it so `onclose` schedules a fresh
+        // attempt. If it's already CLOSED, this is a no-op.
+        if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+          try {
+            this.ws.close();
+          } catch {
+            /* ignore */
+          }
+        } else {
+          this.connect();
+        }
+      };
+      window.addEventListener('online', this.onOnline);
+    }
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
     this.closedByUser = false;
     this.setStatus('connecting');
@@ -190,6 +229,14 @@ export class FoldoWsClient {
       this.reconnectTimer = null;
     }
     this.stopHeartbeat();
+    if (
+      this.onOnline &&
+      typeof window !== 'undefined' &&
+      typeof window.removeEventListener === 'function'
+    ) {
+      window.removeEventListener('online', this.onOnline);
+      this.onOnline = null;
+    }
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
       try {
         this.ws.close();

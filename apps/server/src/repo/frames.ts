@@ -162,10 +162,16 @@ export async function getFrameById(
  * the GET path could still serve a stale `content.body` if anything else wrote
  * it directly. Now `sources` always wins on read.
  *
- * Implementation: one boards lookup per distinct boardId + one sources lookup
- * per markdown frame. Cheap for typical boards (≤10 md frames); when we move
- * `content_json` to JSONB in Phase 2 we can collapse this into a single JOIN
- * on the main query.
+ * A+ W1 perf rewrite — batched lookups. The previous version issued one
+ * `SELECT repo_slug` per distinct board AND one `SELECT body FROM sources`
+ * per markdown frame. On a typical 30-frame board with 10 markdown frames
+ * that was 11 round-trips just to overlay bodies. We now do:
+ *   Step 1: one `SELECT id, repo_slug FROM boards WHERE id = ANY($1)` → Map
+ *   Step 2: one `SELECT … FROM sources WHERE (repo_slug,commit_sha,path) IN (…)`
+ *           → Map keyed by the triple
+ *   Step 3: zip the markdown frames with the maps
+ * Net query count: 2 (was N+1 for boards + N for sources). Round-trip latency
+ * on the snapshot path drops from ~11 × RTT to 2 × RTT.
  */
 async function overlayMarkdownBodies(
   frames: Frame[],
@@ -179,35 +185,74 @@ async function overlayMarkdownBodies(
   }
   if (mdIndices.length === 0) return frames;
 
-  const repoSlugByBoard = new Map<string, string | undefined>();
-  const out = frames.slice();
-
+  // ---- Step 1: distinct boardIds → repo_slug, single query.
+  const boardIds = new Set<string>();
   for (const i of mdIndices) {
-    const f = out[i];
-    if (!f) continue; // unreachable, but `noUncheckedIndexedAccess` widens it.
+    const f = frames[i];
+    if (f) boardIds.add(f.boardId);
+  }
+  const boardRows = await query<{ id: string; repo_slug: string }>(
+    `SELECT id, repo_slug FROM boards WHERE id = ANY($1)`,
+    [Array.from(boardIds)],
+    runner,
+  );
+  const repoSlugByBoard = new Map<string, string>();
+  for (const r of boardRows) repoSlugByBoard.set(r.id, r.repo_slug);
+
+  // ---- Step 2: distinct (repo_slug, commit_sha, doc_path) tuples,
+  // single query using row-tuple IN-list. We build a parameter list of the
+  // form ($1,$2,$3),($4,$5,$6),… and pass the flattened values.
+  type Triple = [string, string, string];
+  const tripleKey = (r: string, c: string, p: string) => `${r}${c}${p}`;
+  const triples = new Map<string, Triple>();
+  for (const i of mdIndices) {
+    const f = frames[i];
+    if (!f) continue;
     const md = f.content as MarkdownFrameContent;
     if (!md.docPath) continue;
-
-    let repoSlug = repoSlugByBoard.get(f.boardId);
-    if (repoSlug === undefined) {
-      const board = await queryOne<{ repo_slug: string }>(
-        `SELECT repo_slug FROM boards WHERE id = $1`,
-        [f.boardId],
-        runner,
-      );
-      repoSlug = board?.repo_slug;
-      repoSlugByBoard.set(f.boardId, repoSlug);
-    }
+    const repoSlug = repoSlugByBoard.get(f.boardId);
     if (!repoSlug) continue;
+    triples.set(tripleKey(repoSlug, f.commitSha, md.docPath), [
+      repoSlug,
+      f.commitSha,
+      md.docPath,
+    ]);
+  }
 
-    const src = await queryOne<{ body: string }>(
-      `SELECT body FROM sources
-        WHERE repo_slug = $1 AND commit_sha = $2 AND path = $3`,
-      [repoSlug, f.commitSha, md.docPath],
+  const bodyByTriple = new Map<string, string>();
+  if (triples.size > 0) {
+    const params: string[] = [];
+    const tuples: string[] = [];
+    let n = 1;
+    for (const t of triples.values()) {
+      tuples.push(`($${n++}, $${n++}, $${n++})`);
+      params.push(t[0], t[1], t[2]);
+    }
+    const rows = await query<{ repo_slug: string; commit_sha: string; path: string; body: string }>(
+      `SELECT repo_slug, commit_sha, path, body
+         FROM sources
+        WHERE (repo_slug, commit_sha, path) IN (${tuples.join(',')})`,
+      params,
       runner,
     );
-    if (src) {
-      out[i] = { ...f, content: { ...md, body: src.body } };
+    for (const r of rows) {
+      bodyByTriple.set(tripleKey(r.repo_slug, r.commit_sha, r.path), r.body);
+    }
+  }
+
+  // ---- Step 3: zip back onto the frames array. Keep shape identical to the
+  // previous implementation — leave frames untouched when no source row matches.
+  const out = frames.slice();
+  for (const i of mdIndices) {
+    const f = out[i];
+    if (!f) continue;
+    const md = f.content as MarkdownFrameContent;
+    if (!md.docPath) continue;
+    const repoSlug = repoSlugByBoard.get(f.boardId);
+    if (!repoSlug) continue;
+    const body = bodyByTriple.get(tripleKey(repoSlug, f.commitSha, md.docPath));
+    if (body !== undefined) {
+      out[i] = { ...f, content: { ...md, body } };
     }
   }
   return out;

@@ -33,7 +33,9 @@ function buildPool(): pg.Pool {
   const p = new Pool({
     connectionString,
     ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
-    max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+    // A+ W1: default bumped 10 → 20 to absorb the concurrent WS hub + /api/home
+    // burst seen on multi-board sessions. Override via DATABASE_POOL_MAX env.
+    max: Number(process.env.DATABASE_POOL_MAX ?? 20),
   });
   p.on('error', (err) => {
     // eslint-disable-next-line no-console
@@ -692,6 +694,80 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+-- ============================================================================
+-- BEGIN: A+ W1 perf indexes
+-- ----------------------------------------------------------------------------
+-- Phase 1 of the A+ plan: cover the last few sequential-scan-prone tables and
+-- add the two foreign keys whose absence has been leaving silent orphans. All
+-- blocks idempotent so reboots and CI runs stay clean.
+-- ============================================================================
+
+-- comments(board_id) — highest ROI in the audit. /api/home, board snapshot
+-- fetches, GC sweeps all filter comments by board_id and were doing a full
+-- scan on every call.
+CREATE INDEX IF NOT EXISTS idx_comments_board ON comments(board_id);
+
+-- frames(branch_id) — branch-scoped frame queries (branch panel, deletion
+-- cascade lookups). Audit name "idx_frames_branch" standardised here.
+CREATE INDEX IF NOT EXISTS idx_frames_branch ON frames(branch_id);
+
+-- frames(kind) — the composite (board_id, kind) index already exists; this
+-- single-column index covers kind-only filters used by GC / analytics.
+CREATE INDEX IF NOT EXISTS idx_frames_kind ON frames(kind);
+
+DO $$ BEGIN
+  -- dispatches.result_frame_id → frames(id). SET NULL because the dispatch
+  -- record itself is the audit log of the run; we just lose the link to the
+  -- output frame if the frame is hard-deleted.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dispatches_result_frame_id_fkey') THEN
+    UPDATE dispatches SET result_frame_id = NULL
+      WHERE result_frame_id IS NOT NULL
+        AND result_frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE dispatches
+      ADD CONSTRAINT dispatches_result_frame_id_fkey
+      FOREIGN KEY (result_frame_id) REFERENCES frames(id) ON DELETE SET NULL;
+  END IF;
+
+  -- tests.summary_frame_id → frames(id). SET NULL: deleting the synth-summary
+  -- frame should leave the test row alive (the test can re-synthesize).
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tests_summary_frame_id_fkey') THEN
+    UPDATE tests SET summary_frame_id = NULL
+      WHERE summary_frame_id IS NOT NULL
+        AND summary_frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE tests
+      ADD CONSTRAINT tests_summary_frame_id_fkey
+      FOREIGN KEY (summary_frame_id) REFERENCES frames(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- test_sessions.responses_json should default to '[]'::jsonb so reads never
+-- have to coalesce NULL → []. The JSONB-migration loop above leaves the
+-- column without a default (its dval was NULL there); apply the new default
+-- now using the same DROP DEFAULT → SET DEFAULT pattern.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'test_sessions'
+       AND column_name = 'responses_json'
+       AND data_type = 'jsonb'
+  ) THEN
+    -- Normalise existing NULLs so the NOT NULL contract holds going forward
+    -- even if a future migration tightens nullability.
+    UPDATE test_sessions SET responses_json = '[]'::jsonb WHERE responses_json IS NULL;
+    EXECUTE format(
+      'ALTER TABLE %I ALTER COLUMN %I DROP DEFAULT',
+      'test_sessions', 'responses_json'
+    );
+    EXECUTE format(
+      'ALTER TABLE %I ALTER COLUMN %I SET DEFAULT %L::jsonb',
+      'test_sessions', 'responses_json', '[]'
+    );
+  END IF;
+END $$;
+-- ============================================================================
+-- END: A+ W1 perf indexes
+-- ============================================================================
 `;
 
 export async function initSchema(): Promise<void> {

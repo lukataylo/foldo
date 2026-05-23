@@ -57,6 +57,20 @@ export async function registerUploadRoutes(app: FastifyInstance): Promise<void> 
         code: 'BAD_REQUEST',
       });
     }
+    // Filename never touches the storage path (we mint a fresh `uploads/<newId>.<ext>`
+    // key below) but it does feed extFor() and is echoed back in some clients.
+    // Reject path-traversal characters defensively so a malicious filename
+    // can never sneak into a future code path that uses it as a path component.
+    if (
+      body.filename.includes('..') ||
+      body.filename.includes('/') ||
+      body.filename.includes('\\')
+    ) {
+      return reply.code(400).send({
+        error: 'Invalid filename',
+        code: 'BAD_REQUEST',
+      });
+    }
     if (!ALLOWED.has(body.contentType)) {
       return reply.code(415).send({
         error: `Unsupported contentType: ${body.contentType}`,

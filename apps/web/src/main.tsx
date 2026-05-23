@@ -2,7 +2,15 @@ import React, { Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { isMarketingPath } from './marketing/path';
+import { bootPlugins } from './plugins/registry';
+import { BUILTIN_PLUGINS } from './plugins';
 import './index.css';
+
+// Install + activate built-in plugins before the first render. v1 is a
+// frozen registry; nothing mutates it after this call. New plugins added
+// later (Step 10's Layer Navigator, Step 11's DOM Editor) just append to
+// BUILTIN_PLUGINS and get picked up here.
+bootPlugins(BUILTIN_PLUGINS);
 
 // Route components are loaded lazily so the landing page doesn't ship the
 // canvas bundle (and vice versa). Each route lives in its own JS chunk; the

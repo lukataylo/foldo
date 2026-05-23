@@ -311,17 +311,40 @@ Stop-the-bleeding fixes. None requires architectural rework.
 **Substrate now safe enough to start Phase 1.** Remaining: per-frame
 ErrorBoundary, password-hash cost factor format (moved to Phase 3).
 
-### Phase 1 — Frontend foundation (≈1.5 weeks)
+### Phase 1 — Frontend foundation (≈1.5 weeks) ✅ **shipped 2026-05-23**
 Make the canvas not re-render the world.
 
-- [ ] Convert all `useBoardSnapshot()` callers to scoped `useBoardSelector` (1d)
-- [ ] Extract `<FrameLayer/>` with its own store subscription (1d)
-- [ ] Extract `<CommentSystem/>`, `<DispatchPanel/>`, `<FrameTools/>`,
-      `useKeyboardShortcuts` from `App.tsx` (2d)
-- [ ] Cull `CommentPin` + `Connectors` to in-viewport frames only (3h)
-- [ ] Route-level code splitting (`main.tsx` → `lazy()`+`Suspense`) (3h)
-- [ ] Vite `manualChunks` (vendor, protocol) (1h)
-- [ ] Toast queue (1h)
+- [x] `useBoardSnapshot()` replaced by 10 scoped `useBoardSelector` reads in
+      App.tsx. Cursor moves and presence updates no longer re-evaluate the
+      whole component.
+- [x] `<FrameLayer/>` extracted to `components/FrameLayer.tsx` with its own
+      store subscription to `frames` / `branches` / `board` + React.memo on
+      the outer component. Closes the Phase-0 deferred per-frame
+      `ErrorBoundary` work as a bonus.
+- [x] `useFrameTools` hook (sticky / arrow / image create + arrow draft +
+      hidden file input) extracted to `hooks/useFrameTools.tsx`.
+- [x] `useDispatchFlow` hook (activeDispatch state + sendDispatch +
+      closeEditPanel + onJumpToResult + auto-pan-on-completion effect)
+      extracted to `hooks/useDispatchFlow.ts`.
+- [x] `useCommentHandlers` hook (drop-pin / click / make-edit / reply /
+      resolve / delete; popover state stays in App since 8+ sites set it)
+      extracted to `hooks/useCommentHandlers.ts`.
+- [x] `useKeyboardShortcuts` hook extracted to
+      `hooks/useKeyboardShortcuts.ts`.
+- [x] CommentPin viewport-gated in `AppFrame` and `MarkdownFrame`; new
+      `inViewportFrameIds` prop on `Connectors` drops off-screen links from
+      the SVG.
+- [x] Route-level code splitting via `React.lazy` in `main.tsx`. Marketing
+      / canvas / home / settings / share / capture / tester / cookie banner
+      are now their own chunks. `isMarketingPath` moved to a tiny
+      `marketing/path.ts` so the classifier import doesn't drag the 16
+      marketing screens with it.
+- [x] Vite `manualChunks` for `react`/`react-dom` (`react-vendor`) and
+      `@foldo/protocol` (`protocol`).
+- [x] Toast queue with `useToastQueue` + `<ToastStack/>` — 4-deep, per-item
+      1.4s dismiss timer.
+
+App.tsx: **1644 → 1123 lines (-32%)**. Whole-repo typecheck clean.
 
 ### Phase 2 — Schema, types, protocol (≈1 week)
 

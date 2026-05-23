@@ -312,15 +312,18 @@ export function AppFrame({
           </button>
         </div>
 
-        {/* comment pins */}
-        {comments.map((c) => (
-          <CommentPin
-            key={c.id}
-            comment={c}
-            frameSize={{ width: frame.size.width, height: frame.size.height }}
-            onClick={() => onCommentClick(frame.id, c)}
-          />
-        ))}
+        {/* comment pins — skipped off-viewport so they don't keep N DOM nodes
+            mounted (and N hover/click handlers live) when the frame itself is
+            showing a placeholder. */}
+        {inViewport &&
+          comments.map((c) => (
+            <CommentPin
+              key={c.id}
+              comment={c}
+              frameSize={{ width: frame.size.width, height: frame.size.height }}
+              onClick={() => onCommentClick(frame.id, c)}
+            />
+          ))}
       </div>
       {/* Suppress unused-warning */}
       <span style={{ display: 'none' }}>{zoom}</span>

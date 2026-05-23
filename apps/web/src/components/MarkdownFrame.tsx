@@ -255,8 +255,11 @@ export function MarkdownFrame({
           />
         )}
 
-        {/* free-floating pin overlay (xy-pin comments without a line anchor) */}
+        {/* free-floating pin overlay (xy-pin comments without a line anchor).
+            Skipped when the frame is off-viewport so we don't keep N pin nodes
+            + click handlers mounted for frames the user can't see. */}
         {!editing &&
+          inViewport &&
           comments
             .filter((c) => c.pin)
             .map((c) => (

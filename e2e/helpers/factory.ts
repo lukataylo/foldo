@@ -257,3 +257,31 @@ export async function createComment(
   const json = (await res.json()) as { id: string };
   return { id: json.id };
 }
+
+/**
+ * Append a reply to an existing comment as `user`. Returns the reply id —
+ * the server-side broadcast (`comment.reply.added`) is what cross-tab
+ * specs assert on.
+ */
+export async function replyToComment(
+  user: TestUser,
+  commentId: string,
+  text: string,
+): Promise<{ id: string }> {
+  const res = await fetch(
+    `${API}/api/comments/${encodeURIComponent(commentId)}/replies`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${user.token}`,
+      },
+      body: JSON.stringify({ text }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`replyToComment ${res.status}: ${await res.text()}`);
+  }
+  const json = (await res.json()) as { id: string };
+  return { id: json.id };
+}

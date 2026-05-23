@@ -146,6 +146,7 @@ export function TopBar({
           </div>
         )}
         <button
+          data-testid="foldo-canvas-topbar-capture"
           onClick={onCapture}
           className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-1.5 text-[12px] text-ink hover:bg-white/5"
         >

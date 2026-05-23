@@ -141,3 +141,57 @@ function slug(s: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
 }
+
+/**
+ * Fetch a board's full payload (frames + comments). Returns the parsed JSON
+ * the canvas would load — useful for asserting cleanup after a destructive
+ * action without driving the UI.
+ */
+export async function fetchBoardDetail(
+  user: TestUser,
+  boardId: string,
+): Promise<{
+  frames: Array<{ id: string; kind: string }>;
+  comments: Array<{ id: string; text: string; authorName: string; authorUserId: string }>;
+}> {
+  const res = await fetch(`${API}/api/boards/${encodeURIComponent(boardId)}`, {
+    headers: { Authorization: `Bearer ${user.token}` },
+  });
+  if (!res.ok) {
+    throw new Error(`fetchBoardDetail ${res.status}: ${await res.text()}`);
+  }
+  return (await res.json()) as {
+    frames: Array<{ id: string; kind: string }>;
+    comments: Array<{
+      id: string;
+      text: string;
+      authorName: string;
+      authorUserId: string;
+    }>;
+  };
+}
+
+/**
+ * Drop a comment on `frameId` (board `boardId`) as `user`. Returns the
+ * comment id so specs can assert on it later.
+ */
+export async function createComment(
+  user: TestUser,
+  boardId: string,
+  frameId: string,
+  text: string,
+): Promise<{ id: string }> {
+  const res = await fetch(`${API}/api/comments`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${user.token}`,
+    },
+    body: JSON.stringify({ boardId, frameId, text }),
+  });
+  if (!res.ok) {
+    throw new Error(`createComment ${res.status}: ${await res.text()}`);
+  }
+  const json = (await res.json()) as { id: string };
+  return { id: json.id };
+}

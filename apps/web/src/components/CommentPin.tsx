@@ -12,6 +12,8 @@ export function CommentPin({ comment, frameSize, onClick }: Props) {
   const cy = comment.pin.y * frameSize.height;
   return (
     <button
+      data-testid="foldo-comment-pin"
+      data-foldo-comment-id={comment.id}
       onClick={(e) => {
         e.stopPropagation();
         onClick();

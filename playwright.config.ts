@@ -45,5 +45,19 @@ export default defineConfig({
     url: process.env.FOLDO_WEB ?? 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    env: {
+      // Bring the shotter up alongside server/web/sample so Step 4's
+      // capture-from-URL spec has a real backend without booting a second
+      // dev server. Off in plain `npm run dev` — set explicitly here so the
+      // suite is self-contained.
+      FOLDO_SHOTTER_DEV: '1',
+      // The spec asks the shotter to screenshot http://localhost:5174 (the
+      // sample-app). The shotter's SSRF guard rejects private hostnames by
+      // default; flip it on for e2e.
+      FOLDO_SHOT_ALLOW_PRIVATE: '1',
+      // Wire the canvas's Capture modal at build time so it knows where the
+      // shotter lives. Vite inlines this into the bundle on first hit.
+      VITE_SHOTTER_URL: 'http://localhost:5175',
+    },
   },
 });

@@ -82,7 +82,15 @@ export const FrameLayer = memo(function FrameLayer({
   const frames = useMemo(() => Array.from(framesMap.values()), [framesMap]);
 
   return (
-    <>
+    // Wrapping span so e2e tests can locate the live frame layer + count
+    // children. `display:contents` keeps the original layout (FrameLayer used
+    // to render a fragment) so absolute-positioned frames anchor against the
+    // Canvas's transformed parent, not this wrapper.
+    <span
+      data-testid="foldo-canvas-frames"
+      data-foldo-frame-count={frames.length}
+      style={{ display: 'contents' }}
+    >
       {frames.map((f) => {
         const branch = branchesMap.get(f.branchId);
         if (!branch) return null;
@@ -96,25 +104,32 @@ export const FrameLayer = memo(function FrameLayer({
               <FrameErrorBadge frame={f} err={err} retry={retry} />
             )}
           >
-            {renderFrame({
-              f,
-              branch,
-              board,
-              comments,
-              inViewport,
-              tool,
-              selectedElement,
-              zoom,
-              onSelectElement,
-              onDropPin,
-              onCommentClick,
-              onMakeEditFromIssue,
-              onSelectMdLine,
-            })}
+            <span
+              data-testid="foldo-canvas-frame"
+              data-foldo-frame-id={f.id}
+              data-foldo-frame-kind={f.kind}
+              style={{ display: 'contents' }}
+            >
+              {renderFrame({
+                f,
+                branch,
+                board,
+                comments,
+                inViewport,
+                tool,
+                selectedElement,
+                zoom,
+                onSelectElement,
+                onDropPin,
+                onCommentClick,
+                onMakeEditFromIssue,
+                onSelectMdLine,
+              })}
+            </span>
           </ErrorBoundary>
         );
       })}
-    </>
+    </span>
   );
 });
 

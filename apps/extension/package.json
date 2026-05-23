@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
+    "pack": "node scripts/pack.mjs",
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {

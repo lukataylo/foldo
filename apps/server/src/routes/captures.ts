@@ -72,30 +72,68 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
     const newY = firstSibling ? firstSibling.position.y : maxY + 120;
 
     const now = nowIso();
-    const frame: Frame = {
-      id: newId('f'),
-      boardId: body.boardId,
-      kind: 'app',
-      branchId: CAPTURES_BRANCH_ID,
-      commitSha: newCommitSha(),
-      commitMessage: `captured: ${body.title}`,
-      age: 'just now',
-      position: { x: newX, y: newY },
-      size: { width: 920, height: 700 },
-      content: {
-        kind: 'app',
-        variant: 'baseline',
-        route: body.url,
-        viewport: body.viewport,
-        stateLabel: 'Captured',
-        iframeUrl: body.url,
-      },
-      capturedFromUrl: body.url,
-      createdAt: now,
-      updatedAt: now,
-    };
+    // Two shapes of capture body, distinguished by whether the caller (the
+    // shotter or the extension) supplied an actual PNG.
+    //   - With `screenshot` → render as an image frame so the user sees a
+    //     pixel-accurate freeze of the page (the shotter's path).
+    //   - Without → fall back to an iframe-mounted app frame pointing at the
+    //     live URL (the extension's existing path, kept for back-compat).
+    const hasScreenshot = typeof body.screenshot === 'string' && body.screenshot.length > 0;
+    const frame: Frame = hasScreenshot
+      ? {
+          id: newId('f'),
+          boardId: body.boardId,
+          kind: 'image',
+          branchId: CAPTURES_BRANCH_ID,
+          commitSha: newCommitSha(),
+          commitMessage: `captured: ${body.title}`,
+          age: 'just now',
+          position: { x: newX, y: newY },
+          size: { width: body.viewport.width, height: body.viewport.height },
+          content: {
+            kind: 'image',
+            dataUrl: ensureDataUrl(body.screenshot!),
+            alt: body.title,
+            caption: body.title,
+          },
+          capturedFromUrl: body.url,
+          createdAt: now,
+          updatedAt: now,
+        }
+      : {
+          id: newId('f'),
+          boardId: body.boardId,
+          kind: 'app',
+          branchId: CAPTURES_BRANCH_ID,
+          commitSha: newCommitSha(),
+          commitMessage: `captured: ${body.title}`,
+          age: 'just now',
+          position: { x: newX, y: newY },
+          size: { width: 920, height: 700 },
+          content: {
+            kind: 'app',
+            variant: 'baseline',
+            route: body.url,
+            viewport: body.viewport,
+            stateLabel: 'Captured',
+            iframeUrl: body.url,
+          },
+          capturedFromUrl: body.url,
+          createdAt: now,
+          updatedAt: now,
+        };
     await insertFrame(frame);
     hub.broadcast(frame.boardId, { type: 'frame.added', frame });
     return reply.send({ frame } satisfies CreateCaptureResponse);
   });
+}
+
+/**
+ * Callers can either send a bare base64 PNG (`iVBORw0KG…`) or a fully-formed
+ * `data:image/png;base64,…` URL. Normalise to the latter so the canvas's
+ * <img src> picks it up either way.
+ */
+function ensureDataUrl(raw: string): string {
+  if (raw.startsWith('data:')) return raw;
+  return `data:image/png;base64,${raw}`;
 }

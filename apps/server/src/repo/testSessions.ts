@@ -291,6 +291,38 @@ export async function sweepAbandonedSessions(
   );
 }
 
+/**
+ * Every test_session row belonging to a test owned by `userId`. Used by the
+ * GDPR data-export endpoint — test sessions don't carry a direct user link,
+ * so ownership is inherited via `tests.created_by_user_id`.
+ */
+export async function listSessionsForOwner(userId: string): Promise<TestSession[]> {
+  const rows = await query<TestSessionRow>(
+    `SELECT ts.* FROM test_sessions ts
+       JOIN tests t ON t.id = ts.test_id
+      WHERE t.created_by_user_id = $1
+      ORDER BY ts.started_at DESC`,
+    [userId],
+  );
+  if (rows.length === 0) return [];
+  return rows.map((r) => rowToSession(r, []));
+}
+
+/**
+ * Repoint every test that was created by `fromUserId` at `toUserId` — so
+ * deleted users' tests collapse into the anonymous sentinel. Returns the
+ * number of rows reassigned.
+ */
+export async function reassignTestCreator(
+  fromUserId: string,
+  toUserId: string,
+): Promise<number> {
+  return exec(
+    `UPDATE tests SET created_by_user_id = $2 WHERE created_by_user_id = $1`,
+    [fromUserId, toUserId],
+  );
+}
+
 /** Persist transcript cues + status produced by the transcription job. */
 export async function updateSessionTranscript(
   sessionId: string,

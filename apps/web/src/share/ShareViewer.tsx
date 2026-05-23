@@ -165,7 +165,7 @@ export default function ShareViewer() {
         }
       `}</style>
 
-      <div className="share-cta">
+      <div className="share-cta" data-testid="foldo-share-readonly-badge">
         <FoldoMark size={22} />
         <span>
           You're viewing a read-only share of <strong>this board</strong>.

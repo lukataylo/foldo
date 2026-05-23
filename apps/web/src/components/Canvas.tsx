@@ -289,6 +289,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       onPointerUp={onPointerUp}
     >
       <div
+        data-testid="foldo-canvas-frames"
         className="no-select absolute left-0 top-0 origin-top-left"
         style={{
           transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,

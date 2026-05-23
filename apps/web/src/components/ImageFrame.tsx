@@ -28,6 +28,8 @@ export function ImageFrame({
   const { handlers: dragHandlers } = useFrameDrag({ frame, zoom });
   return (
     <div
+      data-testid="foldo-canvas-frame-image"
+      data-frame-id={frame.id}
       className="absolute"
       style={{
         left: frame.position.x,

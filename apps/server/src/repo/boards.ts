@@ -35,6 +35,23 @@ export async function getBoardByRepoSlug(slug: string): Promise<Board | null> {
   return r ? rowToBoard(r) : null;
 }
 
+/**
+ * Boards on which the given user holds the `owner` role. Used by the GDPR
+ * data-export endpoint — owners get the full board row, anyone else just
+ * gets membership metadata. Implementation joins `board_members` so we
+ * don't have to store the creator on `boards` itself.
+ */
+export async function listBoardsOwnedBy(userId: string): Promise<Board[]> {
+  const rows = await query<BoardRow>(
+    `SELECT b.* FROM boards b
+       JOIN board_members m ON m.board_id = b.id
+      WHERE m.user_id = $1 AND m.role = 'owner'
+      ORDER BY b.created_at`,
+    [userId],
+  );
+  return rows.map(rowToBoard);
+}
+
 export async function upsertBoard(b: Board): Promise<Board> {
   await exec(
     `INSERT INTO boards (id, name, repo_slug, dev_url, created_at)

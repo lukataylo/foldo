@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type {
   AbandonTestSessionRequest,
@@ -204,7 +205,14 @@ export async function registerTestSessionRoutes(
         0,
         Math.round(Number(req.query.durationMs ?? 0)),
       );
-      const key = `recordings/${test.id}/${session.id}.webm`;
+      // Opaque random key (was recordings/<testId>/<sessionId>.webm). A
+      // predictable key meant anyone who could guess a (testId, sessionId)
+      // pair could fetch the recording; the new shape requires the random
+      // 32-hex token, which is only ever returned to the session owner
+      // (it's saved to the DB and exposed via the authenticated /api/
+      // recordings/<key> endpoint).
+      const opaque = randomBytes(16).toString('hex');
+      const key = `recordings/${opaque}.webm`;
       await getStorage().put(key, body, 'video/webm');
       await saveRecording(session.id, key, durationMs);
 

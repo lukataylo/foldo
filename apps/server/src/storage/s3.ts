@@ -33,7 +33,13 @@ export interface S3StorageConfig {
   endpoint?: string;
   accessKeyId: string;
   secretAccessKey: string;
-  /** Seconds a presigned GET URL stays valid. Default 1 hour. */
+  /**
+   * Seconds a presigned GET URL stays valid. Default 300 (5 min) — short
+   * enough that a leaked link expires before it's useful, long enough to
+   * survive a slow client tick. Bump via `FOLDO_S3_SIGNED_URL_TTL` if a
+   * particular deploy needs a longer window (e.g. a long video that's
+   * mid-buffer when the URL would have expired).
+   */
   signedUrlTtlSeconds?: number;
 }
 
@@ -44,7 +50,7 @@ export class S3Storage implements Storage {
 
   constructor(config: S3StorageConfig) {
     this.bucket = config.bucket;
-    this.signedUrlTtlSeconds = config.signedUrlTtlSeconds ?? 3600;
+    this.signedUrlTtlSeconds = config.signedUrlTtlSeconds ?? 300;
     this.client = new S3Client({
       region: config.region,
       endpoint: config.endpoint,

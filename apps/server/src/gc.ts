@@ -1,5 +1,8 @@
 import { sweepAbandonedSessions } from './repo/testSessions.ts';
 import { deleteExpiredSessions } from './repo/sessions.ts';
+import { jobLogger } from './log.ts';
+
+const log = jobLogger('gc');
 
 /**
  * Background sweep for test sessions a tester never finished.
@@ -22,27 +25,15 @@ export function startSessionGc(): void {
   if (timer) return; // idempotent — never start two sweeps
   timer = setInterval(() => {
     void sweepAbandonedSessions(ABANDON_AFTER_MS)
-      .then((n) => {
-        if (n > 0) {
-          // eslint-disable-next-line no-console
-          console.log(`[gc] marked ${n} stale test session(s) abandoned`);
-        }
+      .then((swept) => {
+        if (swept > 0) log.info({ swept }, 'marked stale test sessions abandoned');
       })
-      .catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[gc] session sweep failed:', err);
-      });
+      .catch((err) => log.error({ err }, 'session sweep failed'));
     void deleteExpiredSessions()
-      .then((n) => {
-        if (n > 0) {
-          // eslint-disable-next-line no-console
-          console.log(`[gc] removed ${n} expired auth session(s)`);
-        }
+      .then((removed) => {
+        if (removed > 0) log.info({ removed }, 'removed expired auth sessions');
       })
-      .catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[gc] expired-session sweep failed:', err);
-      });
+      .catch((err) => log.error({ err }, 'expired-session sweep failed'));
   }, SWEEP_INTERVAL_MS);
   // Don't keep the process alive just for the sweep.
   timer.unref?.();

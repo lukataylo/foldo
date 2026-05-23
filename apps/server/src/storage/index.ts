@@ -120,6 +120,10 @@ export function getStorage(): Storage {
       endpoint: process.env.FOLDO_S3_ENDPOINT || undefined,
       accessKeyId,
       secretAccessKey,
+      // Configurable TTL for signed URLs; defaults to 300s in S3Storage.
+      signedUrlTtlSeconds: process.env.FOLDO_S3_SIGNED_URL_TTL
+        ? Number(process.env.FOLDO_S3_SIGNED_URL_TTL)
+        : undefined,
     });
     return cached;
   }

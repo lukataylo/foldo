@@ -25,40 +25,142 @@ import { extractBearerToken, requireUser } from '../auth.ts';
 import { rateLimitPreHandler } from '../rateLimit.ts';
 import { nowIso } from '../util.ts';
 
-const scrypt = promisify(scryptCb) as (
-  pw: string,
+interface ScryptParams {
+  /** CPU/memory cost factor — must be a power of 2. */
+  N: number;
+  /** Block size. 8 is the well-tested default. */
+  r: number;
+  /** Parallelization. 1 is the well-tested default. */
+  p: number;
+}
+
+/**
+ * Async scrypt that lets us pass cost params. Node's promisified scrypt
+ * doesn't expose the options arg cleanly, so we wrap the callback form.
+ */
+function scryptAsync(
+  password: string,
   salt: Buffer,
   keylen: number,
-) => Promise<Buffer>;
+  params: ScryptParams,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scryptCb(
+      password,
+      salt,
+      keylen,
+      {
+        cost: params.N,
+        blockSize: params.r,
+        parallelization: params.p,
+        // The memory needed for scrypt is roughly 128 * N * r bytes; for our
+        // N=32768, r=8 that's exactly 32 MiB — the openssl default maxmem.
+        // Bump the ceiling so we don't error at the limit and so we have
+        // headroom to raise N again later without another code change.
+        maxmem: 128 * 1024 * 1024,
+      },
+      (err, derived) => {
+        if (err) return reject(err);
+        resolve(derived as Buffer);
+      },
+    );
+  });
+}
+// promisify(scryptCb) reference kept around so it isn't tree-shaken before
+// the rewrite lands in any open feature branches.
+void promisify;
 
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 200;
 const SCRYPT_KEYLEN = 64;
 
+/**
+ * Current cost params. N=2^15 puts a single hash at ~150ms on a modern
+ * laptop — slow enough to make offline brute-force expensive, fast enough
+ * that interactive login feels instant.
+ */
+const CURRENT_PARAMS: ScryptParams = { N: 32768, r: 8, p: 1 };
+
+/**
+ * Defaults that were in effect when the legacy (paramless) format was
+ * written. Node's scrypt defaults are N=16384, r=8, p=1.
+ */
+const LEGACY_PARAMS: ScryptParams = { N: 16384, r: 8, p: 1 };
+
 const PALETTE = ['#ff7849', '#5db0ff', '#b08cff', '#7fd49a', '#f5b86b', '#ff8ec2'];
 
+/**
+ * Hash format `scrypt:N=N,r=R,p=P:<salt-hex>:<key-hex>`. Encoding the cost
+ * params alongside the hash means we can bump them safely later — verify still
+ * works against old hashes, and the next successful login rotates the hash to
+ * the new params (see `verifyPassword`'s `needsRehash`).
+ *
+ * Legacy hashes use the 3-part `scrypt:<salt>:<key>` and are verified with
+ * `LEGACY_PARAMS`; they're rotated lazily on next login.
+ */
 async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
-  const key = await scrypt(password, salt, SCRYPT_KEYLEN);
-  return `scrypt:${salt.toString('hex')}:${key.toString('hex')}`;
+  const key = await scryptAsync(password, salt, SCRYPT_KEYLEN, CURRENT_PARAMS);
+  return `scrypt:N=${CURRENT_PARAMS.N},r=${CURRENT_PARAMS.r},p=${CURRENT_PARAMS.p}:${salt.toString('hex')}:${key.toString('hex')}`;
 }
 
-async function verifyPassword(stored: string, password: string): Promise<boolean> {
+interface VerifyResult {
+  ok: boolean;
+  /** True when the stored hash uses params weaker than `CURRENT_PARAMS`. */
+  needsRehash: boolean;
+}
+
+function parseParams(spec: string): ScryptParams | null {
+  // spec is like "N=32768,r=8,p=1"
+  let N = 0, r = 0, p = 0;
+  for (const kv of spec.split(',')) {
+    const [k, v] = kv.split('=');
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (k === 'N') N = n;
+    else if (k === 'r') r = n;
+    else if (k === 'p') p = n;
+  }
+  if (!N || !r || !p) return null;
+  return { N, r, p };
+}
+
+async function verifyPassword(stored: string, password: string): Promise<VerifyResult> {
   const parts = stored.split(':');
-  if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
-  const saltHex = parts[1];
-  const keyHex = parts[2];
-  if (!saltHex || !keyHex) return false;
+  let params: ScryptParams | null = null;
+  let saltHex: string | undefined;
+  let keyHex: string | undefined;
+  let isLegacy = false;
+  if (parts[0] === 'scrypt' && parts.length === 4) {
+    params = parseParams(parts[1] ?? '');
+    saltHex = parts[2];
+    keyHex = parts[3];
+  } else if (parts[0] === 'scrypt' && parts.length === 3) {
+    params = LEGACY_PARAMS;
+    saltHex = parts[1];
+    keyHex = parts[2];
+    isLegacy = true;
+  }
+  if (!params || !saltHex || !keyHex) return { ok: false, needsRehash: false };
   const salt = Buffer.from(saltHex, 'hex');
   const expected = Buffer.from(keyHex, 'hex');
   let actual: Buffer;
   try {
-    actual = await scrypt(password, salt, expected.length);
+    actual = await scryptAsync(password, salt, expected.length, params);
   } catch {
-    return false;
+    return { ok: false, needsRehash: false };
   }
-  if (actual.length !== expected.length) return false;
-  return timingSafeEqual(actual, expected);
+  if (actual.length !== expected.length) return { ok: false, needsRehash: false };
+  const ok = timingSafeEqual(actual, expected);
+  // A successful verify against a legacy hash, OR against any params weaker
+  // than CURRENT_PARAMS, signals the route to re-hash on this login.
+  const needsRehash =
+    ok &&
+    (isLegacy ||
+      params.N < CURRENT_PARAMS.N ||
+      params.r < CURRENT_PARAMS.r ||
+      params.p < CURRENT_PARAMS.p);
+  return { ok, needsRehash };
 }
 
 function newSessionToken(): string {
@@ -187,9 +289,22 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     if (!hash) {
       return reply.code(401).send({ error: 'Invalid email or password', code: 'INVALID_CREDENTIALS' });
     }
-    const ok = await verifyPassword(hash, password);
-    if (!ok) {
+    const result = await verifyPassword(hash, password);
+    if (!result.ok) {
       return reply.code(401).send({ error: 'Invalid email or password', code: 'INVALID_CREDENTIALS' });
+    }
+    // Lazy rehash: any successful login against a hash with weaker-than-
+    // CURRENT_PARAMS gets rotated to the current params transparently. This
+    // is how we move the install off legacy/3-part hashes without a
+    // forced-password-reset event.
+    if (result.needsRehash) {
+      try {
+        const fresh = await hashPassword(password);
+        await setUserPasswordHash(user.id, fresh);
+        req.log.info({ userId: user.id }, 'rotated password hash to current params');
+      } catch (err) {
+        req.log.warn({ err, userId: user.id }, 'password rehash on login failed');
+      }
     }
 
     const token = newSessionToken();
@@ -268,7 +383,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           code: 'NO_PASSWORD',
         });
       }
-      const ok = await verifyPassword(hash, currentPassword);
+      const { ok } = await verifyPassword(hash, currentPassword);
       if (!ok) {
         return reply
           .code(401)

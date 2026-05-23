@@ -35,7 +35,12 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
+  // Production smoke specs (e2e/deploy/*.spec.ts) talk to the live
+  // api.foldo.dev surface — they don't need a local dev server. Skip the
+  // webServer block when RUN_PROD_SMOKE=1 is set so the runner doesn't
+  // boot `npm run dev` for nothing (and so this spec can run on a CI
+  // job that doesn't have the full stack installed).
+  webServer: process.env.RUN_PROD_SMOKE === '1' ? undefined : {
     command: 'npm run dev',
     url: process.env.FOLDO_WEB ?? 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,

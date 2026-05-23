@@ -98,6 +98,8 @@ export default function ShareViewer() {
 
   return (
     <div
+      data-testid="foldo-share-viewer-root"
+      data-foldo-share-status={state.status}
       style={{
         minHeight: '100vh',
         background: PAPER,
@@ -292,7 +294,12 @@ function FrameTile({ frame }: { frame: Frame }) {
             ? c.caption || c.alt || 'Image'
             : '';
   return (
-    <div className="frame-tile">
+    <div
+      className="frame-tile"
+      data-testid="foldo-share-viewer-frame-tile"
+      data-foldo-frame-id={frame.id}
+      data-foldo-frame-kind={c.kind}
+    >
       <div className="preview">
         <span className="chip">{kindLabel}</span>
       </div>

@@ -5,6 +5,11 @@
 // the same registry, but its `foldo-rail-tool-*` testids stay alive for
 // the existing e2e suite).
 //
+// Updated for Step 11: the core/dom-editor plugin now contributes a
+// `rightPanel` tab labelled "Inspect", so the right panel transitions
+// from absent to visible. The left panel stays absent until Step 10's
+// Layer Navigator lands.
+//
 // Locking this spec in protects against three specific regressions:
 //   1. A future plugin's activate() crash takes down the canvas
 //   2. The new LeftPanel/RightPanel slots steal click events from canvas
@@ -50,11 +55,20 @@ test.describe('plugin substrate: no regression', () => {
       page.getByTestId('foldo-plugin-toolbar-tool-select'),
     ).toBeVisible();
 
-    // Same for LeftPanel / RightPanel — no tab contributions yet, so the
-    // panels are absent (Step 10's Layer Navigator + Step 11's DOM Editor
-    // are what bring them in).
+    // LeftPanel — still no tab contributions until Step 10's Layer
+    // Navigator lands, so the panel stays absent.
     await expect(page.getByTestId('foldo-plugin-left-panel')).toHaveCount(0);
-    await expect(page.getByTestId('foldo-plugin-right-panel')).toHaveCount(0);
+
+    // RightPanel — Step 11's core/dom-editor plugin contributes the
+    // "Inspect" tab, so the panel is now expected to be VISIBLE and
+    // its tab strip shows the "Inspect" label.
+    await expect(page.getByTestId('foldo-plugin-right-panel')).toBeVisible();
+    await expect(
+      page.getByTestId('foldo-plugin-right-tab-inspect'),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId('foldo-plugin-right-tab-inspect'),
+    ).toContainText('Inspect');
 
     // No console errors during the boot — catches plugin activate() crashes.
     const errors: string[] = [];

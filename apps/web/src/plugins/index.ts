@@ -4,5 +4,6 @@
 
 import type { Plugin } from '@foldo/plugin';
 import { coreToolsPlugin } from './core-tools/index';
+import { domEditorPlugin } from './core-dom-editor/index';
 
-export const BUILTIN_PLUGINS: Plugin[] = [coreToolsPlugin];
+export const BUILTIN_PLUGINS: Plugin[] = [coreToolsPlugin, domEditorPlugin];

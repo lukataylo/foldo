@@ -94,6 +94,27 @@ To plug in the in-directory MCP server (so dispatches go through real tool execu
 npm run dev:mcp
 ```
 
+Or fold the MCP into the main `npm run dev` orchestrator:
+
+```bash
+FOLDO_MCP_DEV=1 npm run dev
+```
+
+> ⚠️ The MCP shells out to the local `claude` CLI on every dispatch, which
+> costs Claude credits. It's intentionally **off** by default in `npm run dev`.
+> Set `FOLDO_MCP_FORCE_SIM=1` alongside `FOLDO_MCP_DEV=1` to keep the runner
+> on but route through the heuristic sim (no real `claude` invocations).
+
+To register the MCP with your local Claude Code install:
+
+```bash
+make claude-mcp-install
+```
+
+This idempotently adds a `foldo` entry to your Claude settings file (or writes
+a paste-ready snippet to `foldo-mcp.claude-snippet.json` if the file doesn't
+exist yet).
+
 To build the Chrome extension for unpacked install:
 
 ```bash

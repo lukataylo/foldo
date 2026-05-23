@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n server,sample,web -c blue,magenta,cyan \"npm:dev:server\" \"npm:dev:sample\" \"npm:dev:web\"",
+    "dev": "node scripts/dev.mjs",
     "dev:server": "npm run dev --workspace apps/server",
     "dev:web": "npm run dev --workspace apps/web",
     "dev:sample": "npm run dev --workspace apps/sample-app",

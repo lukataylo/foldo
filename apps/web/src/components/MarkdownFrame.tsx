@@ -172,6 +172,7 @@ export function MarkdownFrame({
         />
         <div
           ref={containerRef}
+          data-testid="foldo-markdown-body"
           data-canvas-scroll="true"
           className="h-[calc(100%-44px)] overflow-y-auto px-8 py-5"
           style={{

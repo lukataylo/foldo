@@ -2,15 +2,29 @@ import type { Frame } from '@foldo/protocol';
 
 interface Props {
   frames: Frame[];
+  /**
+   * Set of frame ids currently in (or near) the viewport. When provided, links
+   * whose parent AND child are both off-viewport are dropped before path
+   * generation — that's free on a small board but matters once hundreds of
+   * parent/child pairs exist, when most are scrolled off-screen.
+   */
+  inViewportFrameIds?: ReadonlySet<string>;
 }
 
 // Renders subtle curves between parent and child frames in world coords.
 // Sits inside the transformed layer so it scales with zoom.
-export function Connectors({ frames }: Props) {
+export function Connectors({ frames, inViewportFrameIds }: Props) {
   const map = new Map(frames.map((f) => [f.id, f]));
-  const links = frames
+  let links = frames
     .filter((f) => f.parentFrameId && map.has(f.parentFrameId))
     .map((child) => ({ child, parent: map.get(child.parentFrameId!)! }));
+
+  if (inViewportFrameIds && inViewportFrameIds.size > 0) {
+    links = links.filter(
+      ({ child, parent }) =>
+        inViewportFrameIds.has(child.id) || inViewportFrameIds.has(parent.id),
+    );
+  }
 
   if (!links.length) return null;
 

@@ -18,40 +18,10 @@ import Privacy from './Privacy';
 import Signup from './Signup';
 import Terms from './Terms';
 
-const KNOWN_MARKETING_PATHS = new Set([
-  '/',
-  '/landing',
-  '/login',
-  '/signup',
-  '/pricing',
-  '/demo',
-  '/docs',
-  '/forgot',
-  '/terms',
-  '/privacy',
-  '/about',
-  '/brand',
-  '/changelog',
-  '/cookies',
-  '/cookie-policy',
-  '/extension',
-]);
-
-export function isMarketingPath(pathname: string): boolean {
-  if (KNOWN_MARKETING_PATHS.has(pathname)) return true;
-  if (pathname.startsWith('/docs/')) return true;
-  // Authenticated surfaces own their prefixes; don't route them to marketing.
-  if (pathname === '/home' || pathname.startsWith('/home/')) return false;
-  if (pathname === '/settings' || pathname.startsWith('/settings/')) return false;
-  // Share viewer owns /s/* and the legacy /share/*.
-  if (pathname.startsWith('/s/') || pathname.startsWith('/share/')) return false;
-  // Capture-by-URL viewer owns /c/*.
-  if (pathname.startsWith('/c/')) return false;
-  // The canvas owns these prefixes; defer to <App />.
-  if (pathname.startsWith('/app') || pathname.startsWith('/board/')) return false;
-  // Anything else marketing-ish (404 etc.) → marketing.
-  return true;
-}
+// Re-export so old callers (`import { isMarketingPath } from './MarketingRouter'`)
+// still work; new code should import directly from './path' to avoid pulling
+// in this module's marketing-screen dependency graph.
+export { isMarketingPath } from './path';
 
 export default function MarketingRouter() {
   const path = typeof location !== 'undefined' ? location.pathname : '/';

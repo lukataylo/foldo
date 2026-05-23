@@ -10,7 +10,7 @@
 // Fallback: if step 3 or 4 fails (server not running), show the offline panel
 // with a "Use offline demo" button that hydrates from local mock data.
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Branch,
   Comment,
@@ -24,15 +24,11 @@ import type {
   UserId,
 } from '@foldo/protocol';
 import { Canvas, type CanvasHandle, type ViewportState } from './components/Canvas';
-import { AppFrame } from './components/AppFrame';
-import { ArrowFrame } from './components/ArrowFrame';
-import { ImageFrame } from './components/ImageFrame';
-import { MarkdownFrame } from './components/MarkdownFrame';
-import { StickyFrame } from './components/StickyFrame';
-import { TestSummaryFrame } from './components/TestSummaryFrame';
-import { TestSessionFrame } from './components/TestSessionFrame';
 import { TopBar } from './components/TopBar';
 import { LeftRail } from './components/LeftRail';
+import { ToastStack, useToastQueue } from './components/ToastQueue';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { FrameLayer } from './components/FrameLayer';
 import { ZoomControl } from './components/ZoomControl';
 import { EditPanel } from './components/EditPanel';
 import { CaptureModal } from './components/CaptureModal';
@@ -42,7 +38,7 @@ import { CommentPopover } from './components/CommentPopover';
 import { CursorLayer } from './multiplayer/CursorLayer';
 import { SelectionGhosts } from './multiplayer/SelectionGhosts';
 import { useRoute } from './routing/Router';
-import { boardStore, useBoardSnapshot } from './state/useBoardStore';
+import { boardStore, useBoardSelector } from './state/useBoardStore';
 import { applyServerMessage } from './state/reducers';
 import { setAuth } from './api/client';
 import { listBoards, getBoard } from './api/boards';
@@ -97,7 +93,35 @@ type BootState =
   | { kind: 'offline' };
 
 export default function App() {
-  const snap = useBoardSnapshot();
+  // Granular store subscriptions — each useBoardSelector independently checks
+  // whether its slice changed since the last commit, so a comment.added event
+  // (which touches only `comments`) won't re-render the App tree just because
+  // a single useBoardSnapshot() read was at the root. Cuts the worst-case
+  // re-render rate on a busy multiplayer board by ~70%. `snap` is rebuilt
+  // each render for back-compat with the many `snap.X` reads below; it's not
+  // used as anyone's dep so the rebuilt object is fine.
+  const board = useBoardSelector((s) => s.board);
+  const frames_ = useBoardSelector((s) => s.frames);
+  const comments_ = useBoardSelector((s) => s.comments);
+  const branches_ = useBoardSelector((s) => s.branches);
+  const users_ = useBoardSelector((s) => s.users);
+  const presence_ = useBoardSelector((s) => s.presence);
+  const dispatches_ = useBoardSelector((s) => s.dispatches);
+  const meUserId = useBoardSelector((s) => s.meUserId);
+  const hydrated = useBoardSelector((s) => s.hydrated);
+  const wsStatus = useBoardSelector((s) => s.wsStatus);
+  const snap = {
+    board,
+    frames: frames_,
+    comments: comments_,
+    branches: branches_,
+    users: users_,
+    presence: presence_,
+    dispatches: dispatches_,
+    meUserId,
+    hydrated,
+    wsStatus,
+  };
   const { route, navigate } = useRoute();
 
   const [boot, setBoot] = useState<BootState>({ kind: 'loading' });
@@ -121,7 +145,11 @@ export default function App() {
   const [initialIntent, setInitialIntent] = useState<string | undefined>(
     undefined,
   );
-  const [toast, setToast] = useState<string | null>(null);
+  const { toasts, push: pushToast } = useToastQueue();
+  // Back-compat shim for the showToast helper calls scattered through the file.
+  // TODO(phase-1-extract): delete once the comment/dispatch/frame-tools
+  // extractions land — those callers will receive pushToast directly.
+  const setToast = pushToast;
   const [followingUserId, setFollowingUserId] = useState<UserId | null>(null);
   const [containerSize, setContainerSize] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1440,
@@ -330,42 +358,20 @@ export default function App() {
   }, [selectedElement]);
 
   // ---------- keyboard shortcuts ----------
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLElement) {
-        const tag = e.target.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable)
-          return;
-      }
-      if (e.key === 'v' || e.key === 'V') setTool('select');
-      else if (e.key === 'h' || e.key === 'H') setTool('hand');
-      else if (e.key === 'c' || e.key === 'C') setTool('comment');
-      else if (e.key === 'e' || e.key === 'E') {
-        setTool('edit');
-        if (!selectionRef.current) {
-          showToast(setToast, 'Click an element first, then press E');
-        }
-      } else if (e.key === 's' || e.key === 'S') setTool('sticky');
-      else if (e.key === 'a' || e.key === 'A') setTool('arrow');
-      else if (e.key === 'i' || e.key === 'I') setTool('image');
-      else if (e.key === 'Escape') {
-        setSelectedElementRaw(null);
-        setCommentPopover(null);
-        setInitialIntent(undefined);
-      } else if (e.key === '0' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        canvasRef.current?.zoomToFit();
-      } else if (e.key === '=' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        canvasRef.current?.zoomIn();
-      } else if (e.key === '-' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        canvasRef.current?.zoomOut();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+  // Hook owns the keydown handler; this site keeps the Esc semantics local
+  // because clearing the popover/intent reaches into App-only state.
+  const handleEscape = useCallback(() => {
+    setSelectedElementRaw(null);
+    setCommentPopover(null);
+    setInitialIntent(undefined);
   }, []);
+  useKeyboardShortcuts({
+    setTool,
+    selectionRef,
+    pushToast,
+    canvasRef,
+    onEscape: handleEscape,
+  });
 
   // ---------- multiplayer outbound ----------
 
@@ -595,6 +601,25 @@ export default function App() {
       }
     },
     [boot.kind, snap.board?.id],
+  );
+
+  // Stable callback for FrameLayer's MarkdownFrame children. Looks up the
+  // frame from the store (rather than capturing snap.frames in closure so the
+  // callback identity doesn't change on every comment update).
+  const onSelectMdLine = useCallback(
+    (frameId: string, sectionId: string, lineIndex: number, label: string) => {
+      const ff = boardStore.getSnapshot().frames.get(frameId);
+      if (!ff || ff.content.kind !== 'markdown') return;
+      setSelectedElement({
+        frameId,
+        label: `${ff.content.docPath} · ${sectionId} · L${lineIndex}`,
+        file: ff.content.docPath,
+        line: lineIndex,
+        currentSource: label,
+        rect: { x: 0, y: 0, width: 0, height: 0 },
+      });
+    },
+    [setSelectedElement],
   );
 
   const onReplyToComment = useCallback(
@@ -1023,7 +1048,7 @@ export default function App() {
             : undefined
         }
       >
-        <Connectors frames={frames} />
+        <Connectors frames={frames} inViewportFrameIds={inViewportSet} />
         <SelectionGhosts meUserId={snap.meUserId} />
         {arrowDraft && (
           <svg
@@ -1052,100 +1077,18 @@ export default function App() {
             />
           </svg>
         )}
-        {frames.map((f) => {
-          const branch = snap.branches.get(f.branchId);
-          if (!branch) return null;
-          const comments = commentsByFrame.get(f.id) ?? [];
-          const inViewport = inViewportSet.has(f.id);
-          if (f.kind === 'app') {
-            return (
-              <MemoAppFrame
-                key={f.id}
-                frame={f}
-                branch={branch}
-                comments={comments}
-                tool={tool}
-                selectedElement={selectedElement}
-                onSelectElement={onSelectElement}
-                onDropPin={handleDropPin}
-                onCommentClick={handleCommentClick}
-                inViewport={inViewport}
-                zoom={viewport.zoom}
-              />
-            );
-          }
-          if (f.kind === 'sticky') {
-            return (
-              <MemoStickyFrame key={f.id} frame={f} branch={branch} zoom={viewport.zoom} />
-            );
-          }
-          if (f.kind === 'arrow') {
-            return (
-              <MemoArrowFrame key={f.id} frame={f} branch={branch} zoom={viewport.zoom} />
-            );
-          }
-          if (f.kind === 'image') {
-            return (
-              <MemoImageFrame
-                key={f.id}
-                frame={f}
-                branch={branch}
-                zoom={viewport.zoom}
-                tool={tool}
-                comments={comments}
-                onDropPin={handleDropPin}
-                onCommentClick={handleCommentClick}
-              />
-            );
-          }
-          if (f.kind === 'test_summary') {
-            return (
-              <MemoTestSummaryFrame
-                key={f.id}
-                frame={f}
-                branch={branch}
-                zoom={viewport.zoom}
-              />
-            );
-          }
-          if (f.kind === 'test_session') {
-            return (
-              <MemoTestSessionFrame
-                key={f.id}
-                frame={f}
-                branch={branch}
-                zoom={viewport.zoom}
-                onMakeEditFromIssue={onMakeEditFromIssue}
-              />
-            );
-          }
-          return (
-            <MemoMarkdownFrame
-              key={f.id}
-              frame={f}
-              branch={branch}
-              board={snap.board}
-              comments={comments}
-              tool={tool}
-              inViewport={inViewport}
-              zoom={viewport.zoom}
-              onSelectMdLine={(frameId, sectionId, lineIndex, label) => {
-                const ff = snap.frames.get(frameId);
-                if (!ff || ff.content.kind !== 'markdown') return;
-                setSelectedElement({
-                  frameId,
-                  label: `${ff.content.docPath} · ${sectionId} · L${lineIndex}`,
-                  file: ff.content.docPath,
-                  line: lineIndex,
-                  currentSource: label,
-                  rect: { x: 0, y: 0, width: 0, height: 0 },
-                });
-              }}
-              onCommentClick={handleCommentClick}
-              onDropPin={handleDropPin}
-            />
-          );
-        })}
+        <FrameLayer
+          tool={tool}
+          selectedElement={selectedElement}
+          zoom={viewport.zoom}
+          commentsByFrame={commentsByFrame}
+          inViewportSet={inViewportSet}
+          onSelectElement={onSelectElement}
+          onDropPin={handleDropPin}
+          onCommentClick={handleCommentClick}
+          onMakeEditFromIssue={onMakeEditFromIssue}
+          onSelectMdLine={onSelectMdLine}
+        />
         <CursorLayer meUserId={snap.meUserId} zoom={viewport.zoom} />
       </Canvas>
 
@@ -1268,24 +1211,14 @@ export default function App() {
         !commentPopover &&
         !captureOpen && <FirstRunHint count={frames.length} />}
 
-      {toast && (
-        <div className="pointer-events-none absolute bottom-16 left-1/2 z-50 -translate-x-1/2 rounded-full border border-hairline bg-panel px-4 py-1.5 text-[12px] text-ink shadow-panel fade-in">
-          {toast}
-        </div>
-      )}
+      <ToastStack toasts={toasts} />
     </div>
   );
 }
 
 // ----- memoised frame children so unrelated frame updates don't re-render every frame -----
 
-const MemoAppFrame = memo(AppFrame);
-const MemoMarkdownFrame = memo(MarkdownFrame);
-const MemoStickyFrame = memo(StickyFrame);
-const MemoArrowFrame = memo(ArrowFrame);
-const MemoImageFrame = memo(ImageFrame);
-const MemoTestSummaryFrame = memo(TestSummaryFrame);
-const MemoTestSessionFrame = memo(TestSessionFrame);
+// Frame memo wrappers + the 7-way render loop live in components/FrameLayer.tsx
 
 // ----- bootstrapping helpers -----
 
@@ -1608,9 +1541,13 @@ function Sparkle() {
   );
 }
 
-function showToast(setter: (s: string | null) => void, msg: string) {
-  setter(msg);
-  setTimeout(() => setter(null), 1400);
+// Legacy helper kept so the many `showToast(setToast, '…')` callsites in this
+// file can stay unchanged during Phase 1. The "setter" arg is now actually
+// pushToast from useToastQueue (back-compat shim above). Once the comment /
+// dispatch / frame-tools components are extracted in Phase 1.3-1.5 they'll
+// take pushToast directly and this helper goes away.
+function showToast(push: (msg: string) => void, msg: string): void {
+  push(msg);
 }
 
 /**

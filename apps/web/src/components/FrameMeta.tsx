@@ -74,6 +74,10 @@ export function FrameMeta({ frame, branch, zoom = 1, canEdit = true }: Props) {
 
       {canEdit && (
         <div data-no-drag className="relative ml-auto shrink-0">
+          {/* A+W1 touch: framemeta-kebab is always visible on touch devices via
+              the @media(hover:none) rule below; on hover-capable devices it
+              keeps the existing hover-only opacity ramp via the framemeta-actions
+              container above. The button itself is now 44x44. */}
           <button
             type="button"
             aria-label="Frame actions"
@@ -82,10 +86,16 @@ export function FrameMeta({ frame, branch, zoom = 1, canEdit = true }: Props) {
               setMenuOpen((v) => !v);
               setConfirmDelete(false);
             }}
-            className="flex h-5 w-5 items-center justify-center rounded hover:bg-white/10"
+            className="foldo-framemeta-kebab flex h-11 w-11 items-center justify-center rounded hover:bg-white/10"
           >
             <KebabIcon />
           </button>
+          {/* A+W1 touch: keep the kebab visible on touch screens (no hover). */}
+          <style>{`
+            @media (hover: none) {
+              .foldo-framemeta-kebab { opacity: 1 !important; }
+            }
+          `}</style>
           {menuOpen && (
             <div
               role="menu"

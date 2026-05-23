@@ -21,6 +21,41 @@ body,
   overflow: hidden;
 }
 
+/* A+W1 touch: respect notch/home-indicator on iOS/iPadOS. Padding on body
+   (not #root) so the dark canvas still bleeds edge-to-edge while overlays
+   like TopBar/ZoomControl, which use absolute positioning, inherit safe-area
+   via the env() utility class below. */
+body {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* A+W1 touch: a utility wrapper that adds safe-area-inset padding without
+   conflicting with the absolute-positioned overlays. Applied to overlays
+   that hug the screen edges (TopBar, ZoomControl, ToolBar). */
+.safe-area-inset {
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
+/* A+W1 touch: kill the 300ms tap delay and iOS overscroll bounce on the canvas
+   root so two-finger pan + pinch feel native. The Canvas container also sets
+   touchAction: 'none' inline, but the universal selector here covers ancillary
+   surfaces (panels, overlays). */
+html,
+body {
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
+
+/* A+W1 touch: any element marked as a draggable canvas surface opts out of
+   default touch gestures so the pointer events fall through cleanly. */
+[data-canvas-bg='true'] {
+  touch-action: none;
+}
+
 * {
   box-sizing: border-box;
 }

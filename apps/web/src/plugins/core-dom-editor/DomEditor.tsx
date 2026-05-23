@@ -65,8 +65,10 @@ const inputBase: CSSProperties = {
   border: '1px solid rgba(255,255,255,0.08)',
   color: '#e8e8ea',
   borderRadius: 4,
-  padding: '4px 6px',
-  fontSize: 12,
+  /* A+W1 touch: 4x6 → 8x10 padding + 16px font so iOS doesn't auto-zoom on
+     focus. The compact 12px font caused the whole panel to jump on iPad. */
+  padding: '8px 10px',
+  fontSize: 16,
   fontFamily: 'inherit',
   outline: 'none',
   minWidth: 0,
@@ -82,7 +84,8 @@ const boxInput: CSSProperties = {
   ...inputBase,
   flex: 'initial',
   textAlign: 'center',
-  padding: '4px 4px',
+  /* A+W1 touch: keep box inputs in the 4-column grid but still readable + tappable. */
+  padding: '8px 4px',
 };
 
 const boxLabel: CSSProperties = {
@@ -92,8 +95,10 @@ const boxLabel: CSSProperties = {
 };
 
 const buttonBase: CSSProperties = {
-  fontSize: 12,
-  padding: '6px 10px',
+  fontSize: 13,
+  /* A+W1 touch: padding 6x10 → 10x14 so the action button is ≥40px tall. */
+  padding: '10px 14px',
+  minHeight: 40,
   borderRadius: 6,
   border: '1px solid rgba(255,255,255,0.1)',
   background: 'rgba(255,255,255,0.04)',

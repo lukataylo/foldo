@@ -117,7 +117,8 @@ export function EditPanel({
                 ? 'Describe the change. e.g. "Add the trial duration to the button: Start your 14-day free trial. Also add a no-credit-card line under it."'
                 : 'Describe the doc change.'
             }
-            className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2.5 py-2 text-[12.5px] text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
+            /* A+W1 touch: 16px font on inputs stops iOS auto-zoom on focus. */
+            className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2.5 py-2 text-[16px] text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
           />
         </Section>
 
@@ -191,7 +192,8 @@ function Header({
       </div>
       <button
         onClick={onClose}
-        className="ml-2 flex h-6 w-6 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+        /* A+W1 touch: 44x44 close button (was 24x24). */
+        className="ml-2 flex h-11 w-11 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
         aria-label="Close edit panel"
       >
         <svg width="11" height="11" viewBox="0 0 16 16">

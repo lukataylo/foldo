@@ -18,7 +18,9 @@ export function CommentPin({ comment, frameSize, onClick }: Props) {
         e.stopPropagation();
         onClick();
       }}
-      className="absolute z-30 flex h-7 w-7 -translate-x-1/2 -translate-y-full items-center justify-center"
+      /* A+W1 touch: 44x44 (h-11 w-11) hit area; visual pin stays 24x24 inside.
+         Was h-7 w-7 (~28x28) which is below Apple's 44pt minimum. */
+      className="absolute z-30 flex h-11 w-11 -translate-x-1/2 -translate-y-full items-center justify-center"
       style={{ left: cx, top: cy }}
       aria-label={`Comment by ${comment.authorName}`}
     >

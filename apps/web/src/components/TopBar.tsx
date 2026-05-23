@@ -58,14 +58,16 @@ export function TopBar({
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between px-4 pt-3">
       {/* left: logo + repo selector */}
-      <div className="pointer-events-auto relative flex items-center gap-3 rounded-xl border border-hairlineSoft bg-panel px-2 py-1.5 shadow-panel">
+      {/* A+W1 touch: bumped py-1.5 → py-2 so the chrome reads ~40px tall on iPad. */}
+      <div className="pointer-events-auto relative flex items-center gap-3 rounded-xl border border-hairlineSoft bg-panel px-2 py-2 shadow-panel">
         <a href={HOME_URL} title="Back to home">
           <Logo />
         </a>
         <div className="h-4 w-px bg-hairline" />
         <button
           onClick={() => setOpen((o) => !o)}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] font-medium text-ink hover:bg-white/5"
+          /* A+W1 touch: py-1 → py-2 for fingertip targets. */
+          className="flex items-center gap-1.5 rounded-md px-2 py-2 text-[12.5px] font-medium text-ink hover:bg-white/5"
         >
           <RepoIcon />
           <span data-testid="foldo-canvas-topbar-boardname">{repoName}</span>
@@ -145,17 +147,18 @@ export function TopBar({
             )}
           </div>
         )}
+        {/* A+W1 touch: py-1.5 → py-2 across the action chips for finger reach. */}
         <button
           data-testid="foldo-canvas-topbar-capture"
           onClick={onCapture}
-          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-1.5 text-[12px] text-ink hover:bg-white/5"
+          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink hover:bg-white/5"
         >
           <ExtensionIcon /> Capture from URL
         </button>
         <button
           onClick={onOpenTests}
           title="Create unmoderated UX test links"
-          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-1.5 text-[12px] text-ink hover:bg-white/5"
+          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink hover:bg-white/5"
         >
           <FlaskIcon /> Tests
         </button>
@@ -163,7 +166,7 @@ export function TopBar({
           onClick={onShare}
           title="Copy this canvas URL to clipboard"
           className={
-            'rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ' +
+            'rounded-lg border px-2.5 py-2 text-[12px] transition-colors ' +
             (shared
               ? 'border-ok/40 bg-ok/15 text-ok'
               : 'border-hairlineSoft bg-panel text-ink hover:bg-white/5')

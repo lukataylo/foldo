@@ -210,7 +210,69 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   // Pan dragging
   const handMode = tool === 'hand' || spaceDown;
   const dragRef = useRef<{ pid: number; downAt: number; world: { x: number; y: number } } | null>(null);
+
+  /* A+W1 touch: multi-touch bookkeeping for pinch-zoom + two-finger pan.
+     We track every active pointer's last screen position in pointersRef so
+     that, with 2+ pointers down, we can compute centroid + distance deltas
+     even though React's pointer events fire one-at-a-time. The dedicated
+     pinchRef snapshots the last frame's centroid/distance so we apply only
+     the delta between frames, not the cumulative drift since gesture-start. */
+  const pointersRef = useRef<Map<number, { x: number; y: number; type: string }>>(
+    new Map(),
+  );
+  const pinchRef = useRef<{
+    distance: number;
+    centerX: number;
+    centerY: number;
+  } | null>(null);
+  /** True iff an Apple Pencil pointer is currently down. Touch pointers that
+      arrive while a pen is active get ignored — palm rejection. */
+  const penActiveRef = useRef(false);
+  /** Last pressure value observed from a pen pointer. Future ink tools can
+      read it; today nothing consumes it but the wiring is here. */
+  const lastPenPressureRef = useRef(1);
+  /* /A+W1 touch */
+
   const onPointerDown = (e: React.PointerEvent) => {
+    /* A+W1 touch: register every pointer, even the ones that don't start
+       a pan or a draw, so the pinch-detection logic in onPointerMove can
+       see the full constellation. */
+    pointersRef.current.set(e.pointerId, {
+      x: e.clientX,
+      y: e.clientY,
+      type: e.pointerType,
+    });
+
+    if (e.pointerType === 'pen') {
+      penActiveRef.current = true;
+      lastPenPressureRef.current = e.pressure || 1;
+    } else if (e.pointerType === 'touch' && penActiveRef.current) {
+      // Palm rejection: ignore touch pointers that arrive while a Pencil is
+      // also down on the canvas. The Pencil wins.
+      return;
+    }
+
+    // Two (or more) touches always pan — never start a draw/comment/sticky.
+    if (pointersRef.current.size >= 2) {
+      // If a single-pointer drag was just starting (sticky/arrow tool), abort
+      // it so the second finger doesn't accidentally place a frame.
+      dragRef.current = null;
+      const pts = [...pointersRef.current.values()];
+      const a = pts[0]!;
+      const b = pts[1]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      pinchRef.current = {
+        distance: Math.hypot(dx, dy),
+        centerX: (a.x + b.x) / 2,
+        centerY: (a.y + b.y) / 2,
+      };
+      setPanning(true);
+      e.preventDefault();
+      return;
+    }
+    /* /A+W1 touch */
+
     // background click to deselect
     const isBg = (e.target as HTMLElement).dataset.canvasBg === 'true';
     if (handMode || e.button === 1) {
@@ -240,6 +302,57 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   }, [onCursorMove, screenToWorld]);
 
   const onPointerMove = (e: React.PointerEvent) => {
+    /* A+W1 touch: keep the per-pointer position in sync so pinch math sees
+       this frame's coordinates, not stale ones. */
+    if (pointersRef.current.has(e.pointerId)) {
+      pointersRef.current.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+        type: e.pointerType,
+      });
+    }
+    if (e.pointerType === 'pen') {
+      lastPenPressureRef.current = e.pressure || 1;
+    }
+
+    // Pinch / two-finger pan handling — when 2+ pointers are down we always
+    // route the move into the gesture, never into a draw/comment/sticky path.
+    if (pointersRef.current.size >= 2 && pinchRef.current) {
+      const pts = [...pointersRef.current.values()];
+      const a = pts[0]!;
+      const b = pts[1]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.hypot(dx, dy);
+      const cx = (a.x + b.x) / 2;
+      const cy = (a.y + b.y) / 2;
+
+      // Pan delta = centroid movement.
+      const panDx = cx - pinchRef.current.centerX;
+      const panDy = cy - pinchRef.current.centerY;
+      // Zoom delta = distance ratio.
+      const zoomFactor =
+        pinchRef.current.distance > 0 ? dist / pinchRef.current.distance : 1;
+
+      setViewport((v) => {
+        const nextZoom = clamp(v.zoom * zoomFactor, 0.1, 3);
+        const ratio = nextZoom / v.zoom;
+        const rect = containerRef.current?.getBoundingClientRect();
+        const ax = rect ? cx - rect.left : cx;
+        const ay = rect ? cy - rect.top : cy;
+        return {
+          zoom: nextZoom,
+          x: ax - (ax - v.x) * ratio + panDx,
+          y: ay - (ay - v.y) * ratio + panDy,
+        };
+      });
+
+      pinchRef.current = { distance: dist, centerX: cx, centerY: cy };
+      e.preventDefault();
+      return;
+    }
+    /* /A+W1 touch */
+
     if (panning) {
       setViewport((v) => ({ ...v, x: v.x + e.movementX, y: v.y + e.movementY }));
     }
@@ -254,7 +367,22 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     }
   };
   const onPointerUp = (e: React.PointerEvent) => {
-    if (panning) {
+    /* A+W1 touch: drop the lifted pointer; if we're back below 2 pointers,
+       clear the pinch state so the next gesture starts fresh. */
+    pointersRef.current.delete(e.pointerId);
+    if (e.pointerType === 'pen') {
+      penActiveRef.current = false;
+    }
+    if (pointersRef.current.size < 2) {
+      pinchRef.current = null;
+    }
+    if (pointersRef.current.size === 0) {
+      // No more fingers down — release any leftover panning state.
+      setPanning(false);
+    }
+    /* /A+W1 touch */
+
+    if (panning && pointersRef.current.size === 0) {
       setPanning(false);
       (e.target as Element).releasePointerCapture?.(e.pointerId);
     }
@@ -282,11 +410,18 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       style={{
         backgroundSize: `${24 * viewport.zoom}px ${24 * viewport.zoom}px`,
         backgroundPosition: `${viewport.x}px ${viewport.y}px`,
+        /* A+W1 touch: block iOS's native double-tap zoom + bounce-scroll so
+           pinch-zoom + two-finger pan stay in our handlers. */
+        touchAction: 'none',
       }}
       data-canvas-bg="true"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      /* A+W1 touch: pointercancel fires when iOS reclaims a pointer (e.g.
+         system gesture, second app), so we mirror onPointerUp to clean state. */
+      onPointerCancel={onPointerUp}
+      onPointerLeave={onPointerUp}
     >
       <div
         data-testid="foldo-canvas-frames"

@@ -1,0 +1,17 @@
+{
+  "name": "Foldo",
+  "short_name": "Foldo",
+  "start_url": "/home",
+  "display": "standalone",
+  "background_color": "#0f1014",
+  "theme_color": "#FDB306",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/foldo-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -29,12 +29,16 @@ const btn: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 6,
-  padding: '6px 10px',
+  /* A+W1 touch: padding bumped 6px10px → 10px14px so the pill button reads
+     ~40px tall — fingertip-friendly on iPad. minHeight is the safety net for
+     buttons whose label is short. */
+  padding: '10px 14px',
+  minHeight: 40,
   borderRadius: 999,
   border: 'none',
   background: 'transparent',
   color: '#e8e8ea',
-  fontSize: 12,
+  fontSize: 13,
   fontWeight: 500,
   cursor: 'pointer',
 };

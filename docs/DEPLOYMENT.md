@@ -70,9 +70,52 @@ Notes:
   `FOLDO_STORAGE_DIR`.
 - WebSockets ride the same HTTPS as REST — Fastify handles the
   upgrade. No separate WS service.
-- Hub is in-memory (single instance). Redis-backed multi-instance is
-  implemented in code (`apps/server/src/ws/hub-redis.ts`) but **not
-  wired by default** — see Phase 3 plan.
+- **Hub backend**: defaults to in-memory when `REDIS_URL` is unset.
+  When `REDIS_URL` is set, the server boots the Redis-backed hub
+  (`apps/server/src/ws/redisHub.ts`) at startup and **multi-replica
+  is supported**. Without `REDIS_URL`, replicas MUST stay at 1 — the
+  in-memory hub doesn't fan broadcasts out across processes and
+  clients on different replicas will desync immediately. Check the
+  active backend in the boot log: look for
+  `[ws] hub=redis url=…` or
+  `[ws] hub=in-memory (set REDIS_URL to enable horizontal scaling)`.
+  If RedisHub init fails (bad URL, network blip), the server logs a
+  loud warning, bumps the `foldo_hub_init_fallback_total` counter, and
+  falls back to in-memory rather than crashing — so a stuck Redis
+  doesn't take the API down, but multi-replica deploys WILL desync
+  until the next clean boot.
+
+### 1.1 Enabling horizontal scaling
+
+1. **Provision Redis** on Railway:
+   ```bash
+   # Dashboard → +New → Database → Redis. Railway provisions the
+   # bitnami/redis image with no volume (pure cache use case).
+   ```
+2. **Wire `REDIS_URL`** on the `server` service:
+   ```bash
+   railway variables --service server --set 'REDIS_URL=${{Redis.REDIS_URL}}'
+   ```
+   The reference variable means the URL follows the Redis plugin's
+   credential rotation automatically.
+3. **Restart** the `server` service. Tail the boot log:
+   ```bash
+   railway logs --service server | grep '\[ws\] hub'
+   ```
+   You should see `[ws] hub=redis url=redis://…` (password redacted).
+4. **Bump replicas**:
+   ```bash
+   # Dashboard → server service → Settings → Replicas → 2 (or more).
+   ```
+   Verify by tailing logs on both replicas — broadcasts triggered on
+   one replica should appear in the counter (`foldo_ws_broadcast_total`)
+   on the other, and a client connected to replica A should see
+   presence/edits from a client on replica B.
+
+Rollback: drop replicas back to 1 first, then unset `REDIS_URL` if you
+need to remove the Redis plugin. Going from `replicas=N → replicas=1`
+without removing Redis is also safe — the in-memory hub fallback kicks
+in only if Redis is unreachable.
 
 ---
 
@@ -89,6 +132,7 @@ before `npm run build`).<br>
 | `PORT`                       | RT   | yes | injected by Railway                                  | Don't set manually. |
 | `DATABASE_URL`               | RT   | yes | `${{Postgres.DATABASE_URL}}` (Railway reference)     | Auto-SSL when host matches `railway.app` (see `apps/server/src/db.ts:30`). |
 | `DATABASE_POOL_MAX`          | RT   | no  | `10`                                                 | Tune up for sustained load. |
+| `REDIS_URL`                  | RT   | no\* | `${{Redis.REDIS_URL}}` (Railway reference)          | \*Required if `replicas>1`. When set, server boots the Redis-backed WS hub; unset = in-memory hub (`replicas=1` only). See §1 + §1.1. |
 | `LOG_LEVEL`                  | RT   | no  | `info` (default)                                     | `debug` for incident, `warn` for noisy environments. |
 | `NODE_ENV`                   | RT   | yes | `production`                                         | Gates demo-token auth — see `apps/server/src/auth.ts:26`. |
 | `FOLDO_WEB_ORIGIN`           | RT   | yes | `https://foldo.dev,https://sample.foldo.dev`         | Comma-separated CORS allow-list, on top of localhost defaults. |
@@ -620,8 +664,10 @@ A summary of what each block does:
 - **S3 recordings in prod**: code path exists, prod is using the
   local volume (`/data/foldo-storage`). Fine while recordings are
   rare; switch when storage on the volume crosses ~3 GB.
-- **Single-instance hub**: WS hub is in-memory. Multi-instance Redis
-  hub is implemented but unwired. Don't horizontal-scale the
-  `server` service until that's flipped on.
+- **WS hub scaling**: multi-replica is supported when `REDIS_URL` is
+  set (see §1 + §1.1). Without `REDIS_URL` the server falls back to
+  the in-memory hub and you MUST keep `replicas=1` — broadcasts on
+  one replica won't reach clients on another and the canvas will
+  desync silently.
 - **Down-migrations**: don't exist. Roll-forward only; restore from
   backup if you need to undo a schema change.

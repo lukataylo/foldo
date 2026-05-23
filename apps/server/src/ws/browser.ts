@@ -10,13 +10,24 @@ import { resolveUserFromToken } from '../auth.ts';
 import { getBoardById } from '../repo/boards.ts';
 import { isMember } from '../repo/members.ts';
 import { hub, type BrowserConn } from './hub.ts';
+import { wsReplayGaps } from '../metrics.ts';
+import { jobLogger } from '../log.ts';
 import { nowIso } from '../util.ts';
 import { isMcpConnected } from './mcp.ts';
 
 const CURSOR_MIN_INTERVAL_MS = 33; // ~30Hz
 
+const wsLog = jobLogger('ws-browser');
+
+let nextConnId = 1;
+
 export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
   app.get('/ws', { websocket: true }, async (socket, req) => {
+    // Note: `socket.on('message', …)` cannot itself be async without
+    // unhandled-rejection footguns; calls into the hub that may return
+    // a Promise (RedisHub does, in-memory Hub doesn't) are wrapped in
+    // `Promise.resolve(...).then(...)` so both shapes work without us
+    // having to know which backend won at boot.
     const url = new URL(req.url, `http://${req.headers.host}`);
     const boardId = url.searchParams.get('boardId');
     const userId = url.searchParams.get('userId');
@@ -75,12 +86,32 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
 
     let helloReceived = false;
     let disconnectTimer: NodeJS.Timeout | null = null;
+    const connId = nextConnId++;
 
     socket.on('message', (raw: Buffer) => {
       let msg: ClientMessage;
       try {
         msg = JSON.parse(raw.toString()) as ClientMessage;
-      } catch {
+      } catch (err) {
+        // Don't tear down — a single garbage frame from a flaky client
+        // shouldn't kill the connection. Log it (so we can spot a
+        // client bug) and tell the client what happened.
+        const preview = raw.toString().slice(0, 200);
+        wsLog.warn(
+          {
+            connId,
+            boardId: board.id,
+            userId: user.id,
+            err: err instanceof Error ? err.message : String(err),
+            preview,
+          },
+          'ws parse error',
+        );
+        sendSafe(socket, {
+          type: 'error',
+          code: 'PROTOCOL',
+          message: 'invalid_message_format',
+        });
         return;
       }
 
@@ -125,29 +156,35 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
           .connectionsOnBoard(board.id)
           .map((c) => c.presence);
 
-        sendSafe(socket, {
-          type: 'welcome',
-          boardId: board.id,
-          youUserId: user.id,
-          board,
-          users: others,
-          latestSeq: hub.latestSeq(board.id),
+        void Promise.resolve(hub.latestSeq(board.id)).then((latestSeq) => {
+          sendSafe(socket, {
+            type: 'welcome',
+            boardId: board.id,
+            youUserId: user.id,
+            board,
+            users: others,
+            latestSeq,
+          });
         });
 
         // Replay any broadcasts the client missed while it was disconnected.
         // If sinceSeq is older than our oldest buffered message we return
         // null and the client falls back to a fresh REST refetch.
         if (typeof msg.sinceSeq === 'number' && msg.sinceSeq > 0) {
-          const missed = hub.getMissedSince(board.id, msg.sinceSeq);
-          if (missed === null) {
-            sendSafe(socket, {
-              type: 'error',
-              code: 'REPLAY_GAP',
-              message: 'replay buffer no longer contains requested seq; please refetch',
-            });
-          } else {
-            for (const m of missed) sendSafe(socket, m);
-          }
+          void Promise.resolve(hub.getMissedSince(board.id, msg.sinceSeq)).then(
+            (missed) => {
+              if (missed === null) {
+                wsReplayGaps.inc({ boardId: board.id });
+                sendSafe(socket, {
+                  type: 'error',
+                  code: 'REPLAY_GAP',
+                  message: 'replay buffer no longer contains requested seq; please refetch',
+                });
+              } else {
+                for (const m of missed) sendSafe(socket, m);
+              }
+            },
+          );
         }
 
         // Tell others we joined

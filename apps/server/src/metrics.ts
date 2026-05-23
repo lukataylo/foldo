@@ -57,6 +57,94 @@ export const wsBroadcastSeq = new Counter({
   registers: [registry],
 });
 
+/**
+ * Hub-level WS gauges. The hub mutates a tiny stats object whenever it
+ * touches its boards Map; the `.collect()` callbacks below read that
+ * object so prom-client always reports the freshest snapshot at scrape
+ * time. The hub registers its sampler via {@link setWsHubSampler}; until
+ * it does the gauges report 0 (which is the correct value pre-boot).
+ */
+export interface WsHubSample {
+  /** Number of active boards in the hub map. */
+  boardCount: number;
+  /** Max age (seconds) of the oldest message still in any board's replay buffer. */
+  oldestSeqAgeSeconds: number;
+  /** Sum of estimated payload bytes across every replay buffer. */
+  bufferSizeBytes: number;
+}
+
+let wsHubSampler: (() => WsHubSample) | null = null;
+
+/**
+ * Wire the hub-stats sampler. Called once at boot by whichever Hub impl
+ * (in-memory or Redis-backed) is active. The sampler should be cheap —
+ * it runs on every Prometheus scrape (≤ once per 15 s in practice).
+ */
+export function setWsHubSampler(sampler: () => WsHubSample): void {
+  wsHubSampler = sampler;
+}
+
+function sampleWsHub(): WsHubSample {
+  if (!wsHubSampler) return { boardCount: 0, oldestSeqAgeSeconds: 0, bufferSizeBytes: 0 };
+  try {
+    return wsHubSampler();
+  } catch {
+    return { boardCount: 0, oldestSeqAgeSeconds: 0, bufferSizeBytes: 0 };
+  }
+}
+
+export const wsBoardCount = new Gauge({
+  name: 'foldo_ws_board_count',
+  help: 'Number of boards currently tracked in the WS hub map.',
+  registers: [registry],
+  collect() {
+    this.set(sampleWsHub().boardCount);
+  },
+});
+
+export const wsOldestSeqAgeSeconds = new Gauge({
+  name: 'foldo_ws_oldest_seq_age_seconds',
+  help: 'Age in seconds of the oldest message still in any board replay buffer.',
+  registers: [registry],
+  collect() {
+    this.set(sampleWsHub().oldestSeqAgeSeconds);
+  },
+});
+
+export const wsBufferSizeBytes = new Gauge({
+  name: 'foldo_ws_buffer_size_bytes',
+  help: 'Estimated total bytes held across every board replay buffer.',
+  registers: [registry],
+  collect() {
+    this.set(sampleWsHub().bufferSizeBytes);
+  },
+});
+
+/**
+ * Incremented every time `getMissedSince` returns null (the requested
+ * sinceSeq is older than the oldest cached message). The client has to
+ * fall back to a full REST refetch — a useful signal for "is our replay
+ * buffer too small?".
+ */
+export const wsReplayGaps = new Counter({
+  name: 'foldo_ws_replay_gaps_total',
+  help: 'Replay-buffer gaps: getMissedSince returned null, client must REST refetch.',
+  labelNames: ['boardId'] as const,
+  registers: [registry],
+});
+
+/**
+ * Incremented when the Redis hub fails to initialise (e.g. bad
+ * REDIS_URL, network blip during boot) and we fall back to the
+ * in-memory hub. A single bump per process. In prod this should fire an
+ * alert — the deploy is running degraded.
+ */
+export const hubInitFallback = new Counter({
+  name: 'foldo_hub_init_fallback_total',
+  help: 'Redis hub init failures that fell back to in-memory hub.',
+  registers: [registry],
+});
+
 export const jobOutcomes = new Counter({
   name: 'foldo_job_outcomes_total',
   help: 'Background job runs by outcome (ok / failed).',

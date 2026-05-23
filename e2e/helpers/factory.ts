@@ -171,6 +171,68 @@ export async function fetchBoardDetail(
   };
 }
 
+export interface CreatedMarkdownFrame {
+  id: string;
+  boardId: string;
+  branchId: string;
+  docPath: string;
+  body: string;
+}
+
+/**
+ * Create a markdown-kind frame on `boardId` for the given user. The new
+ * board's seeded `main` branch (id `${boardId}:main`) is the default branch
+ * the frame is attached to — callers can override via `branchId` if they
+ * want to test multi-branch behaviour.
+ *
+ * Used by the Step 5.5 markdown-save-roundtrip spec to arrange a frame
+ * without depending on the seeded demo board's frame staying put.
+ */
+export async function createMarkdownFrame(
+  user: TestUser,
+  boardId: string,
+  opts: {
+    body: string;
+    docPath?: string;
+    title?: string;
+    branchId?: string;
+  },
+): Promise<CreatedMarkdownFrame> {
+  const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 4);
+  const docPath = opts.docPath ?? `docs/e2e/${stamp}.md`;
+  const title = opts.title ?? docPath.split('/').pop() ?? 'doc.md';
+  const branchId = opts.branchId ?? `${boardId}:main`;
+  const res = await fetch(`${API}/api/frames`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${user.token}`,
+    },
+    body: JSON.stringify({
+      boardId,
+      branchId,
+      // Branch's seeded headSha is '0000000'; frames table doesn't FK on
+      // commit_sha so any string works for an isolated test fixture.
+      commitSha: '0000000',
+      commitMessage: 'e2e: seed markdown frame',
+      kind: 'markdown',
+      position: { x: 200, y: 200 },
+      size: { width: 520, height: 400 },
+      content: {
+        kind: 'markdown',
+        docPath,
+        title,
+        body: opts.body,
+      },
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`createMarkdownFrame ${res.status}: ${await res.text()}`);
+  }
+  const frame = (await res.json()) as { id: string };
+  return { id: frame.id, boardId, branchId, docPath, body: opts.body };
+}
+
 /**
  * Drop a comment on `frameId` (board `boardId`) as `user`. Returns the
  * comment id so specs can assert on it later.

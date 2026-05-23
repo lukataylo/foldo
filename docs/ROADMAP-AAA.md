@@ -346,21 +346,72 @@ Make the canvas not re-render the world.
 
 App.tsx: **1644 → 1123 lines (-32%)**. Whole-repo typecheck clean.
 
-### Phase 2 — Schema, types, protocol (≈1 week)
+### Phase 2 — Schema, types, protocol (≈1 week) ✅ **shipped 2026-05-23 (6 of 9; 3 deferred)**
 
-- [ ] Migrate 11 JSON columns to `JSONB` + add validation triggers (1d)
-- [ ] Standardize timestamps to `TIMESTAMPTZ` (1d)
-- [ ] Add the missing CHECK constraints + composite uniques (2h)
-- [ ] Introduce a `schema_migrations` table; split inline schema into
-      versioned files (1d)
-- [ ] Add `version?: string` to `ClientMessage`/`ServerMessage` + compat layer
-      (4h)
-- [ ] WS broadcast `seq` numbers + last-N replay buffer (1d)
-- [ ] Branded ID types in `@foldo/protocol` (3h, mostly fallout)
-- [ ] Adopt Zod for REST request bodies + WS messages; collapse manual
-      validation (1d)
-- [ ] Turn on `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
-      `noImplicitOverride` + fix fallout (1d)
+- [x] 13 JSON columns migrated to `JSONB` (`frames.content_json`,
+      `comments.{target,replies}_json`, `dispatches.{target,events}_json`,
+      `tests.{recording_modes,questionnaire}_json`,
+      `test_tasks.start_recipe_json`,
+      `test_sessions.{tester_meta,transcript,responses,synthesis}_json`,
+      `test_task_results.events_json`). Idempotent ALTER, drop+re-add
+      defaults across the type change. Repo `parseJson()` shim deleted —
+      pg's JSONB parser returns parsed objects.
+- [x] 19 TEXT-storing-ISO-timestamp columns standardized to `TIMESTAMPTZ`.
+      pg's TIMESTAMPTZ parser overridden to return ISO 8601 strings, so
+      the repo layer + wire format are unchanged.
+- [x] 7 CHECK constraints + composite uniques:
+      `branches_head_sha_not_empty`, `comments_pin_{x,y}_range`,
+      `test_sessions_recording_duration_nonneg`, `frames_position_finite`
+      (catches NaN), `branches_board_name_unique`,
+      `test_tasks_test_order_unique`. Each block includes idempotent
+      cleanup of any pre-existing violators.
+- [x] WS `PROTOCOL_VERSION = '1.0.0'` + `Versioned<T>` / `SeqStamped<T>`
+      envelopes. `isCompatibleProtocolVersion()`. Server stamps every
+      outbound message; rejects browser clients with a major mismatch at
+      hello.
+- [x] WS broadcast `seq` + last-N (256) replay buffer per board. Welcome
+      carries `latestSeq`; client tracks `highSeenSeq` and reconnects with
+      `hello.sinceSeq`. `REPLAY_GAP` error if the requested seq is older
+      than the buffer — caller falls back to a fresh REST refetch.
+- [x] **Strictest tsconfig**: `noUncheckedIndexedAccess` and
+      `noImplicitOverride` turned on; ~70 fallout errors fixed across
+      `repo/{frames,tests,comments,shares,sessions}.ts`,
+      `routes/{auth,captures,frames}.ts`,
+      `extension/service-worker.ts`, `shotter`,
+      `sample-app/{App,recipe/runner}.tsx`.
+      `exactOptionalPropertyTypes` evaluated, **left off** with a
+      comment in `tsconfig.base.json` — 47 of 86 errors were at legitimate
+      boundary code translating null-bearing DB rows into `field?: T`
+      protocol types via `field: r.col ?? undefined`. Revisit when we
+      adopt Zod-derived protocol types.
+
+**Bonus fixes that landed in Phase 2:**
+- Dev-server watcher swapped from `tsx watch --ignore=…` (which still
+  followed imports into node_modules and restart-looped on macOS
+  filesystem noise) to `node --import tsx --watch-path=src` — Node's
+  built-in watcher scoped to `src/`. Loop is gone.
+- Repo moved out of iCloud (`~/Documents/foldo` → `~/Projects/foldo`).
+  iCloud File Provider was the root cause of recurring `node_modules`
+  corruption and once corrupted a git pack file (recovered via
+  `git fetch origin` after moving the bad pack aside).
+
+**Deferred — Phase 2 follow-ups** (each is a clean, bounded unit; not
+blocking Phase 3):
+
+- [ ] **schema_migrations table + split inline schema** (≈1d). The
+      current inline-`SCHEMA` + idempotent `DO $$` blocks work fine for a
+      single-dev linear-migrations workflow. Pick this up when we need to
+      roll back a migration or coordinate parallel migration writes from
+      multiple devs.
+- [ ] **Branded ID types** (≈3h scaffolding, ≈1d fallout). First pass
+      produced 277 cast points across the tree. The scaffolding sketch is
+      left as a comment in `packages/protocol/src/domain.ts`; turning it
+      on means wrapping every URL-param / DB-row / JSON-body boundary
+      with the matching `asBoardId(...)` / `asFrameId(...)` cast.
+- [ ] **Zod for REST + WS validation** (≈1d). Touches every route. The
+      existing manual `if (!body.x)` checks have known gaps documented in
+      the audit; Zod gives us per-field error responses and removes the
+      duplicated validation code.
 
 ### Phase 3 — Scale & operations (≈1 week)
 

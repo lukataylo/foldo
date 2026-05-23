@@ -92,7 +92,7 @@ function newTestToken(): string {
   const bytes = randomBytes(10);
   let out = '';
   for (let i = 0; i < bytes.length; i++) {
-    out += TOKEN_ALPHABET[bytes[i] % TOKEN_ALPHABET.length];
+    out += TOKEN_ALPHABET[(bytes[i] ?? 0) % TOKEN_ALPHABET.length];
   }
   return out;
 }
@@ -291,6 +291,7 @@ export async function replaceTasks(
   const created: TestTask[] = [];
   for (let i = 0; i < tasks.length; i++) {
     const input = tasks[i];
+    if (!input) continue; // bounds-checked, but `noUncheckedIndexedAccess` widens the type.
     const task: TestTask = {
       id: newId('tt'),
       testId,
@@ -413,9 +414,10 @@ function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
-    : sorted[mid];
+  if (sorted.length % 2 === 0) {
+    return Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
+  }
+  return sorted[mid] ?? 0;
 }
 
 /**

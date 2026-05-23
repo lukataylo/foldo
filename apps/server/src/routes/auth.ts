@@ -46,8 +46,11 @@ async function hashPassword(password: string): Promise<string> {
 async function verifyPassword(stored: string, password: string): Promise<boolean> {
   const parts = stored.split(':');
   if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
-  const salt = Buffer.from(parts[1], 'hex');
-  const expected = Buffer.from(parts[2], 'hex');
+  const saltHex = parts[1];
+  const keyHex = parts[2];
+  if (!saltHex || !keyHex) return false;
+  const salt = Buffer.from(saltHex, 'hex');
+  const expected = Buffer.from(keyHex, 'hex');
   let actual: Buffer;
   try {
     actual = await scrypt(password, salt, expected.length);
@@ -68,13 +71,14 @@ function newUserId(): string {
 
 function deriveInitial(name: string): string {
   const trimmed = name.trim();
-  return trimmed.length > 0 ? trimmed[0].toUpperCase() : '?';
+  const first = trimmed[0];
+  return first ? first.toUpperCase() : '?';
 }
 
 function pickColor(seed: string): string {
   let h = 0;
   for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return PALETTE[h % PALETTE.length];
+  return PALETTE[h % PALETTE.length] ?? PALETTE[0]!;
 }
 
 interface SignupBody {

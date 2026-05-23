@@ -104,11 +104,13 @@ async function runStep(step: RecipeStep): Promise<void> {
 
 export async function runRecipe(steps: RecipeStep[]): Promise<void> {
   for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!step) continue; // bounds-checked, but `noUncheckedIndexedAccess` widens.
     try {
-      await runStep(steps[i]);
+      await runStep(step);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Recipe step ${i + 1} (${steps[i].action}) failed: ${message}`);
+      throw new Error(`Recipe step ${i + 1} (${step.action}) failed: ${message}`);
     }
   }
 }

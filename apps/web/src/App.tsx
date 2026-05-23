@@ -29,7 +29,11 @@ import { LeftRail } from './components/LeftRail';
 import { ToastStack, useToastQueue } from './components/ToastQueue';
 import { LeftPanel, RightPanel } from './plugins/slots/SidePanel';
 import { ToolBar as PluginToolBar } from './plugins/slots/ToolBar';
-import { registerToastHook, registerSetToolHook } from './plugins/registry';
+import {
+  registerToastHook,
+  registerSetToolHook,
+  registerSelectFrameHook,
+} from './plugins/registry';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useFrameTools, ArrowDraftPreview } from './hooks/useFrameTools';
 import { useDispatchFlow } from './hooks/useDispatchFlow';
@@ -395,6 +399,27 @@ export default function App() {
   useEffect(() => {
     selectionRef.current = selectedElement;
   }, [selectedElement]);
+
+  // Plugin escape hatch: the Layer Navigator (and any future panel that needs
+  // to drive the canvas) calls window.__foldoSelectFrame(frameId) to focus a
+  // frame from outside the React tree. We register the hook here because this
+  // is the only site that owns both fitToFrame and the route navigator. The
+  // pan happens via navigate() flipping route.frameId, which the focus effect
+  // above translates into a fitToFrame() call — same path as a deep-link.
+  useEffect(() => {
+    registerSelectFrameHook((frameId: string) => {
+      const f = boardStore.getSnapshot().frames.get(frameId);
+      if (!f) return;
+      setSelectedElementRaw(null);
+      setCommentPopover(null);
+      if (snap.board) {
+        navigate({ boardId: snap.board.id, frameId });
+      }
+      // Best-effort immediate pan — the URL effect will also fire but doing
+      // it here keeps the response feel tight even before the route updates.
+      fitToFrame(f);
+    });
+  }, [snap.board, navigate, fitToFrame]);
 
   // ---------- keyboard shortcuts ----------
   // Hook owns the keydown handler; this site keeps the Esc semantics local

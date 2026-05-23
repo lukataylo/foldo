@@ -33,7 +33,14 @@ COPY apps/web ./apps/web
 
 RUN npm --workspace @foldo/web run build
 
-# --- Runtime: serve with vite preview --------------------------------------
+# --- Runtime: serve dist/ with `serve` (production-grade static) -----------
+# Replaces `vite preview` (dev-grade) with the `serve` package
+# (https://www.npmjs.com/package/serve) for production static serving:
+# - gzip/brotli compression of text assets out of the box
+# - HTTP/1.1 keep-alive, range requests
+# - cache headers driven by apps/web/serve.json (long-lived for hashed
+#   assets, no-cache for index.html so deploys are picked up immediately)
+# - `--single` falls back to index.html for unknown routes (SPA history mode)
 FROM node:20-slim AS runtime
 
 ENV NODE_ENV=production
@@ -43,16 +50,22 @@ WORKDIR /app
 
 COPY --from=builder /app/package.json /app/package-lock.json ./
 COPY --from=builder /app/apps/web/package.json ./apps/web/
-COPY --from=builder /app/apps/web/vite.config.ts ./apps/web/
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
-# npm workspaces hoist deps to root /app/node_modules. The per-workspace
-# node_modules typically does not exist, so we only copy the root tree.
+COPY --from=builder /app/apps/web/serve.json ./apps/web/dist/serve.json
+# npm workspaces hoist deps to root /app/node_modules — `serve` lives there
+# because it's listed as a devDependency of @foldo/web and hoisted up. The
+# CLI shim is at /app/node_modules/.bin/serve, which we put on PATH below.
 COPY --from=builder /app/node_modules ./node_modules
+
+ENV PATH="/app/node_modules/.bin:${PATH}"
 
 EXPOSE 5173
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://localhost:'+(process.env.PORT||5173)+'/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
-WORKDIR /app/apps/web
-CMD ["sh", "-c", "npx vite preview --port ${PORT:-5173} --host 0.0.0.0"]
+# `--single` enables SPA index.html fallback. `--no-clipboard` silences
+# `serve`'s "copied to clipboard" log noise in container stdout. `--no-port-switching`
+# makes a port collision a hard failure (we'd rather Railway restart and
+# re-roll than silently bind a different port).
+CMD ["sh", "-c", "serve apps/web/dist --listen tcp://0.0.0.0:${PORT:-5173} --single --no-clipboard --no-port-switching"]

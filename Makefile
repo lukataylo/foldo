@@ -19,7 +19,22 @@ claude-mcp-install:
 ##   FOLDO_PROD_SMOKE_TOKEN (a scrape-only API token minted from the
 ##   canvas Settings → API tokens UI). Exits non-zero on any failure.
 ##
-##   See docs/DEPLOYMENT.md §6 for how to mint the token and use this
-##   as a post-deploy gate.
+##   This target now runs the Playwright spec (e2e/deploy/prod-smoke.spec.ts)
+##   so a green local run matches what the post-deploy webhook (CI workflow
+##   .github/workflows/post-deploy-smoke.yml) executes. The token gate is
+##   enforced so the spec doesn't silently SKIP the authenticated check.
+##
+##   See docs/DEPLOYMENT.md §6 for how to mint the token and §6.2 for the
+##   post-deploy webhook wiring.
 prod-smoke:
+	@if [ -z "$$FOLDO_PROD_SMOKE_TOKEN" ]; then \
+		echo "Set FOLDO_PROD_SMOKE_TOKEN first. See docs/DEPLOYMENT.md §6.2"; exit 1; \
+	fi
+	RUN_PROD_SMOKE=1 npx playwright test e2e/deploy/prod-smoke.spec.ts --reporter=line
+
+.PHONY: prod-smoke-curl
+## prod-smoke-curl: fast, dependency-free variant — just curls /health,
+##   /metrics, and /api/home. Use this when you don't have Playwright
+##   installed or want a quick yes/no.
+prod-smoke-curl:
 	@node scripts/prod-smoke.mjs

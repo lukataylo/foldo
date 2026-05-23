@@ -23,24 +23,24 @@
       }
     },
     "web": {
-      "//": "Canvas + marketing surface (Vite/React) served via `vite preview`. BUILD-time env vars: VITE_API_URL=https://api.foldo.dev, VITE_WS_URL=wss://api.foldo.dev, VITE_SAMPLE_URL=https://sample.foldo.dev. PORT is provided by Railway at runtime.",
+      "//": "Canvas + marketing surface (Vite/React) served via the production-grade `serve` static server (gzip + immutable hashed-asset caching, no-cache index.html). BUILD-time env vars: VITE_API_URL=https://api.foldo.dev, VITE_WS_URL=wss://api.foldo.dev, VITE_SAMPLE_URL=https://sample.foldo.dev. PORT is provided by Railway at runtime. Cache headers come from apps/web/serve.json (copied into dist/ by the Dockerfile).",
       "build": {
         "builder": "DOCKERFILE",
         "dockerfilePath": "apps/web/Dockerfile"
       },
       "deploy": {
-        "startCommand": "npm --workspace @foldo/web run preview -- --port ${PORT:-5173} --host 0.0.0.0",
+        "startCommand": "npx serve apps/web/dist --listen tcp://0.0.0.0:${PORT:-5173} --single --no-clipboard --no-port-switching",
         "restartPolicyType": "ON_FAILURE"
       }
     },
     "sample-app": {
-      "//": "Pricing demo app — iframed by the canvas. BUILD-time env: VITE_PARENT_ORIGIN=https://foldo.dev.",
+      "//": "Pricing demo app — iframed by the canvas. Served via `serve` (same prod-grade static server as `web`). BUILD-time env: VITE_PARENT_ORIGIN=https://foldo.dev. Cache headers come from apps/sample-app/serve.json.",
       "build": {
         "builder": "DOCKERFILE",
         "dockerfilePath": "apps/sample-app/Dockerfile"
       },
       "deploy": {
-        "startCommand": "npm --workspace @foldo/sample-app run preview -- --port ${PORT:-5174} --host 0.0.0.0",
+        "startCommand": "npx serve apps/sample-app/dist --listen tcp://0.0.0.0:${PORT:-5174} --single --no-clipboard --no-port-switching",
         "restartPolicyType": "ON_FAILURE"
       }
     },

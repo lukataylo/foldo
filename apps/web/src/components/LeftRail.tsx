@@ -86,8 +86,9 @@ function RailButton({
       data-testid={`foldo-rail-tool-${toolId}`}
       title={label}
       onClick={onClick}
+      /* A+W1 touch: 44x44 (h-11 w-11) for iPad finger-friendliness; was 36x36. */
       className={
-        'group relative flex h-9 w-9 items-center justify-center rounded-md transition-colors ' +
+        'group relative flex h-11 w-11 items-center justify-center rounded-md transition-colors ' +
         (active
           ? 'bg-accent/15 text-accent'
           : 'text-inkMute hover:bg-white/5 hover:text-ink')

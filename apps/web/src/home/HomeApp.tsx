@@ -235,6 +235,22 @@ export default function HomeApp() {
           .home-shell { grid-template-columns: 1fr !important; }
           .home-sidebar { display: none; }
         }
+
+        /* A+W1 touch: tighter card grid on iPad portrait + phone. */
+        @media (max-width: 720px) {
+          .home-grid {
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important;
+            gap: 14px !important;
+          }
+          main { padding: 16px 16px 80px !important; }
+        }
+
+        /* A+W1 touch: touch screens can't hover, so the star/kebab affordances
+           need to be visible at rest — otherwise they're undiscoverable on iPad. */
+        @media (hover: none) {
+          .home-card .star-btn { opacity: 1 !important; }
+          .home-card .kebab-btn { opacity: 1 !important; }
+        }
       `}</style>
 
       <EmailVerificationBanner

@@ -236,10 +236,16 @@ export function MarketingStyles() {
         border: 1.5px solid ${SOFT_GREY};
         border-radius: 12px;
         padding: 12px 14px;
-        font-size: 15px;
+        /* A+W1 touch: 16px input font so iOS doesn't auto-zoom on focus. */
+        font-size: 16px;
         font-family: inherit;
         color: ${INK};
         transition: border-color 120ms ease, box-shadow 120ms ease;
+      }
+      /* A+W1 touch: tighten marketing layout on phone — the auth cards were
+         padding-padded for desktop and felt cramped after the field-input grew. */
+      @media (max-width: 600px) {
+        .field-input { padding: 11px 13px; }
       }
       .field-input:focus {
         outline: none;

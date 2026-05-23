@@ -26,6 +26,8 @@ import type {
 import { Canvas, type CanvasHandle, type ViewportState } from './components/Canvas';
 import { TopBar } from './components/TopBar';
 import { LeftRail } from './components/LeftRail';
+/* A+W1 touch */ import { PhoneNotSupportedBanner } from './components/PhoneNotSupportedBanner';
+/* A+W1 touch */ import { useMediaQuery } from './hooks/useMediaQuery';
 import { ToastStack, useToastQueue } from './components/ToastQueue';
 import { LeftPanel, RightPanel } from './plugins/slots/SidePanel';
 import { ToolBar as PluginToolBar } from './plugins/slots/ToolBar';
@@ -133,6 +135,15 @@ export default function App() {
     wsStatus,
   };
   const { route, navigate } = useRoute();
+
+  /* A+W1 touch */
+  // Phone viewports get a polite redirect rather than the full canvas — the
+  // tools, left rail, edit panel and zoom control all assume tablet-and-up real
+  // estate. Only blocks the /board/:id surface; /home and /s/<token> are
+  // already responsive, and the marketing site uses its own router.
+  const isPhoneViewport = useMediaQuery('(max-width: 600px)');
+  const isBoardRoute = !!route.boardId || (typeof location !== 'undefined' && /^\/board\//.test(location.pathname));
+  /* /A+W1 touch */
 
   const [boot, setBoot] = useState<BootState>({ kind: 'loading' });
   const [tool, setTool] = useState<Tool>('select');
@@ -642,6 +653,12 @@ export default function App() {
   const popoverComment = commentPopover
     ? snap.comments.get(commentPopover.commentId)
     : null;
+
+  /* A+W1 touch */
+  if (isPhoneViewport && isBoardRoute) {
+    return <PhoneNotSupportedBanner />;
+  }
+  /* /A+W1 touch */
 
   return (
     <div className="relative h-screen w-screen overflow-hidden">

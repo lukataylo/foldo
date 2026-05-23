@@ -15,7 +15,8 @@ export function ZoomControl({ zoom, onZoomIn, onZoomOut, onZoomToFit, onReset }:
         </Button>
         <button
           onClick={onReset}
-          className="min-w-[60px] rounded-md px-2 py-1 text-center text-[11.5px] font-medium text-ink hover:bg-white/5"
+          /* A+W1 touch: 44px tall hit area so iPad fingers can tap to reset. */
+          className="flex h-11 min-w-[64px] items-center justify-center rounded-md px-2 text-center text-[12px] font-medium text-ink hover:bg-white/5"
         >
           {Math.round(zoom * 100)}%
         </button>
@@ -44,7 +45,8 @@ function Button({
     <button
       title={title}
       onClick={onClick}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+      /* A+W1 touch: 44x44 (h-11 w-11); was 28x28. */
+      className="flex h-11 w-11 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
     >
       {children}
     </button>

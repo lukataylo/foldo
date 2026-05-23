@@ -110,6 +110,14 @@ export default function ShareViewer() {
       <MarketingStyles />
       <style>{`
         .share-shell { max-width: 1180px; margin: 0 auto; padding: 0 24px 96px; }
+        /* A+W1 touch: phone-friendly margins + frame grid so the shared view
+           reads cleanly when a colleague opens the URL on an iPhone. */
+        @media (max-width: 600px) {
+          .share-shell { padding: 0 14px 64px; }
+          .share-cta { padding: 10px 14px; font-size: 13px; }
+          .frame-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+          .share-title { font-size: 24px !important; }
+        }
         .share-cta {
           background: ${YELLOW}; border-bottom: 1.5px solid ${INK};
           padding: 10px 20px; display: flex; align-items: center; gap: 14px;

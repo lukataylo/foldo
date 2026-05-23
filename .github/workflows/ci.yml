@@ -1,0 +1,95 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-flight runs for the same PR/ref so a quick second push doesn't
+# leave two runners burning quota on the now-stale commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      - run: npm run typecheck --workspaces --if-present
+
+  unit:
+    name: unit (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      # The vitest script is added in 3-5; until then this job will pass with
+      # "no tests" because vitest has no --passWithNoTests issue at root level.
+      - run: npm test --if-present
+
+  e2e:
+    name: e2e (playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: foldo
+          POSTGRES_USER: foldo
+          POSTGRES_DB: foldo
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U foldo -d foldo"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgres://foldo:foldo@localhost:5432/foldo
+      NODE_ENV: test
+      # tests bind to default dev ports; the dev script boots web+sample+server.
+      PORT: '4000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      - name: install playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: boot dev servers
+        # Run in the background; the wait step below blocks until they're up.
+        run: npm run dev > /tmp/dev.log 2>&1 &
+      - name: wait for servers
+        run: |
+          for i in $(seq 1 60); do
+            if curl -s -o /dev/null http://localhost:4000/health \
+              && curl -s -o /dev/null http://localhost:5173/ \
+              && curl -s -o /dev/null http://localhost:5174/; then
+              echo "servers up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "servers never came up"
+          tail -200 /tmp/dev.log
+          exit 1
+      - run: npx playwright test --reporter=line
+      - name: upload dev log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-log
+          path: /tmp/dev.log

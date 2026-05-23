@@ -1,6 +1,7 @@
 import type { ServerMessage, UserId, BoardId, PresenceUser } from '@foldo/protocol';
 import { PROTOCOL_VERSION } from '@foldo/protocol';
 import type { WebSocket } from 'ws';
+import { wsBroadcastSeq, wsConnections } from '../metrics.ts';
 
 /**
  * How many recent broadcasts we keep per board, in memory. A client that's
@@ -37,7 +38,7 @@ interface BoardState {
   recent: ServerMessage[];
 }
 
-class Hub {
+export class Hub {
   private boards: Map<BoardId, BoardState> = new Map();
 
   private getBoardState(boardId: BoardId): BoardState {
@@ -51,12 +52,15 @@ class Hub {
 
   subscribe(conn: BrowserConn): void {
     this.getBoardState(conn.boardId).conns.add(conn);
+    wsConnections.inc({ boardId: conn.boardId });
   }
 
   unsubscribe(conn: BrowserConn): void {
     const s = this.boards.get(conn.boardId);
     if (!s) return;
-    s.conns.delete(conn);
+    if (s.conns.delete(conn)) {
+      wsConnections.dec({ boardId: conn.boardId });
+    }
     // Keep the BoardState (and its replay buffer) alive even when the last
     // browser leaves — a tab that reconnects within the buffer window should
     // still be able to replay. The state ages out only on server restart.
@@ -113,6 +117,7 @@ class Hub {
     if (state.recent.length > REPLAY_BUFFER_SIZE) {
       state.recent.splice(0, state.recent.length - REPLAY_BUFFER_SIZE);
     }
+    wsBroadcastSeq.inc({ boardId, type: message.type });
     if (state.conns.size === 0) return;
     const payload = JSON.stringify(stamped);
     for (const conn of state.conns) {

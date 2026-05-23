@@ -38,6 +38,18 @@ export async function listBranchesForBoard(boardId: string): Promise<Branch[]> {
   return rows.map(rowToBranch);
 }
 
+/**
+ * Every branch authored by `userId`, across every board. Used by the GDPR
+ * data-export endpoint.
+ */
+export async function listBranchesAuthoredBy(userId: string): Promise<Branch[]> {
+  const rows = await query<BranchRow>(
+    `SELECT * FROM branches WHERE author_user_id = $1 ORDER BY created_at`,
+    [userId],
+  );
+  return rows.map(rowToBranch);
+}
+
 export async function getBranchById(id: string): Promise<Branch | null> {
   const r = await queryOne<BranchRow>(`SELECT * FROM branches WHERE id = $1`, [id]);
   return r ? rowToBranch(r) : null;

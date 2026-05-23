@@ -210,3 +210,35 @@ export async function deleteComment(id: string): Promise<boolean> {
   const changes = await exec(`DELETE FROM comments WHERE id = $1`, [id]);
   return changes > 0;
 }
+
+/**
+ * Every comment authored by `userId`, across every board. Used by the GDPR
+ * data-export endpoint — exposes the raw row text so the user can keep their
+ * own contributions. Author display fields come from the live `users` row at
+ * call time (so a deleted user shows up as "deleted user", same as the canvas).
+ */
+export async function listCommentsAuthoredBy(userId: string): Promise<Comment[]> {
+  const rows = await query<CommentRow>(
+    `SELECT * FROM comments WHERE author_user_id = $1 ORDER BY created_at`,
+    [userId],
+  );
+  if (rows.length === 0) return [];
+  const author = await getUserById(userId);
+  return rows.map((r) => rowToComment(r, author));
+}
+
+/**
+ * Repoint every comment authored by `fromUserId` at `toUserId`. Used by the
+ * GDPR delete flow to anonymise authorship while preserving the comment row
+ * itself — the board still shows the conversation, just attributed to the
+ * "deleted user" sentinel. Returns the number of rows reassigned.
+ */
+export async function reassignCommentsAuthor(
+  fromUserId: string,
+  toUserId: string,
+): Promise<number> {
+  return exec(
+    `UPDATE comments SET author_user_id = $2 WHERE author_user_id = $1`,
+    [fromUserId, toUserId],
+  );
+}

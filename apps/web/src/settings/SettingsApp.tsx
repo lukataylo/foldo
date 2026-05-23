@@ -12,6 +12,8 @@ import {
 import { apiLogout, readToken, storeAuth, type AuthUser } from '../marketing/auth';
 import {
   changePassword,
+  deleteMyAccount,
+  exportMyData,
   fetchApiTokens,
   fetchMe,
   fetchSessions,
@@ -31,7 +33,7 @@ import {
   IconUser,
 } from '../home/icons';
 
-type Section = 'profile' | 'password' | 'sessions' | 'tokens' | 'billing';
+type Section = 'profile' | 'password' | 'sessions' | 'tokens' | 'billing' | 'danger';
 
 const PALETTE = ['#ff7849', '#5db0ff', '#b08cff', '#7fd49a', '#f5b86b', '#ff8ec2'];
 
@@ -148,6 +150,15 @@ export default function SettingsApp() {
           <button type="button" className={`settings-link${section === 'billing' ? ' is-active' : ''}`} onClick={() => setSection('billing')}>
             <span className="settings-link-icon" aria-hidden><IconCard size={14} /></span> Plan & billing
           </button>
+          <button
+            type="button"
+            className={`settings-link${section === 'danger' ? ' is-active' : ''}`}
+            data-testid="foldo-settings-nav-danger"
+            onClick={() => setSection('danger')}
+            style={section === 'danger' ? {} : { color: '#a02020' }}
+          >
+            <span className="settings-link-icon" aria-hidden><IconWarning size={14} /></span> Danger zone
+          </button>
           <div style={{ borderTop: `1px solid ${SOFT_GREY}`, margin: '18px 8px 12px' }} />
           <a href="/home" className="settings-link" style={{ color: '#666' }}>
             <span className="settings-link-icon" aria-hidden><IconBack size={14} /></span> Back to home
@@ -184,6 +195,7 @@ export default function SettingsApp() {
           {me && section === 'sessions' && <SessionsSection />}
           {me && section === 'tokens' && <ApiTokensSection />}
           {me && section === 'billing' && <BillingSection />}
+          {me && section === 'danger' && <DangerZoneSection me={me} />}
         </main>
       </div>
     </div>
@@ -717,6 +729,26 @@ function ApiTokensSection() {
   );
 }
 
+function IconWarning({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M8 1.6 1.6 13.2h12.8L8 1.6z" />
+      <path d="M8 6.5v3.2" />
+      <circle cx="8" cy="11.5" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 function IconKey({ size = 14 }: { size?: number }) {
   return (
     <svg
@@ -834,6 +866,274 @@ function BillingSection() {
         to <b>The Pack</b> ($24/editor) or chat to us about <b>Top Dog</b>{' '}
         without leaving this page.
       </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// Danger zone — export + permanently delete the account.
+//
+// Two destructive actions live behind their own section so they can't be
+// triggered by a mis-click on the general settings page. The export action
+// is read-only and downloads a JSON dump of everything the user owns. The
+// delete action opens a password-gated confirmation dialog, calls the
+// server, then wipes local auth state + redirects the browser home.
+// ============================================================================
+
+function DangerZoneSection({ me }: { me: AuthUser }) {
+  const [busy, setBusy] = useState<'export' | 'delete' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [password, setPassword] = useState('');
+
+  async function onExport(): Promise<void> {
+    setErr(null);
+    setOk(null);
+    setBusy('export');
+    try {
+      const payload = await exportMyData();
+      // Build a blob + click an anchor to trigger the browser download. Using
+      // a JSON-typed blob lets the user re-open the file in any text editor.
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `foldo-export-${ts}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Revoke a tick later so Safari has time to start the download.
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      setOk('Export downloaded.');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onConfirmDelete(e: FormEvent): Promise<void> {
+    e.preventDefault();
+    if (busy === 'delete') return;
+    setErr(null);
+    setBusy('delete');
+    try {
+      await deleteMyAccount(password);
+      // Server has invalidated every session. Wipe local auth state and bounce
+      // the user to the marketing root so the next paint is the logged-out
+      // surface.
+      try {
+        localStorage.clear();
+      } catch {
+        // ignore — incognito modes that disable storage.
+      }
+      window.location.replace('/');
+    } catch (e2) {
+      setErr(e2 instanceof Error ? e2.message : 'Delete failed');
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section
+      className="settings-card"
+      data-testid="foldo-settings-danger-card"
+      style={{ borderColor: '#f3c8c8' }}
+    >
+      <h2 style={{ color: '#a02020' }}>Danger zone</h2>
+      <p className="lead">
+        Export everything you've contributed to Foldo, or permanently delete
+        your account. Deletion wipes your email and password and signs you
+        out of every device — your comments stay on the boards they belong
+        to but are attributed to "deleted user".
+      </p>
+
+      {ok && <div className="settings-banner-ok">{ok}</div>}
+      {err && (
+        <div className="settings-banner-err" data-testid="foldo-settings-danger-error">
+          {err}
+        </div>
+      )}
+
+      <div
+        style={{
+          border: `1.5px solid ${SOFT_GREY}`,
+          borderRadius: 12,
+          padding: '16px 18px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 16,
+          marginBottom: 14,
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
+            Export my data
+          </div>
+          <div className="settings-meta">
+            Boards you own, branches you authored, every comment you wrote,
+            and any demo requests we have on file. Downloaded as a single
+            JSON file.
+          </div>
+        </div>
+        <button
+          type="button"
+          className="btn-ghost compact"
+          data-testid="foldo-settings-export-button"
+          onClick={() => void onExport()}
+          disabled={busy === 'export'}
+          style={{ padding: '10px 16px', fontSize: 13 }}
+        >
+          {busy === 'export' ? 'Exporting…' : 'Export my data'}
+        </button>
+      </div>
+
+      <div
+        style={{
+          border: `1.5px solid #f3c8c8`,
+          background: '#fff7f7',
+          borderRadius: 12,
+          padding: '16px 18px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 16,
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2, color: '#a02020' }}>
+            Delete my account
+          </div>
+          <div className="settings-meta">
+            {me.email
+              ? `Wipes ${me.email} from Foldo. Can't be undone.`
+              : "Wipes your account from Foldo. Can't be undone."}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="btn-ghost compact"
+          data-testid="foldo-settings-delete-button"
+          onClick={() => {
+            setErr(null);
+            setOk(null);
+            setPassword('');
+            setConfirmOpen(true);
+          }}
+          style={{
+            padding: '10px 16px',
+            fontSize: 13,
+            color: '#a02020',
+            borderColor: '#f3c8c8',
+          }}
+        >
+          Delete my account
+        </button>
+      </div>
+
+      {confirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="foldo-settings-delete-title"
+          data-testid="foldo-settings-delete-dialog"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 24,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setConfirmOpen(false);
+          }}
+        >
+          <form
+            onSubmit={onConfirmDelete}
+            style={{
+              background: '#fff',
+              borderRadius: 18,
+              padding: '26px 28px',
+              maxWidth: 460,
+              width: '100%',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.25)',
+            }}
+          >
+            <h3
+              id="foldo-settings-delete-title"
+              className="display"
+              style={{ fontSize: 22, margin: '0 0 8px', color: '#a02020' }}
+            >
+              Delete your account?
+            </h3>
+            <p style={{ fontSize: 14, color: '#444', lineHeight: 1.55, margin: '0 0 18px' }}>
+              This wipes your email + password and signs you out everywhere.
+              Your comments stay on their boards but become anonymous.
+              Re-enter your password to confirm.
+            </p>
+            <div className="settings-form-row">
+              <label className="settings-label" htmlFor="foldo-settings-delete-password">
+                Password
+              </label>
+              <input
+                id="foldo-settings-delete-password"
+                className="settings-input"
+                data-testid="foldo-settings-delete-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                autoFocus
+              />
+            </div>
+            {err && (
+              <div className="settings-banner-err" style={{ marginTop: 4 }}>
+                {err}
+              </div>
+            )}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 10,
+                marginTop: 14,
+              }}
+            >
+              <button
+                type="button"
+                className="btn-ghost compact"
+                data-testid="foldo-settings-delete-cancel"
+                onClick={() => setConfirmOpen(false)}
+                disabled={busy === 'delete'}
+                style={{ padding: '10px 16px', fontSize: 13 }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn-primary compact"
+                data-testid="foldo-settings-delete-confirm"
+                disabled={busy === 'delete' || !password}
+                style={{
+                  padding: '10px 16px',
+                  fontSize: 13,
+                  background: '#a02020',
+                  opacity: busy === 'delete' || !password ? 0.55 : 1,
+                }}
+              >
+                {busy === 'delete' ? 'Deleting…' : 'Delete account'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </section>
   );
 }

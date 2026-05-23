@@ -85,6 +85,8 @@ export function CommentPopover({
 
   return (
     <div
+      data-testid="foldo-comment-popover"
+      data-foldo-comment-id={comment.id}
       className="fade-in pointer-events-auto absolute z-[60] w-80 rounded-xl border border-hairline bg-panel shadow-panel"
       style={{ left, top }}
     >
@@ -122,6 +124,7 @@ export function CommentPopover({
       <div className="px-3 py-2.5">
         {composing ? (
           <textarea
+            data-testid="foldo-comment-text-input"
             ref={composeRef}
             value={bodyDraft}
             onChange={(e) => setBodyDraft(e.target.value)}
@@ -141,7 +144,10 @@ export function CommentPopover({
             className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2 py-1.5 text-[12.5px] leading-relaxed text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
           />
         ) : (
-          <div className="text-[12.5px] leading-relaxed text-ink">
+          <div
+            data-testid="foldo-comment-text"
+            className="text-[12.5px] leading-relaxed text-ink"
+          >
             {comment.text}
           </div>
         )}
@@ -186,6 +192,7 @@ export function CommentPopover({
         {replyOpen && (
           <div className="mt-2">
             <textarea
+              data-testid="foldo-comment-reply-input"
               autoFocus
               value={replyText}
               onChange={(e) => setReplyText(e.target.value)}
@@ -208,6 +215,7 @@ export function CommentPopover({
                 Cancel
               </button>
               <button
+                data-testid="foldo-comment-reply-submit"
                 disabled={submitting || !replyText.trim()}
                 onClick={() => void submitReply()}
                 className="rounded-md bg-accent/15 px-2 py-1 text-[11.5px] font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
@@ -220,12 +228,14 @@ export function CommentPopover({
       </div>
       <div className="flex items-center justify-between border-t border-hairlineSoft px-3 py-2">
         <button
+          data-testid="foldo-comment-reply"
           onClick={() => setReplyOpen((o) => !o)}
           className="text-[11.5px] text-inkMute hover:text-ink"
         >
           Reply
         </button>
         <button
+          data-testid="foldo-comment-resolve"
           onClick={onResolve}
           className="text-[11.5px] text-inkMute hover:text-ink"
         >
@@ -233,6 +243,7 @@ export function CommentPopover({
         </button>
         {canDelete && onDelete && (
           <button
+            data-testid="foldo-comment-delete"
             onClick={() => {
               if (confirm('Delete this comment?')) void onDelete();
             }}
@@ -242,6 +253,7 @@ export function CommentPopover({
           </button>
         )}
         <button
+          data-testid="foldo-comment-make-edit"
           onClick={onMakeEdit}
           className="flex items-center gap-1.5 rounded-md bg-accent/15 px-2 py-1 text-[11.5px] font-medium text-accent hover:bg-accent/25"
         >

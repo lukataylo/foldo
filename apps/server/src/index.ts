@@ -16,6 +16,7 @@ import { registerDispatchRoutes } from './routes/dispatches.ts';
 import { registerSourceRoutes } from './routes/sources.ts';
 import { registerCaptureRoutes } from './routes/captures.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
+import { registerMeRoutes } from './routes/me.ts';
 import { registerDemoRequestRoutes } from './routes/demoRequests.ts';
 import { registerHomeRoutes } from './routes/home.ts';
 import { registerWebhookRoutes } from './routes/webhooks.ts';
@@ -101,6 +102,7 @@ async function main(): Promise<void> {
   await registerSourceRoutes(app);
   await registerCaptureRoutes(app);
   await registerAuthRoutes(app);
+  await registerMeRoutes(app);
   await registerDemoRequestRoutes(app);
   await registerHomeRoutes(app);
   await registerWebhookRoutes(app);

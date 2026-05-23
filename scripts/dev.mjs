@@ -3,6 +3,13 @@
 // concurrently. Optionally adds the MCP runner when `FOLDO_MCP_DEV=1` is
 // set — gated because running the MCP fires real Claude CLI invocations
 // on every dispatch, which costs credits.
+//
+// The shotter (apps/shotter, port 5175) is opt-in via `FOLDO_SHOTTER_DEV=1`.
+// It needs Playwright's chromium browser to be installed locally
+// (`npx playwright install chromium`). If you've installed Playwright for
+// the e2e suite it's already there — Step 4 of docs/PRODUCTION-PLAN.md uses
+// it to back the canvas's "Capture from URL" modal when no extension is
+// loaded. Set the env var when running `npm run dev` to bring it up.
 
 import { spawn } from 'node:child_process';
 
@@ -14,6 +21,10 @@ const services = [
 
 if (process.env.FOLDO_MCP_DEV === '1') {
   services.push({ name: 'mcp', color: 'yellow', script: 'dev:mcp' });
+}
+
+if (process.env.FOLDO_SHOTTER_DEV === '1') {
+  services.push({ name: 'shotter', color: 'green', script: 'dev:shotter' });
 }
 
 const names = services.map((s) => s.name).join(',');

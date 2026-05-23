@@ -141,6 +141,9 @@ export function MarkdownFrame({
 
   return (
     <div
+      data-testid="foldo-markdown-frame"
+      data-foldo-frame-id={frame.id}
+      data-foldo-doc-path={content.docPath}
       className="absolute"
       style={{
         left: frame.position.x,
@@ -185,6 +188,7 @@ export function MarkdownFrame({
         >
           {editing ? (
             <textarea
+              data-testid="foldo-markdown-textarea"
               autoFocus
               spellCheck
               className="block h-full w-full resize-none rounded-md border border-black/10 bg-white px-3 py-2 font-mono text-[12.5px] leading-[1.6] text-[#2a2622] outline-none focus:border-accent/60"
@@ -336,6 +340,7 @@ function DocHeader({
         {!editing ? (
           <button
             type="button"
+            data-testid="foldo-markdown-edit-button"
             data-no-edit
             onClick={onStartEdit}
             className="rounded-md border border-black/15 bg-white/60 px-2 py-0.5 text-[11px] font-medium text-[#5a4f3e] hover:bg-white"
@@ -346,6 +351,7 @@ function DocHeader({
           <>
             <button
               type="button"
+              data-testid="foldo-markdown-cancel-button"
               data-no-edit
               onClick={onCancel}
               disabled={saving}
@@ -355,6 +361,7 @@ function DocHeader({
             </button>
             <button
               type="button"
+              data-testid="foldo-markdown-save-button"
               data-no-edit
               onClick={onSave}
               disabled={saving}
@@ -401,6 +408,8 @@ function MarkdownAnchors({
           return (
             <button
               key={c.id}
+              data-testid="foldo-comment-anchor"
+              data-foldo-comment-id={c.id}
               onClick={(e) => {
                 e.stopPropagation();
                 onCommentClick(frame.id, c);

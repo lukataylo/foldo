@@ -13,6 +13,7 @@ export function LeftRail({ tool, onChange }: Props) {
     >
       <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-hairlineSoft bg-panel p-1 shadow-panel">
         <RailButton
+          tool="select"
           label="Select (V)"
           active={tool === 'select'}
           onClick={() => onChange('select')}
@@ -21,6 +22,7 @@ export function LeftRail({ tool, onChange }: Props) {
           <ArrowIcon />
         </RailButton>
         <RailButton
+          tool="hand"
           label="Hand · pan (H)"
           active={tool === 'hand'}
           onClick={() => onChange('hand')}
@@ -30,6 +32,7 @@ export function LeftRail({ tool, onChange }: Props) {
         </RailButton>
         <div className="my-0.5 h-px bg-hairlineSoft" />
         <RailButton
+          tool="comment"
           label="Comment (C)"
           active={tool === 'comment'}
           onClick={() => onChange('comment')}
@@ -38,6 +41,7 @@ export function LeftRail({ tool, onChange }: Props) {
           <CommentIcon />
         </RailButton>
         <RailButton
+          tool="edit"
           label="AI edit (E)"
           active={tool === 'edit'}
           onClick={() => onChange('edit')}
@@ -47,6 +51,7 @@ export function LeftRail({ tool, onChange }: Props) {
         </RailButton>
         <div className="my-0.5 h-px bg-hairlineSoft" />
         <RailButton
+          tool="sticky"
           label="Sticky note (S)"
           active={tool === 'sticky'}
           onClick={() => onChange('sticky')}
@@ -55,6 +60,7 @@ export function LeftRail({ tool, onChange }: Props) {
           <StickyIcon />
         </RailButton>
         <RailButton
+          tool="arrow"
           label="Arrow (A)"
           active={tool === 'arrow'}
           onClick={() => onChange('arrow')}
@@ -63,6 +69,7 @@ export function LeftRail({ tool, onChange }: Props) {
           <ArrowToolIcon />
         </RailButton>
         <RailButton
+          tool="image"
           label="Image (I)"
           active={tool === 'image'}
           onClick={() => onChange('image')}
@@ -76,12 +83,14 @@ export function LeftRail({ tool, onChange }: Props) {
 }
 
 function RailButton({
+  tool,
   label,
   active,
   onClick,
   shortcut,
   children,
 }: {
+  tool: Tool;
   label: string;
   active?: boolean;
   onClick: () => void;
@@ -90,6 +99,7 @@ function RailButton({
 }) {
   return (
     <button
+      data-testid={`foldo-rail-tool-${tool}`}
       title={label}
       onClick={onClick}
       className={

@@ -217,6 +217,31 @@ export default function App() {
         ws.subscribeAll((msg: ServerMessage) => applyServerMessage(msg));
         ws.connect();
 
+        // Dev-only hooks for e2e specs: let Playwright force-close the WS and
+        // then reconnect it to exercise the `hello.sinceSeq` replay path.
+        // Gated on import.meta.env.PROD so the production bundle doesn't ship
+        // these handles. Reaches into FoldoWsClient's private `ws` field via a
+        // cast (rather than adding a public surface that only a test uses).
+        if (!import.meta.env.PROD && typeof window !== 'undefined') {
+          const w = window as unknown as {
+            __foldoWsClose?: () => void;
+            __foldoWsConnect?: () => void;
+          };
+          w.__foldoWsClose = () => {
+            // Mimic an unexpected network drop: close the underlying socket
+            // but don't call ws.close() (that would flip `closedByUser` and
+            // suppress the auto-reconnect we want to exercise next).
+            try {
+              (ws as unknown as { ws: WebSocket | null }).ws?.close();
+            } catch {
+              /* ignore */
+            }
+          };
+          w.__foldoWsConnect = () => {
+            ws.connect();
+          };
+        }
+
         setBoot({ kind: 'ready' });
       } catch (err) {
         if (cancelled) return;

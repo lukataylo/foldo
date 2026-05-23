@@ -106,8 +106,22 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   email_verified_at TIMESTAMPTZ,
   kind TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- sha256 of the original lowercase email, retained AFTER a GDPR soft-delete
+  -- so abuse / fraud audits can still recognise a previously-known address
+  -- without the plaintext sticking around. NULL on every live account.
+  email_hash TEXT
 );
+
+-- Additive migration: dev databases predating the email_hash column.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'email_hash'
+  ) THEN
+    ALTER TABLE users ADD COLUMN email_hash TEXT;
+  END IF;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_lower
   ON users (lower(email)) WHERE email IS NOT NULL;

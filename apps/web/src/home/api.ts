@@ -178,3 +178,31 @@ export async function revokeBoardShare(
   );
   await asJson<{ ok: boolean }>(res);
 }
+
+// ---------- Account export + delete (GDPR) ----------
+
+/**
+ * Trigger /api/me/export and return the parsed JSON body. Callers usually
+ * wrap this in a Blob + anchor click to trigger a browser download.
+ */
+export async function exportMyData(): Promise<unknown> {
+  const res = await fetch(`${API_BASE}/api/me/export`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  return asJson<unknown>(res);
+}
+
+/**
+ * Permanently soft-delete the current account. Caller MUST clear local auth
+ * state on success — the server kills every session as part of the flow, so
+ * any cached token is dead the moment this returns.
+ */
+export async function deleteMyAccount(currentPassword: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/me/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ currentPassword }),
+  });
+  await asJson<{ ok: boolean }>(res);
+}

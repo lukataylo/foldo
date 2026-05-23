@@ -29,7 +29,7 @@ right now** — see §3.5.
                                       ▼             ▼
        ┌──────────────────────────────────────────────────────┐
        │ web                          server                  │
-       │ (Vite preview, port $PORT)   (Fastify+tsx, port $PORT)│
+       │ (serve, port $PORT)          (Fastify+tsx, port $PORT)│
        │ https://foldo.dev            https://api.foldo.dev   │
        │                              ├─ /health              │
        │                              ├─ /metrics (Prom)      │
@@ -47,7 +47,7 @@ right now** — see §3.5.
 
        ┌──────────────────────────────────────────────────────┐
        │ sample-app                                           │
-       │ (Vite preview, port $PORT)                           │
+       │ (serve, port $PORT)                                  │
        │ https://sample.foldo.dev — iframed by canvas         │
        └──────────────────────────────────────────────────────┘
 
@@ -157,7 +157,7 @@ before `npm run build`).<br>
 
 | Var                  | When | Req | Prod value pattern               | Notes |
 |----------------------|------|-----|----------------------------------|-------|
-| `PORT`               | RT   | yes | injected by Railway              | `vite preview` honours it (see `railway.json:32`). |
+| `PORT`               | RT   | yes | injected by Railway              | `serve` binds it via `--listen tcp://0.0.0.0:$PORT` (see `railway.json:32`). |
 | `VITE_API_URL`       | BT   | yes | `https://api.foldo.dev`          | Inlined; baked into the bundle. |
 | `VITE_WS_URL`        | BT   | no  | `wss://api.foldo.dev`            | Defaults from `VITE_API_URL` if unset. |
 | `VITE_SAMPLE_URL`    | BT   | yes | `https://sample.foldo.dev`       | Iframed previews. |
@@ -314,7 +314,7 @@ verify:
 ```bash
 curl -sS https://api.foldo.dev/health        # → {"ok":true,"ts":"..."}
 curl -sSI https://api.foldo.dev/metrics      # → 200 with text/plain charset
-curl -sSI https://foldo.dev/                 # → 200, served by `vite preview`
+curl -sSI https://foldo.dev/                 # → 200, served by `serve` (static)
 curl -sSI https://sample.foldo.dev/          # → 200
 ```
 
@@ -479,7 +479,7 @@ make prod-smoke
 The default base URL is `https://api.foldo.dev`. Override with
 `FOLDO_PROD_BASE=https://api.staging.foldo.dev`.
 
-### 6.2 Post-deploy gate (Playwright)
+### 6.2 Post-deploy gate (Playwright)  — **DONE**
 
 The same checks live in `e2e/deploy/prod-smoke.spec.ts`. It only runs
 when `RUN_PROD_SMOKE=1` so it doesn't get pulled into the standard
@@ -490,9 +490,59 @@ RUN_PROD_SMOKE=1 FOLDO_PROD_SMOKE_TOKEN=… \
   npx playwright test e2e/deploy/prod-smoke.spec.ts
 ```
 
-Wire this as a GitHub Action **after** the Railway deploy webhook
-fires (TODO: not configured yet) and you have an automatic
-post-deploy gate.
+The GitHub Action that runs this post-deploy lives at
+[`.github/workflows/post-deploy-smoke.yml`](../.github/workflows/post-deploy-smoke.yml).
+It's triggered by `repository_dispatch` (event type `railway-deployed`)
+and is also runnable manually from the Actions tab.
+
+#### Wiring Railway → GitHub `repository_dispatch`
+
+Railway doesn't speak the `repository_dispatch` API directly, so you
+need a tiny shim. Two options:
+
+**Option A — Railway native webhook (recommended).** In the Railway
+dashboard:
+
+1. Project → Settings → Webhooks → +New Webhook
+2. URL: `https://api.github.com/repos/<owner>/<repo>/dispatches`
+3. Method: `POST`
+4. Headers:
+   - `Authorization: Bearer <GH_PAT>` (a fine-grained personal access
+     token with `repository_dispatch: write` on this repo; store it as a
+     Railway env var like `GH_DISPATCH_TOKEN` and reference it here)
+   - `Accept: application/vnd.github+json`
+   - `User-Agent: railway-foldo-deploy-webhook` (GitHub rejects no UA)
+5. Body:
+   ```json
+   {
+     "event_type": "railway-deployed",
+     "client_payload": {
+       "service": "{{ service.name }}",
+       "deployment_id": "{{ deployment.id }}",
+       "commit_sha": "{{ deployment.meta.commitSha }}",
+       "base_url": "https://api.foldo.dev"
+     }
+   }
+   ```
+6. Trigger on: **Deployment Succeeded** (for the `server` service —
+   triggering on every service would run the smoke 3× per merge).
+
+**Option B — Cloudflare Worker shim.** If Railway's native webhook
+can't carry your auth header for some reason, deploy a 30-line Worker
+that takes the Railway webhook body, repackages it, and POSTs to
+GitHub with the secret pulled from `wrangler secret`. Out of scope
+here.
+
+#### Required secret
+
+The workflow needs:
+
+- `FOLDO_PROD_SMOKE_TOKEN` — scrape-only API token (minted via the
+  canvas Settings → API tokens UI). Add to Repository
+  Settings → Secrets and variables → Actions → New repository secret.
+
+On failure, the workflow auto-comments on the HEAD commit with a
+diagnostic checklist linking back to `docs/RUNBOOK-INCIDENT.md §4.4`.
 
 ---
 
@@ -501,12 +551,55 @@ post-deploy gate.
 Railway's managed Postgres takes **no automatic backups** on the
 hobby plan. Foldo runs its own weekly `pg_dump` to S3.
 
-### 7.1 What ships today
+### 7.1 What ships today — **DONE**
 
-**TODO**: the backup cron is **not running yet**. The shape below is
-the documented plan — implement before the first paying customer.
+The backup cron runs as a GitHub Action:
+[`.github/workflows/backup-pg.yml`](../.github/workflows/backup-pg.yml).
+Schedule: Sundays 04:00 UTC. The dump itself is produced by
+[`scripts/pg-backup.sh`](../scripts/pg-backup.sh), which is also
+runnable from any operator's machine for an ad-hoc snapshot.
 
-### 7.2 Weekly `pg_dump` (planned)
+#### Required repository secrets
+
+Add these in **Settings → Secrets and variables → Actions**:
+
+| Secret                  | Value                                                                                              |
+|-------------------------|----------------------------------------------------------------------------------------------------|
+| `DATABASE_URL`          | Railway Postgres **public** connection URL (the `DATABASE_PUBLIC_URL` variable on the plugin).     |
+| `AWS_ACCESS_KEY_ID`     | IAM user with `s3:PutObject` + `s3:ListBucket` on the backup bucket below — and **nothing else**.  |
+| `AWS_SECRET_ACCESS_KEY` | Paired secret.                                                                                     |
+| `AWS_REGION`            | Bucket region, e.g. `eu-west-2`.                                                                   |
+| `FOLDO_BACKUP_BUCKET`   | Bucket name, e.g. `foldo-backups`.                                                                 |
+
+The IAM policy for that user — copy/paste-able starting point:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "FoldoBackupWrite",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:PutObjectAcl"],
+      "Resource": "arn:aws:s3:::foldo-backups/postgres/*"
+    },
+    {
+      "Sid": "FoldoBackupVerify",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::foldo-backups",
+        "arn:aws:s3:::foldo-backups/postgres/*"
+      ]
+    }
+  ]
+}
+```
+
+On failure, the workflow opens (or updates) a `backup-failure` GitHub
+Issue with diagnostic links to this section and `RUNBOOK-INCIDENT.md`.
+
+### 7.2 Weekly `pg_dump` (mechanics)
 
 Run from any machine that can reach Railway Postgres (including a
 GitHub Action with `pg_dump` in the runner image):
@@ -551,8 +644,8 @@ DATABASE_URL=postgresql://postgres:local@localhost:5432/postgres \
   FOLDO_PROD_BASE=http://localhost:4000 make prod-smoke
 ```
 
-Pass = the dump is restorable. Log the drill in `docs/RUNBOOK-LOG.md`
-(TODO: file doesn't exist yet; create on first drill).
+Pass = the dump is restorable. Log the drill in
+[`docs/RUNBOOK-LOG.md`](./RUNBOOK-LOG.md).
 
 ---
 
@@ -568,22 +661,50 @@ authenticated) `userId`. Today logs are visible only through:
 railway logs --service server
 ```
 
-**TODO** — log shipping is **not wired**. The cleanest drop-in is a
-Railway → Better Stack (Logtail) drain, since it understands
-JSON-per-line out of the box. The pattern, once you have an account:
+**TODO** — log shipping is **not wired**. The choice between providers
+is a business decision (cost, retention, alerting features), so this
+doc gives you two opinionated free-tier options and the exact steps for
+each. Pick **one** — having two is worse than having one.
 
-```bash
-# 1. Dashboard → Better Stack → +Source → "HTTP Log Drain". Copy the
-#    ingest URL (looks like https://in.logs.betterstack.com/…/<token>).
-# 2. Dashboard → Foldo server service → Settings → Log Drains → +Add HTTP
-#    URL: <ingest URL from step 1>
-# 3. Save. Logs start streaming within ~30 seconds; verify in the
-#    Better Stack dashboard.
-```
+#### Option A — Grafana Loki (cloud, free tier)
 
-The same shape works for Datadog (drain type = Datadog) and Loki
-(drain type = HTTP, content-type `application/json`, target your
-Loki push API). Pick one — having two is worse than having one.
+Free tier: 50 GB log ingest/month, 14-day retention, 10 k active series.
+Good fit if you're already using Grafana Cloud for metrics (§8.2).
+
+1. Sign up at https://grafana.com/auth/sign-up/create-user (no card).
+2. Grafana Cloud → **Connections → Add new connection → Logs → Loki**.
+   Note the **endpoint URL** (looks like
+   `https://logs-prod-xxx.grafana.net/loki/api/v1/push`).
+3. Create an **API token** with the `metrics-publisher` scope (despite
+   the name, it covers Loki push).
+4. Railway dashboard → `server` service → **Settings → Log Drains →
+   +Add → HTTP**.
+   - URL: `https://<user>:<token>@logs-prod-xxx.grafana.net/loki/api/v1/push`
+   - Content-Type: `application/json`
+5. Save. Logs appear in **Explore → data source = grafanacloud-loki**
+   within ~30 s. Verify with `{service="foldo-server"} |= "started"`.
+
+#### Option B — Datadog (free tier, 5-day retention)
+
+Free tier is 5 hosts and 14-day metric retention; logs are a paid
+add-on **but** the first 1 GB/day of log ingest is free under the
+"Pro" trial (no card for 14 days). After trial: ~$0.10/GB.
+
+1. Sign up at https://www.datadoghq.com/free-datadog-trial/. Pick the
+   US1 or EU1 region — note this, it changes the endpoint.
+2. Org Settings → **API Keys** → create a key named `railway-drain`.
+3. Railway dashboard → `server` service → **Settings → Log Drains →
+   +Add → Datadog**.
+   - Region: same one you picked above.
+   - API key: paste from step 2.
+4. Save. Logs appear in **Logs → Live Tail** within ~30 s. Filter
+   `service:foldo-server` to confirm.
+
+Both options consume the Pino JSON-per-line format the server already
+emits (`apps/server/src/index.ts`) without any code change. If you pick
+something else (Better Stack, Axiom, New Relic), the pattern is the
+same: their UI gives you an HTTP endpoint, you paste it into Railway's
+HTTP log drain config.
 
 ### 8.2 Metrics — Prometheus scrape
 
@@ -643,8 +764,16 @@ A summary of what each block does:
   traffic to a deployment once `/health` returns 200.
 - `services.web.deploy.startCommand` — explicit because the
   Dockerfile CMD uses a shell form that needs `$PORT` expansion at
-  container start. The `npm --workspace @foldo/web run preview`
-  invocation also works locally.
+  container start. As of the A+ W1 ops slice (2026-05), the web and
+  sample-app services serve their `dist/` via the `serve` package
+  (https://www.npmjs.com/package/serve) instead of `vite preview`.
+  Reasons: gzip/brotli on text assets, range requests, and a sane
+  cache-header policy driven by `apps/<app>/serve.json` (long-lived
+  `immutable` for content-hashed JS/CSS, `no-cache` for `index.html`
+  so a new deploy is picked up on the next page load). `--single`
+  enables SPA history-mode fallback. The container's PATH includes
+  `/app/node_modules/.bin` so `serve` resolves to the hoisted CLI shim
+  with no extra global install.
 - `services.shotter` — **defined but not deployed today**. See §3.5
   for when to turn it on. The block is kept in `railway.json` so the
   config travels with the repo and the second-engineer onboarding
@@ -654,13 +783,17 @@ A summary of what each block does:
 
 ## 10. Known gaps (honesty section)
 
-- **Log shipping**: not configured. §8.1 says "TODO" — fix before
-  you need to grep last week's logs.
-- **Backup cron**: not running. §7.1 says "TODO" — fix before the
-  first paying customer.
-- **Post-deploy gate in CI**: `prod-smoke.spec.ts` exists, but no
-  GitHub Action triggers it after a Railway deploy. Hook in via a
-  repository_dispatch from Railway's deploy webhook.
+- **Log shipping**: still not enabled — but §8.1 now spells out the
+  two free-tier options (Grafana Loki, Datadog) and the exact Railway
+  log drain config. Pick one before you need to grep last week's logs.
+  *Doc done, account creation pending operator.*
+- **Backup cron**: **DONE** — runs via
+  `.github/workflows/backup-pg.yml`. Requires the 5 secrets in §7.1
+  to be configured before it'll do anything useful.
+- **Post-deploy gate in CI**: **DONE** —
+  `.github/workflows/post-deploy-smoke.yml` runs on
+  `repository_dispatch`. Requires the Railway → GitHub webhook to be
+  wired (§6.2) and the `FOLDO_PROD_SMOKE_TOKEN` secret set.
 - **S3 recordings in prod**: code path exists, prod is using the
   local volume (`/data/foldo-storage`). Fine while recordings are
   rare; switch when storage on the volume crosses ~3 GB.
@@ -671,3 +804,6 @@ A summary of what each block does:
   desync silently.
 - **Down-migrations**: don't exist. Roll-forward only; restore from
   backup if you need to undo a schema change.
+- **Incident response**: see [`RUNBOOK-INCIDENT.md`](./RUNBOOK-INCIDENT.md)
+  for severity scale, decision tree, common subsystem runbooks
+  (DB, auth, WS, storage), and post-mortem template.

@@ -1,0 +1,29 @@
+# Prettier ignore. We're rolling out prettier as a CI gate without doing a
+# whole-tree reformat in the same PR — that would explode the diff and make
+# `git blame` useless. Strategy:
+#
+#   1. This file currently ignores EVERYTHING (`**/*`).
+#   2. Then we un-ignore specific files/directories one at a time as we
+#      reformat them and verify the diff looks right.
+#   3. Once enough surface area is covered, flip the policy and ignore only
+#      the auto-generated paths (node_modules, dist, etc).
+#
+# To start gating a new file, ADD a `!path/to/file` line at the bottom.
+
+# --- bulk ignore -------------------------------------------------------------
+**/*
+
+# --- auto-generated / vendored (would be excluded anyway) --------------------
+node_modules/
+dist/
+build/
+.foldo-storage/
+.foldo-email-outbox/
+playwright-report/
+test-results/
+package-lock.json
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# --- opt-in: files prettier IS allowed to check ------------------------------
+# (Empty for now. Add `!path/to/file.ts` lines here as files are reformatted.)

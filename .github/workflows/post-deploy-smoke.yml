@@ -1,0 +1,92 @@
+name: post-deploy-smoke
+
+# Triggered by Railway via repository_dispatch after a successful production
+# deploy. See docs/DEPLOYMENT.md §6.2 for how to wire the Railway webhook
+# to GitHub's repository_dispatch endpoint.
+#
+# Manual trigger (workflow_dispatch) is also exposed so an operator can run
+# the smoke against the live API without waiting for the next deploy.
+on:
+  repository_dispatch:
+    types: [railway-deployed]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Override FOLDO_PROD_BASE (default https://api.foldo.dev)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  # `actions/github-script` writes a commit comment on failure → needs write.
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: post-deploy-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: prod-smoke (playwright)
+    runs-on: ubuntu-latest
+    env:
+      RUN_PROD_SMOKE: '1'
+      FOLDO_PROD_SMOKE_TOKEN: ${{ secrets.FOLDO_PROD_SMOKE_TOKEN }}
+      # repository_dispatch payload can carry a base URL override
+      # (e.g. for a staging environment). Falls back to the workflow_dispatch
+      # input, then to the production default inside prod-smoke.mjs.
+      FOLDO_PROD_BASE: ${{ github.event.client_payload.base_url || inputs.base_url || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      - name: install playwright chromium
+        run: npx playwright install --with-deps chromium
+      - name: playwright prod-smoke
+        id: smoke
+        run: npx playwright test e2e/deploy/prod-smoke.spec.ts --reporter=line
+      - name: upload playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-smoke-report
+          path: playwright-report/
+          retention-days: 14
+      - name: comment on HEAD commit on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Find the latest commit on the default branch and attach a
+            // failure comment so the engineer who shipped sees it without
+            // hunting through Actions tabs.
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const ref = context.payload.client_payload?.commit_sha || context.sha;
+            const body = [
+              '## Post-deploy smoke FAILED',
+              '',
+              `Run: ${run}`,
+              `Trigger: \`${context.eventName}\``,
+              `Base URL: \`${process.env.FOLDO_PROD_BASE || 'https://api.foldo.dev'}\``,
+              '',
+              'Likely causes:',
+              '- `/health` returning non-200 → server didn\'t finish booting or migrations failed (see `railway logs --service server`).',
+              '- `/metrics` missing `foldo_http_requests_total` → metrics.ts didn\'t register (regression).',
+              '- `/api/home` 401 → `FOLDO_PROD_SMOKE_TOKEN` expired; rotate via Settings → API tokens.',
+              '',
+              'Runbook: docs/RUNBOOK-INCIDENT.md',
+            ].join('\n');
+            try {
+              await github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: ref,
+                body,
+              });
+            } catch (err) {
+              core.warning(`Could not post commit comment: ${err.message}`);
+            }

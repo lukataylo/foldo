@@ -1,0 +1,11 @@
+# gitleaks allow-list. Add fingerprints reported by `gitleaks detect` that
+# are confirmed safe (e.g. test fixtures, public API keys, documentation
+# placeholders). Format: <commit-sha>:<file-path>:<rule-id>:<line-number>
+#
+# Each entry MUST be paired with a code comment in the offending file
+# explaining why the match is innocuous. If you can't justify a code
+# comment, you can't justify the allow-list entry.
+#
+# This file starts empty. CI's `secrets` job will fail if anything new
+# trips — review the finding, rotate if real, allow-list (with comment)
+# if not.

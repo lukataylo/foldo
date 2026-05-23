@@ -27,6 +27,9 @@ import { Canvas, type CanvasHandle, type ViewportState } from './components/Canv
 import { TopBar } from './components/TopBar';
 import { LeftRail } from './components/LeftRail';
 import { ToastStack, useToastQueue } from './components/ToastQueue';
+import { LeftPanel, RightPanel } from './plugins/slots/SidePanel';
+import { ToolBar as PluginToolBar } from './plugins/slots/ToolBar';
+import { registerToastHook } from './plugins/registry';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useFrameTools, ArrowDraftPreview } from './hooks/useFrameTools';
 import { useDispatchFlow } from './hooks/useDispatchFlow';
@@ -153,6 +156,10 @@ export default function App() {
   // TODO(phase-1-extract): delete once the comment/dispatch/frame-tools
   // extractions land — those callers will receive pushToast directly.
   const setToast = pushToast;
+  // Expose pushToast to the plugin context's notify() escape hatch. Plugins
+  // call ctx.notify(msg) → registry.defaultContext lookups window.__foldoToast
+  // → this push. Re-registering on every push identity change is cheap.
+  useEffect(() => registerToastHook(pushToast), [pushToast]);
   const [followingUserId, setFollowingUserId] = useState<UserId | null>(null);
   const [containerSize, setContainerSize] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1440,
@@ -683,6 +690,16 @@ export default function App() {
         offline={boot.kind === 'offline'}
       />
       <LeftRail tool={tool} onChange={setTool} />
+      {/*
+        Plugin substrate slots (Step 9). LeftPanel / RightPanel / PluginToolBar
+        render nothing if no plugin contributes to them, so today they're
+        invisible — Step 10's Layer Navigator + Step 11's DOM Editor light them
+        up. Mounted alongside the existing LeftRail / EditPanel / TestsPanel
+        rather than replacing them so the substrate ships with zero UX change.
+      */}
+      <LeftPanel />
+      <RightPanel />
+      <PluginToolBar />
       <input
         ref={frameTools.imageInputRef}
         type="file"

@@ -41,7 +41,7 @@ app.get<{
   if (SHARED_SECRET) {
     const auth = req.headers.authorization ?? '';
     const match = /^Bearer\s+(.+)$/i.exec(auth);
-    if (!match || match[1].trim() !== SHARED_SECRET) {
+    if (!match || (match[1] ?? '').trim() !== SHARED_SECRET) {
       return reply.code(401).send({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
     }
   }

@@ -65,8 +65,9 @@ function stampMarkdownAuthorship(
     const after = nextLines[i];
     if (before !== after) {
       lineAuthors[String(i)] = { authorUserId: editorUserId, editedAt: ts };
-    } else if (prevAuthors[String(i)]) {
-      lineAuthors[String(i)] = prevAuthors[String(i)];
+    } else {
+      const prev = prevAuthors[String(i)];
+      if (prev) lineAuthors[String(i)] = prev;
     }
   }
   return {

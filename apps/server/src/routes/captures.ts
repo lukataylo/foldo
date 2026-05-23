@@ -68,7 +68,8 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
       (m, f) => Math.max(m, f.position.y + f.size.height),
       0,
     );
-    const newY = captureSiblings.length === 0 ? maxY + 120 : captureSiblings[0].position.y;
+    const firstSibling = captureSiblings[0];
+    const newY = firstSibling ? firstSibling.position.y : maxY + 120;
 
     const now = nowIso();
     const frame: Frame = {

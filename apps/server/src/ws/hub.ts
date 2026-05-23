@@ -90,7 +90,7 @@ class Hub {
     const s = this.boards.get(boardId);
     if (!s) return [];
     if (s.recent.length === 0) return [];
-    const oldestSeq = s.recent[0].seq ?? 0;
+    const oldestSeq = s.recent[0]?.seq ?? 0;
     if (sinceSeq < oldestSeq - 1) return null; // history gap, caller refetches
     return s.recent.filter((m) => (m.seq ?? 0) > sinceSeq);
   }

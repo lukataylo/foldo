@@ -84,11 +84,11 @@ async function runCapture(port: chrome.runtime.Port): Promise<void> {
   emit('injecting', 'Reading DOM…');
   let probe: InlinePageProbe;
   try {
-    const [{ result }] = await chrome.scripting.executeScript({
+    const [first] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: probePage,
     });
-    probe = result ?? {
+    probe = first?.result ?? {
       url: tab.url ?? '',
       title: tab.title ?? '',
       viewport: { width: 1280, height: 800 },

@@ -72,7 +72,8 @@ export async function getFrameById(
   );
   if (!r) return null;
   const [overlaid] = await overlayMarkdownBodies([rowToFrame(r)], runner);
-  return overlaid;
+  // overlayMarkdownBodies returns an array of the same length it received.
+  return overlaid ?? null;
 }
 
 /**
@@ -97,7 +98,8 @@ async function overlayMarkdownBodies(
   if (frames.length === 0) return frames;
   const mdIndices: number[] = [];
   for (let i = 0; i < frames.length; i++) {
-    if (frames[i].content.kind === 'markdown') mdIndices.push(i);
+    const f = frames[i];
+    if (f && f.content.kind === 'markdown') mdIndices.push(i);
   }
   if (mdIndices.length === 0) return frames;
 
@@ -106,6 +108,7 @@ async function overlayMarkdownBodies(
 
   for (const i of mdIndices) {
     const f = out[i];
+    if (!f) continue; // unreachable, but `noUncheckedIndexedAccess` widens it.
     const md = f.content as MarkdownFrameContent;
     if (!md.docPath) continue;
 

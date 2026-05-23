@@ -5,6 +5,13 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    /* exactOptionalPropertyTypes intentionally off — the bulk of our repo
+       layer translates from `col: null` DB rows into `field?: T` protocol
+       types via `field: r.col ?? undefined`, which the flag rejects. Net
+       value-vs-noise was poor; revisit if we adopt Zod-derived protocol
+       types in Phase 2-8. */
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,

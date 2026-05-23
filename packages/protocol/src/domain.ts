@@ -1,4 +1,21 @@
 // ---------- Identifiers ----------
+//
+// These are plain `string` today. Phase-2 follow-up: brand them with a
+// `unique symbol` phantom so swapping two id types (e.g. `getFrameById(commentId)`)
+// is a compile error. The brand machinery is sketched below — turn it on by
+// switching `Brand<string, 'X'>` for each id and wrap every boundary point
+// (URL params, DB row mapping, JSON request bodies) with the matching
+// `asBoardId(s)` cast helper. Last time we tried this, ~280 sites needed a
+// cast — mechanical work, just bounded effort. See ROADMAP-AAA.md "Phase 2
+// follow-ups".
+//
+//   declare const __idBrand: unique symbol;
+//   export type Brand<Base, Tag extends string> = Base & {
+//     readonly [__idBrand]: Tag;
+//   };
+//   export type BoardId = Brand<string, 'BoardId'>;
+//   export const asBoardId = (s: string): BoardId => s as BoardId;
+//
 export type BoardId = string;
 export type FrameId = string;
 export type CommentId = string;
@@ -354,9 +371,9 @@ export interface CaptureRequest {
 }
 
 // ---------- Tests (unmoderated UX testing) ----------
-export type TestId = string;
+export type TestId = string; // Phase 2 follow-up: brand (see Identifiers above).
 export type TestTaskId = string;
-export type TestSessionId = string;
+export type TestSessionId = string; // Phase 2 follow-up: brand.
 
 export type TestStatus = 'draft' | 'live' | 'closed';
 

@@ -56,7 +56,8 @@ export function extractBearerToken(req: FastifyRequest): string | null {
   const header = req.headers['authorization'];
   if (!header || Array.isArray(header)) return null;
   const match = /^Bearer\s+(.+)$/i.exec(header);
-  return match ? match[1].trim() : null;
+  // match[1] is the first capture group — guaranteed present when match is non-null.
+  return match && match[1] ? match[1].trim() : null;
 }
 
 export async function registerAuth(app: FastifyInstance): Promise<void> {

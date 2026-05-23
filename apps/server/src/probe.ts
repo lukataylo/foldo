@@ -29,7 +29,7 @@ export async function probeFrameable(url: string): Promise<boolean | null> {
 
     const csp = (res.headers.get('content-security-policy') ?? '').toLowerCase();
     const fa = /frame-ancestors([^;]*)/.exec(csp);
-    if (fa) {
+    if (fa && fa[1]) {
       const value = fa[1].trim();
       // `'none'`, or a self-only list with no wildcard / explicit origin,
       // means a cross-origin Foldo iframe would be blocked.

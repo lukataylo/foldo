@@ -21,7 +21,7 @@ import type {
   UserId,
 } from '@foldo/protocol';
 import { PROTOCOL_VERSION } from '@foldo/protocol';
-import { wsBroadcastSeq, wsConnections } from '../metrics.ts';
+import { setWsHubSampler, wsBroadcastSeq, wsConnections, type WsHubSample } from '../metrics.ts';
 import { jobLogger } from '../log.ts';
 import type { BrowserConn, HubInterface } from './hub.ts';
 
@@ -29,6 +29,15 @@ const log = jobLogger('redis-hub');
 
 /** Same window size as the in-memory hub — see hub.ts. */
 const REPLAY_BUFFER_SIZE = 256;
+
+/**
+ * How long we hold an idle pub/sub subscription open after the last
+ * local connection drops. A tab reconnecting within this window pays
+ * zero re-subscribe latency; past it, we unsubscribe and reclaim the
+ * Redis-side channel state. 5 min matches typical "user hops between
+ * tabs / closes laptop briefly" patterns.
+ */
+const SUBSCRIPTION_IDLE_MS = 5 * 60 * 1000;
 
 function keys(boardId: BoardId) {
   return {
@@ -53,6 +62,13 @@ export class RedisHub implements HubInterface {
   private readonly sub: Redis;
   /** Subscribed channels so we don't double-subscribe per board. */
   private subscribed: Set<string> = new Set();
+  /**
+   * Per-board "unsubscribe after idle" timers. Set when the last local
+   * conn leaves; cleared if a new conn arrives within
+   * {@link SUBSCRIPTION_IDLE_MS}. The Map key is boardId, not channel,
+   * so cancellation is straightforward.
+   */
+  private idleTimers: Map<BoardId, NodeJS.Timeout> = new Map();
 
   constructor(url: string) {
     this.id = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
@@ -74,6 +90,42 @@ export class RedisHub implements HubInterface {
         log.warn({ err }, 'failed to parse pubsub message');
       }
     });
+    // Expose hub stats to Prometheus. RedisHub's storage is mostly on
+    // the Redis side, but the local Maps still tell you "how many
+    // boards is this instance forwarding for?".
+    setWsHubSampler(() => this.sampleStats());
+  }
+
+  /**
+   * Awaitable boot — verify both Redis sockets are live (ioredis
+   * connects lazily-but-eagerly with lazyConnect:false; this resolves
+   * once both clients have completed their initial handshake). Throws
+   * on connect failure so the bootstrap in index.ts can fall back to
+   * the in-memory hub.
+   */
+  async waitReady(timeoutMs: number = 5000): Promise<void> {
+    const ready = (r: Redis): Promise<void> =>
+      new Promise((resolve, reject) => {
+        if (r.status === 'ready') return resolve();
+        const onReady = (): void => {
+          cleanup();
+          resolve();
+        };
+        const onError = (err: Error): void => {
+          cleanup();
+          reject(err);
+        };
+        const cleanup = (): void => {
+          r.off('ready', onReady);
+          r.off('error', onError);
+        };
+        r.once('ready', onReady);
+        r.once('error', onError);
+      });
+    const deadline = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`redis hub connect timed out after ${timeoutMs}ms`)), timeoutMs),
+    );
+    await Promise.race([Promise.all([ready(this.pub), ready(this.sub)]), deadline]);
   }
 
   subscribe(conn: BrowserConn): void {
@@ -84,6 +136,13 @@ export class RedisHub implements HubInterface {
     }
     set.add(conn);
     wsConnections.inc({ boardId: conn.boardId });
+    // A new conn arrived — cancel any pending unsubscribe-after-idle
+    // timer so we keep the subscription hot.
+    const pending = this.idleTimers.get(conn.boardId);
+    if (pending) {
+      clearTimeout(pending);
+      this.idleTimers.delete(conn.boardId);
+    }
     void this.ensureChannelSubscribed(conn.boardId);
   }
 
@@ -91,10 +150,30 @@ export class RedisHub implements HubInterface {
     const set = this.localConns.get(conn.boardId);
     if (!set) return;
     if (set.delete(conn)) wsConnections.dec({ boardId: conn.boardId });
-    // Note: we deliberately keep the Redis channel subscription alive even if
-    // the local set is empty — a tab reconnecting within seconds is the
-    // common case, and the cost of an empty subscription is one TCP message
-    // per broadcast for this board.
+    // Empty local set → arm an idle timer to drop the Redis-side
+    // subscription. A tab reconnecting before it fires re-uses the
+    // existing subscription (see subscribe()). Past the timer we
+    // unsubscribe + free both Map entries; cross-instance broadcasts
+    // for this board no longer reach us until the next local conn
+    // re-subscribes.
+    if (set.size === 0) {
+      // Don't double-arm — if a previous unsubscribe is still pending
+      // we let it fire on its own schedule.
+      if (!this.idleTimers.has(conn.boardId)) {
+        const boardId = conn.boardId;
+        const t = setTimeout(() => {
+          this.idleTimers.delete(boardId);
+          // Re-check: a new conn may have arrived between when this
+          // timer was armed and now. If so, skip.
+          const current = this.localConns.get(boardId);
+          if (current && current.size > 0) return;
+          this.localConns.delete(boardId);
+          void this.unsubscribeChannel(boardId);
+        }, SUBSCRIPTION_IDLE_MS);
+        t.unref?.();
+        this.idleTimers.set(boardId, t);
+      }
+    }
   }
 
   connectionsOnBoard(boardId: BoardId): BrowserConn[] {
@@ -187,8 +266,17 @@ export class RedisHub implements HubInterface {
       if (exceptUserId && conn.userId === exceptUserId) continue;
       try {
         conn.socket.send(payload);
-      } catch {
-        // ignore, connection may be closing
+      } catch (err) {
+        // Log + continue: a dying socket shouldn't break the rest of
+        // the fan-out. The close handler will reap it.
+        log.warn(
+          {
+            boardId,
+            userId: conn.userId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          'ws send failed',
+        );
       }
     }
   }
@@ -205,8 +293,39 @@ export class RedisHub implements HubInterface {
     }
   }
 
-  /** Graceful shutdown — close both Redis connections. */
+  private async unsubscribeChannel(boardId: BoardId): Promise<void> {
+    const channel = keys(boardId).channel;
+    if (!this.subscribed.has(channel)) return;
+    this.subscribed.delete(channel);
+    try {
+      await this.sub.unsubscribe(channel);
+    } catch (err) {
+      // Restore optimistic state so a future subscribe() actually
+      // retries instead of assuming we're already subscribed.
+      this.subscribed.add(channel);
+      log.warn({ err, boardId }, 'failed to unsubscribe from channel');
+    }
+  }
+
+  /**
+   * Snapshot for the metrics gauges. The Redis impl can't cheaply
+   * answer "oldest message age" or "total buffer bytes" without an
+   * extra round-trip per board, so we report 0 for those — the
+   * Prometheus dashboard for a Redis-backed deploy is expected to read
+   * those off Redis itself (e.g. via the ZSET memory metrics).
+   */
+  sampleStats(): WsHubSample {
+    return {
+      boardCount: this.localConns.size,
+      oldestSeqAgeSeconds: 0,
+      bufferSizeBytes: 0,
+    };
+  }
+
+  /** Graceful shutdown — clear idle timers + close both Redis connections. */
   async close(): Promise<void> {
+    for (const t of this.idleTimers.values()) clearTimeout(t);
+    this.idleTimers.clear();
     await Promise.allSettled([this.pub.quit(), this.sub.quit()]);
   }
 }

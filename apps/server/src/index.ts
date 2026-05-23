@@ -28,14 +28,59 @@ import { registerUploadRoutes } from './routes/uploads.ts';
 import { registerBrowserWs } from './ws/browser.ts';
 import { registerMcpWs } from './ws/mcp.ts';
 import { startSessionGc } from './gc.ts';
-import { registerMetrics } from './metrics.ts';
+import { hubInitFallback, registerMetrics } from './metrics.ts';
+import { inMemoryHub, setActiveHub } from './ws/hub.ts';
+import { RedisHub } from './ws/redisHub.ts';
 
 const PORT = Number(process.env.PORT ?? 4000);
+
+/**
+ * Pick the WS hub backend based on env. Returns the active hub
+ * description for the boot log. If REDIS_URL is set we try RedisHub,
+ * but fall back to the in-memory hub on connect failure rather than
+ * crashing the server — a stuck Redis blip shouldn't take the API
+ * down. The fallback bumps {@link hubInitFallback} so prod alerts fire.
+ */
+async function selectHub(): Promise<string> {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) {
+    return '[ws] hub=in-memory (set REDIS_URL to enable horizontal scaling)';
+  }
+  try {
+    const redisHub = new RedisHub(redisUrl);
+    await redisHub.waitReady();
+    setActiveHub(redisHub);
+    // Redact credentials from the URL we log.
+    const safeUrl = (() => {
+      try {
+        const u = new URL(redisUrl);
+        if (u.password) u.password = '***';
+        if (u.username) u.username = '***';
+        return u.toString();
+      } catch {
+        return 'redis://<unparseable>';
+      }
+    })();
+    return `[ws] hub=redis url=${safeUrl}`;
+  } catch (err) {
+    hubInitFallback.inc();
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[ws] RedisHub init FAILED, falling back to in-memory hub — multi-replica deploys WILL desync. err=${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    setActiveHub(inMemoryHub);
+    return '[ws] hub=in-memory (Redis init failed — DEGRADED)';
+  }
+}
 
 async function main(): Promise<void> {
   // Bootstrap schema + seed first so the DB has data before routes go up.
   await initSchema();
   await seed();
+
+  const hubBootLine = await selectHub();
 
   const app = Fastify({
     logger: {
@@ -160,6 +205,7 @@ async function main(): Promise<void> {
   app.log.info(`Foldo server listening on http://localhost:${PORT}`);
   app.log.info(`  Browser WS: ws://localhost:${PORT}/ws`);
   app.log.info(`  MCP WS:     ws://localhost:${PORT}/ws/mcp`);
+  app.log.info(hubBootLine);
 }
 
 main().catch((err) => {

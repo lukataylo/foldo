@@ -14,6 +14,9 @@ import { Hub, type BrowserConn } from '../hub.ts';
 vi.mock('../metrics.ts', () => ({
   wsConnections: { inc: vi.fn(), dec: vi.fn() },
   wsBroadcastSeq: { inc: vi.fn() },
+  wsReplayGaps: { inc: vi.fn() },
+  hubInitFallback: { inc: vi.fn() },
+  setWsHubSampler: vi.fn(),
 }));
 
 const BOARD: BoardId = 'b-test';
@@ -142,5 +145,64 @@ describe('Hub', () => {
     // Next browser tab on the same board should still see the buffer.
     expect(hub.getMissedSince(BOARD, 0)?.length).toBe(2);
     expect(hub.latestSeq(BOARD)).toBe(2);
+  });
+
+  describe('eviction sweep', () => {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+    it('does not evict a board that still has live conns', () => {
+      const { conn } = fakeConn(USER_A);
+      hub.subscribe(conn);
+      hub.broadcast(BOARD, frameAdded());
+      // Pretend the board has been here for a year.
+      const evicted = hub.sweep(Date.now() + 365 * 24 * 60 * 60 * 1000);
+      expect(evicted).toBe(0);
+      expect(hub.latestSeq(BOARD)).toBe(1);
+    });
+
+    it('does not evict a board that is empty but recently touched', () => {
+      const { conn } = fakeConn(USER_A);
+      hub.subscribe(conn);
+      hub.broadcast(BOARD, frameAdded());
+      hub.unsubscribe(conn);
+      // Within the idle window — keep it so a reconnect can replay.
+      const evicted = hub.sweep(Date.now() + 60 * 1000);
+      expect(evicted).toBe(0);
+      expect(hub.latestSeq(BOARD)).toBe(1);
+    });
+
+    it('evicts a board that is empty AND idle past the 30-day cutoff', () => {
+      const { conn } = fakeConn(USER_A);
+      hub.subscribe(conn);
+      hub.broadcast(BOARD, frameAdded());
+      hub.unsubscribe(conn);
+      // Jump 30d + 1m into the future.
+      const evicted = hub.sweep(Date.now() + THIRTY_DAYS_MS + 60 * 1000);
+      expect(evicted).toBe(1);
+      // After eviction the board's seq is forgotten (a fresh broadcast
+      // would start at 1 again — by design; this is the same behaviour
+      // as a server restart).
+      expect(hub.latestSeq(BOARD)).toBe(0);
+    });
+  });
+
+  describe('sampleStats', () => {
+    it('reports zeros on an empty hub', () => {
+      expect(hub.sampleStats()).toEqual({
+        boardCount: 0,
+        oldestSeqAgeSeconds: 0,
+        bufferSizeBytes: 0,
+      });
+    });
+
+    it('reports board count, buffer bytes, and a non-negative age after a broadcast', () => {
+      const { conn } = fakeConn(USER_A);
+      hub.subscribe(conn);
+      hub.broadcast(BOARD, frameAdded());
+      const stats = hub.sampleStats();
+      expect(stats.boardCount).toBe(1);
+      expect(stats.bufferSizeBytes).toBeGreaterThan(0);
+      expect(stats.oldestSeqAgeSeconds).toBeGreaterThanOrEqual(0);
+    });
   });
 });

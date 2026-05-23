@@ -1,8 +1,24 @@
 import type { ServerMessage, UserId, BoardId, PresenceUser } from '@foldo/protocol';
 import { PROTOCOL_VERSION } from '@foldo/protocol';
 import type { WebSocket } from 'ws';
-import { wsBroadcastSeq, wsConnections } from '../metrics.ts';
+import { setWsHubSampler, wsBroadcastSeq, wsConnections, type WsHubSample } from '../metrics.ts';
 import { jobLogger } from '../log.ts';
+
+const log = jobLogger('hub');
+
+/**
+ * How often we sweep `boards` for evictable entries (empty + idle).
+ */
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * A board state is evictable when it has zero local connections AND
+ * hasn't seen a touch (subscribe or broadcast) for this long. 30 days
+ * matches the replay-window expectation: if nobody has touched a board
+ * in a month, the in-memory replay buffer for it has zero chance of
+ * being useful to a reconnecting tab.
+ */
+const EVICTION_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * How many recent broadcasts we keep per board, in memory. A client that's
@@ -61,22 +77,60 @@ interface BoardState {
   seq: number;
   /** Ring of the last REPLAY_BUFFER_SIZE broadcasts, oldest → newest. */
   recent: ServerMessage[];
+  /**
+   * Wall-clock of the last touch (subscribe or broadcast). Used by the
+   * periodic sweep to evict boards that have been empty + idle for
+   * {@link EVICTION_IDLE_MS}. Kept in ms-since-epoch to keep the
+   * eviction predicate a plain subtraction.
+   */
+  lastTouchedAt: number;
+  /**
+   * Wall-clock when the oldest message currently in `recent` was
+   * pushed. Tracked separately from `recent[0]` because messages don't
+   * carry their own server-side timestamp — and we want the metric to
+   * answer "how stale is anything I'd hand a reconnecting tab?".
+   */
+  oldestRecentPushedAt: number;
+  /**
+   * Rough byte-count of every payload in `recent`. Maintained as we
+   * push/trim so the metrics sampler doesn't have to re-serialize.
+   * Useful for "is one chatty board eating all the buffer memory?".
+   */
+  recentBytes: number;
 }
 
 export class Hub {
   private boards: Map<BoardId, BoardState> = new Map();
+  private sweepTimer: NodeJS.Timeout | null = null;
+
+  constructor() {
+    // Wire the prom-client sampler so the gauges defined in metrics.ts
+    // see this hub's current state on every scrape. Safe to call even
+    // if multiple Hub instances are constructed in tests — the last one
+    // wins, and tests stub out metrics anyway.
+    setWsHubSampler(() => this.sampleStats());
+  }
 
   private getBoardState(boardId: BoardId): BoardState {
     let s = this.boards.get(boardId);
     if (!s) {
-      s = { conns: new Set(), seq: 0, recent: [] };
+      s = {
+        conns: new Set(),
+        seq: 0,
+        recent: [],
+        lastTouchedAt: Date.now(),
+        oldestRecentPushedAt: 0,
+        recentBytes: 0,
+      };
       this.boards.set(boardId, s);
     }
     return s;
   }
 
   subscribe(conn: BrowserConn): void {
-    this.getBoardState(conn.boardId).conns.add(conn);
+    const s = this.getBoardState(conn.boardId);
+    s.conns.add(conn);
+    s.lastTouchedAt = Date.now();
     wsConnections.inc({ boardId: conn.boardId });
   }
 
@@ -88,7 +142,8 @@ export class Hub {
     }
     // Keep the BoardState (and its replay buffer) alive even when the last
     // browser leaves — a tab that reconnects within the buffer window should
-    // still be able to replay. The state ages out only on server restart.
+    // still be able to replay. The state is reclaimed by the periodic
+    // {@link sweep} once it's been empty + idle for {@link EVICTION_IDLE_MS}.
   }
 
   /** Connections on a board, excluding nobody. */
@@ -132,28 +187,162 @@ export class Hub {
    */
   broadcast(boardId: BoardId, message: ServerMessage, exceptUserId?: UserId): void {
     const state = this.getBoardState(boardId);
+    const now = Date.now();
+    state.lastTouchedAt = now;
     state.seq += 1;
     const stamped: ServerMessage = {
       ...message,
       version: PROTOCOL_VERSION,
       seq: state.seq,
     };
+    const payload = JSON.stringify(stamped);
     state.recent.push(stamped);
+    state.recentBytes += payload.length;
+    if (state.recent.length === 1) {
+      // First entry — its push-time IS the oldest-recent age baseline.
+      state.oldestRecentPushedAt = now;
+    }
     if (state.recent.length > REPLAY_BUFFER_SIZE) {
-      state.recent.splice(0, state.recent.length - REPLAY_BUFFER_SIZE);
+      const dropCount = state.recent.length - REPLAY_BUFFER_SIZE;
+      const dropped = state.recent.splice(0, dropCount);
+      // Re-estimate by subtracting the JSON length of each dropped
+      // entry — cheaper than re-summing the whole buffer.
+      for (const m of dropped) state.recentBytes -= JSON.stringify(m).length;
+      if (state.recentBytes < 0) state.recentBytes = 0;
+      // The new head is `dropCount` away from where the buffer started
+      // its life this broadcast — but each message is broadcast back to
+      // back during a hot edit, so approximating "oldest push time" as
+      // "now minus avg gap" would be a lie. The safest cheap proxy is
+      // to set it to `now` whenever we trim: it gives a slight
+      // underestimate of "oldest message age", which is fine for an
+      // alerting metric.
+      state.oldestRecentPushedAt = now;
     }
     wsBroadcastSeq.inc({ boardId, type: message.type });
     if (state.conns.size === 0) return;
-    const payload = JSON.stringify(stamped);
     for (const conn of state.conns) {
       if (exceptUserId && conn.userId === exceptUserId) continue;
       try {
         conn.socket.send(payload);
-      } catch {
-        // ignore, connection may be closing
+      } catch (err) {
+        // Don't break the broadcast loop — the connection may be
+        // mid-close, or the socket may have died but Fastify hasn't
+        // fired `close` yet. The hub will reap it via unsubscribe()
+        // when the close handler eventually runs.
+        log.warn(
+          {
+            boardId,
+            userId: conn.userId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          'ws send failed',
+        );
       }
     }
   }
+
+  /**
+   * Reap boards that have no local connections AND haven't been
+   * touched for {@link EVICTION_IDLE_MS}. Public so the periodic
+   * sweep timer can call it AND so unit tests can drive it
+   * deterministically without waiting on the interval.
+   *
+   * Returns the number of boards evicted — primarily for tests +
+   * logs.
+   */
+  sweep(now: number = Date.now()): number {
+    let evicted = 0;
+    for (const [boardId, state] of this.boards) {
+      if (state.conns.size > 0) continue;
+      if (now - state.lastTouchedAt <= EVICTION_IDLE_MS) continue;
+      this.boards.delete(boardId);
+      evicted += 1;
+    }
+    if (evicted > 0) {
+      log.info({ evicted, remaining: this.boards.size }, 'hub: evicted idle boards');
+    }
+    return evicted;
+  }
+
+  /**
+   * Start the periodic sweep timer. Idempotent — safe to call multiple
+   * times. The returned interval is `unref`-ed so it doesn't block a
+   * graceful Node shutdown.
+   */
+  startSweep(intervalMs: number = SWEEP_INTERVAL_MS): void {
+    if (this.sweepTimer) return;
+    this.sweepTimer = setInterval(() => this.sweep(), intervalMs);
+    this.sweepTimer.unref?.();
+  }
+
+  /** Stop the periodic sweep — used by tests + graceful shutdown. */
+  stopSweep(): void {
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
+  }
+
+  /**
+   * Snapshot of stats used by the metrics gauges. Cheap O(boards) —
+   * called at most once per Prometheus scrape (≤ once per 15 s).
+   */
+  sampleStats(): WsHubSample {
+    let oldestPushedAt = 0;
+    let bufferSizeBytes = 0;
+    const now = Date.now();
+    for (const state of this.boards.values()) {
+      bufferSizeBytes += state.recentBytes;
+      if (state.recent.length > 0) {
+        if (oldestPushedAt === 0 || state.oldestRecentPushedAt < oldestPushedAt) {
+          oldestPushedAt = state.oldestRecentPushedAt;
+        }
+      }
+    }
+    const oldestSeqAgeSeconds = oldestPushedAt === 0 ? 0 : Math.max(0, (now - oldestPushedAt) / 1000);
+    return {
+      boardCount: this.boards.size,
+      oldestSeqAgeSeconds,
+      bufferSizeBytes,
+    };
+  }
 }
 
-export const hub = new Hub();
+/**
+ * In-memory hub instance. Always constructed at module load — even in
+ * Redis-backed deploys, because it acts as a fallback if RedisHub init
+ * fails. Tests import the {@link Hub} class directly and `new Hub()`.
+ */
+export const inMemoryHub = new Hub();
+inMemoryHub.startSweep();
+
+/**
+ * Currently-active hub backing the {@link hub} proxy. Swappable at boot
+ * via {@link setActiveHub}. Defaults to {@link inMemoryHub}.
+ */
+let activeHub: HubInterface = inMemoryHub;
+
+export function setActiveHub(next: HubInterface): void {
+  activeHub = next;
+}
+
+export function getActiveHub(): HubInterface {
+  return activeHub;
+}
+
+/**
+ * Public hub handle. A thin facade that forwards every HubInterface
+ * method to whichever impl is current. Existing call sites
+ * (`hub.broadcast(...)`, `hub.subscribe(...)`, …) keep working
+ * unmodified, but the underlying behaviour flips between in-memory and
+ * Redis depending on how {@link setActiveHub} was called at boot.
+ */
+export const hub: HubInterface = {
+  subscribe: (conn) => activeHub.subscribe(conn),
+  unsubscribe: (conn) => activeHub.unsubscribe(conn),
+  connectionsOnBoard: (boardId) => activeHub.connectionsOnBoard(boardId),
+  findConn: (boardId, userId) => activeHub.findConn(boardId, userId),
+  latestSeq: (boardId) => activeHub.latestSeq(boardId),
+  getMissedSince: (boardId, sinceSeq) => activeHub.getMissedSince(boardId, sinceSeq),
+  broadcast: (boardId, message, exceptUserId) => activeHub.broadcast(boardId, message, exceptUserId),
+};

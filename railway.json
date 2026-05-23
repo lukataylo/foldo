@@ -16,7 +16,7 @@
         "dockerfilePath": "apps/server/Dockerfile"
       },
       "deploy": {
-        "//": "No startCommand — the server runs straight from TS via tsx, so it uses the Dockerfile CMD (`npm start` → tsx src/index.ts). There is no `dist/` build step.",
+        "//": "Horizontal scaling: to run with replicas>1, provision a Railway Redis plugin and set REDIS_URL=${{Redis.REDIS_URL}} on this service. Without REDIS_URL the server boots the in-memory WS hub and MUST stay at replicas=1 (broadcasts won't fan out across instances; clients on different replicas will desync). See docs/DEPLOYMENT.md §1 + §1.1. The boot log line `[ws] hub=…` tells you which backend won at startup. No startCommand — the server runs straight from TS via tsx, so it uses the Dockerfile CMD (`npm start` → tsx src/index.ts). There is no `dist/` build step.",
         "healthcheckPath": "/health",
         "healthcheckTimeout": 30,
         "restartPolicyType": "ON_FAILURE"

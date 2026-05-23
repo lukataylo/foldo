@@ -10,6 +10,7 @@ import Demo from './Demo';
 import Docs from './Docs';
 import Extension from './Extension';
 import Forgot from './Forgot';
+import Reset from './Reset';
 import Landing from './Landing';
 import Login from './Login';
 import NotFound from './NotFound';
@@ -32,6 +33,7 @@ export default function MarketingRouter() {
   if (path === '/pricing') return <Pricing />;
   if (path === '/demo') return <Demo />;
   if (path === '/forgot') return <Forgot />;
+  if (path === '/reset') return <Reset />;
   if (path === '/terms') return <Terms />;
   if (path === '/privacy') return <Privacy />;
   if (path === '/cookies' || path === '/cookie-policy') return <CookiePolicy />;

@@ -3,6 +3,7 @@
 // ping/pong heartbeat, and a typed subscribe() API.
 
 import type { ClientMessage, ServerMessage } from '@foldo/protocol';
+import { PROTOCOL_VERSION } from '@foldo/protocol';
 import { API_BASE } from './client';
 
 type Handler<T extends ServerMessage['type']> = (
@@ -54,6 +55,12 @@ export class FoldoWsClient {
   private pendingSend: ClientMessage[] = [];
   private closedByUser = false;
   private status: WsStatus = 'closed';
+  /**
+   * Highest seq we've seen on any broadcast. Sent back to the server in the
+   * next `hello.sinceSeq` so it can replay anything we missed. Survives
+   * across reconnects (lives on the instance, not the socket).
+   */
+  private highSeenSeq = 0;
 
   constructor(cfg: FoldoWsConfig) {
     this.cfg = cfg;
@@ -110,12 +117,19 @@ export class FoldoWsClient {
       this.reconnectAttempt = 0;
       this.missedPongs = 0;
       this.setStatus('open');
-      // (re)introduce ourselves, server replies with `welcome` snapshot
+      // (re)introduce ourselves, server replies with `welcome` snapshot.
+      // The `version` field tells the server which wire protocol we speak; a
+      // major-version mismatch closes the connection with a clean error.
       const hello: ClientMessage = {
         type: 'hello',
         boardId: this.cfg.boardId,
         userId: this.cfg.userId,
         token: this.cfg.token,
+        version: PROTOCOL_VERSION,
+        // Tell the server the last broadcast we saw, so it can replay any it
+        // sent while we were briefly disconnected. 0 on first connect = no
+        // replay needed; the welcome snapshot is the truth.
+        sinceSeq: this.highSeenSeq > 0 ? this.highSeenSeq : undefined,
       };
       ws.send(JSON.stringify(hello));
       // flush pending
@@ -131,6 +145,15 @@ export class FoldoWsClient {
         parsed = JSON.parse(ev.data) as ServerMessage;
       } catch {
         return;
+      }
+      // Advance the replay watermark. `welcome` carries `latestSeq`
+      // (initial high-water for the board); every broadcast carries a `seq`.
+      if (parsed.type === 'welcome' && typeof parsed.latestSeq === 'number') {
+        if (parsed.latestSeq > this.highSeenSeq) {
+          this.highSeenSeq = parsed.latestSeq;
+        }
+      } else if (typeof parsed.seq === 'number' && parsed.seq > this.highSeenSeq) {
+        this.highSeenSeq = parsed.seq;
       }
       if (parsed.type === 'pong') {
         this.missedPongs = 0;

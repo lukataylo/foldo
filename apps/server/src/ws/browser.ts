@@ -5,6 +5,7 @@ import type {
   PresenceUser,
   ServerMessage,
 } from '@foldo/protocol';
+import { PROTOCOL_VERSION, isCompatibleProtocolVersion } from '@foldo/protocol';
 import { resolveUserFromToken } from '../auth.ts';
 import { getBoardById } from '../repo/boards.ts';
 import { isMember } from '../repo/members.ts';
@@ -93,6 +94,18 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
           socket.close(1008, 'expected hello');
           return;
         }
+        // Reject across a major-version mismatch — at that point we're
+        // guaranteed to disagree on at least one message shape, and silently
+        // continuing produces baffling client bugs.
+        if (!isCompatibleProtocolVersion(msg.version)) {
+          sendSafe(socket, {
+            type: 'error',
+            code: 'PROTOCOL_VERSION',
+            message: `incompatible protocol version (server=${PROTOCOL_VERSION}, client=${msg.version})`,
+          });
+          socket.close(1008, 'protocol version mismatch');
+          return;
+        }
         if (msg.boardId !== board.id || msg.userId !== user.id) {
           sendSafe(socket, {
             type: 'error',
@@ -118,7 +131,24 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
           youUserId: user.id,
           board,
           users: others,
+          latestSeq: hub.latestSeq(board.id),
         });
+
+        // Replay any broadcasts the client missed while it was disconnected.
+        // If sinceSeq is older than our oldest buffered message we return
+        // null and the client falls back to a fresh REST refetch.
+        if (typeof msg.sinceSeq === 'number' && msg.sinceSeq > 0) {
+          const missed = hub.getMissedSince(board.id, msg.sinceSeq);
+          if (missed === null) {
+            sendSafe(socket, {
+              type: 'error',
+              code: 'REPLAY_GAP',
+              message: 'replay buffer no longer contains requested seq; please refetch',
+            });
+          } else {
+            for (const m of missed) sendSafe(socket, m);
+          }
+        }
 
         // Tell others we joined
         hub.broadcast(board.id, { type: 'presence.join', user: presence }, user.id);
@@ -220,7 +250,10 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
 
 function sendSafe(socket: WebSocket, msg: ServerMessage): void {
   try {
-    socket.send(JSON.stringify(msg));
+    // Tag every outbound message with the current protocol version so clients
+    // can detect a major mismatch (and so an old client sees `version` on
+    // every server message — useful for logs / tracing).
+    socket.send(JSON.stringify({ ...msg, version: PROTOCOL_VERSION }));
   } catch {
     // ignore
   }

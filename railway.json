@@ -29,7 +29,7 @@
         "dockerfilePath": "apps/web/Dockerfile"
       },
       "deploy": {
-        "startCommand": "npx serve apps/web/dist --listen tcp://0.0.0.0:${PORT:-5173} --single --no-clipboard --no-port-switching",
+        "//": "No startCommand override — the Dockerfile CMD (sh -c 'serve apps/web/dist …') is the single source of truth. An earlier `npx serve …` override here failed in Railway because `npx`'s resolution couldn't find the hoisted node_modules/.bin/serve reliably. The Dockerfile CMD puts /app/node_modules/.bin on PATH and uses sh -c so the shell resolves serve correctly.",
         "restartPolicyType": "ON_FAILURE"
       }
     },
@@ -40,7 +40,7 @@
         "dockerfilePath": "apps/sample-app/Dockerfile"
       },
       "deploy": {
-        "startCommand": "npx serve apps/sample-app/dist --listen tcp://0.0.0.0:${PORT:-5174} --single --no-clipboard --no-port-switching",
+        "//": "No startCommand override — see the `web` service note above. Dockerfile CMD is the single source of truth.",
         "restartPolicyType": "ON_FAILURE"
       }
     },

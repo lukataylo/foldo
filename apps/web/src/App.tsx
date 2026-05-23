@@ -29,7 +29,7 @@ import { LeftRail } from './components/LeftRail';
 import { ToastStack, useToastQueue } from './components/ToastQueue';
 import { LeftPanel, RightPanel } from './plugins/slots/SidePanel';
 import { ToolBar as PluginToolBar } from './plugins/slots/ToolBar';
-import { registerToastHook } from './plugins/registry';
+import { registerToastHook, registerSetToolHook } from './plugins/registry';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useFrameTools, ArrowDraftPreview } from './hooks/useFrameTools';
 import { useDispatchFlow } from './hooks/useDispatchFlow';
@@ -160,6 +160,10 @@ export default function App() {
   // call ctx.notify(msg) → registry.defaultContext lookups window.__foldoToast
   // → this push. Re-registering on every push identity change is cheap.
   useEffect(() => registerToastHook(pushToast), [pushToast]);
+  // Same escape hatch for the canvas tool setter. The core/tools plugin's
+  // ToolSpec.activate() calls window.__foldoSetTool, which routes here.
+  // useState's setter is stable across renders so this only fires once.
+  useEffect(() => registerSetToolHook(setTool as (t: string) => void), []);
   const [followingUserId, setFollowingUserId] = useState<UserId | null>(null);
   const [containerSize, setContainerSize] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1440,

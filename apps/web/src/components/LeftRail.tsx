@@ -1,96 +1,80 @@
+// Vertical tool pill on the canvas's left edge. After the Step 9 fast-follow
+// this is a thin wrapper around the `toolbar` plugin surface — every button
+// you see here is contributed by the `core/tools` plugin (apps/web/src/
+// plugins/core-tools/index.tsx).
+//
+// The component is kept around (rather than deleted in favour of the
+// bottom-center PluginToolBar) for two reasons:
+//   1. The vertical-pill placement is part of the canvas's visual identity.
+//   2. Every e2e spec clicks `getByTestId('foldo-rail-tool-<id>')` — those
+//      testids stay alive here so the test suite doesn't churn.
+//
+// Active-state highlight uses `tool === t.id`, which works because the
+// plugin's ToolSpec ids match the canvas `Tool` union one-to-one. `onChange`
+// is no longer wired to the buttons (each ToolSpec.activate() hits
+// `window.__foldoSetTool` instead), but the prop stays in the signature for
+// the App.tsx call site — it's a free hook for any future direct-from-rail
+// tool changes.
+
+import { Fragment } from 'react';
+import { usePluginSurfaces } from '../plugins/registry';
 import type { Tool } from '../types';
 
 interface Props {
   tool: Tool;
-  onChange: (t: Tool) => void;
+  /** Retained for back-compat; plugin tools route through window.__foldoSetTool. */
+  onChange?: (t: Tool) => void;
 }
 
-export function LeftRail({ tool, onChange }: Props) {
+export function LeftRail({ tool }: Props) {
+  const surfaces = usePluginSurfaces('toolbar');
+  const tools = surfaces.flatMap((s) => s.tools);
+  // Don't render the container if no plugin contributes tools — the slot is
+  // visually-empty and stealing left-edge real estate would be a regression.
+  if (tools.length === 0) return null;
+
   return (
     <div
       data-testid="foldo-canvas-leftrail"
       className="pointer-events-none absolute left-3 top-1/2 z-40 -translate-y-1/2"
     >
       <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-hairlineSoft bg-panel p-1 shadow-panel">
-        <RailButton
-          tool="select"
-          label="Select (V)"
-          active={tool === 'select'}
-          onClick={() => onChange('select')}
-          shortcut="V"
-        >
-          <ArrowIcon />
-        </RailButton>
-        <RailButton
-          tool="hand"
-          label="Hand · pan (H)"
-          active={tool === 'hand'}
-          onClick={() => onChange('hand')}
-          shortcut="H"
-        >
-          <HandIcon />
-        </RailButton>
-        <div className="my-0.5 h-px bg-hairlineSoft" />
-        <RailButton
-          tool="comment"
-          label="Comment (C)"
-          active={tool === 'comment'}
-          onClick={() => onChange('comment')}
-          shortcut="C"
-        >
-          <CommentIcon />
-        </RailButton>
-        <RailButton
-          tool="edit"
-          label="AI edit (E)"
-          active={tool === 'edit'}
-          onClick={() => onChange('edit')}
-          shortcut="E"
-        >
-          <SparkleIcon />
-        </RailButton>
-        <div className="my-0.5 h-px bg-hairlineSoft" />
-        <RailButton
-          tool="sticky"
-          label="Sticky note (S)"
-          active={tool === 'sticky'}
-          onClick={() => onChange('sticky')}
-          shortcut="S"
-        >
-          <StickyIcon />
-        </RailButton>
-        <RailButton
-          tool="arrow"
-          label="Arrow (A)"
-          active={tool === 'arrow'}
-          onClick={() => onChange('arrow')}
-          shortcut="A"
-        >
-          <ArrowToolIcon />
-        </RailButton>
-        <RailButton
-          tool="image"
-          label="Image (I)"
-          active={tool === 'image'}
-          onClick={() => onChange('image')}
-          shortcut="I"
-        >
-          <ImageIcon />
-        </RailButton>
+        {tools.map((t, i) => {
+          const prev = i > 0 ? tools[i - 1] : undefined;
+          const groupChanged = prev && (prev.group ?? '') !== (t.group ?? '');
+          return (
+            <Fragment key={t.id}>
+              {groupChanged ? (
+                <div className="my-0.5 h-px bg-hairlineSoft" />
+              ) : null}
+              <RailButton
+                toolId={t.id}
+                label={
+                  t.shortcut ? `${t.label} (${t.shortcut.toUpperCase()})` : t.label
+                }
+                active={tool === t.id}
+                onClick={t.activate}
+                shortcut={t.shortcut}
+              >
+                {t.icon}
+              </RailButton>
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
 }
 
 function RailButton({
-  tool,
+  toolId,
   label,
   active,
   onClick,
   shortcut,
   children,
 }: {
-  tool: Tool;
+  toolId: string;
   label: string;
   active?: boolean;
   onClick: () => void;
@@ -99,7 +83,7 @@ function RailButton({
 }) {
   return (
     <button
-      data-testid={`foldo-rail-tool-${tool}`}
+      data-testid={`foldo-rail-tool-${toolId}`}
       title={label}
       onClick={onClick}
       className={
@@ -116,75 +100,5 @@ function RailButton({
         </span>
       )}
     </button>
-  );
-}
-
-function ArrowIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <path d="M3.5 2.5l9 4.5-3.8 1.2-1.5 4z" fill="currentColor" />
-    </svg>
-  );
-}
-function HandIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-      <path
-        d="M5.5 8V3.8a1 1 0 0 1 2 0V7M7.5 7V3a1 1 0 0 1 2 0v4M9.5 7V4a1 1 0 0 1 2 0v5M11.5 7.2a1 1 0 0 1 2 0v3.3c0 2.2-1.8 4-4 4H8c-1.5 0-2.8-.8-3.5-2L3 9.5a1 1 0 0 1 1.6-1.2L5.5 9"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-    </svg>
-  );
-}
-function CommentIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <path
-        d="M3 4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v5A1.5 1.5 0 0 1 11.5 11H7l-3 2.5V11H4.5A1.5 1.5 0 0 1 3 9.5z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        fill="none"
-      />
-    </svg>
-  );
-}
-function SparkleIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <path d="M8 2.5l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" fill="currentColor" />
-      <path
-        d="M12.5 9.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-function StickyIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
-      <path d="M3 3.5h7.5l2.5 2.5v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z" />
-      <path d="M10.5 3.5V6h2.5" />
-    </svg>
-  );
-}
-function ArrowToolIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 13 13 3" />
-      <path d="M8 3h5v5" />
-    </svg>
-  );
-}
-function ImageIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
-      <rect x="2" y="2.5" width="12" height="11" rx="1.4" />
-      <circle cx="6" cy="7" r="1.2" fill="currentColor" stroke="none" />
-      <path d="m2.5 12 3.5-3.5 3 3 2.5-2.5L14 11.5" />
-    </svg>
   );
 }

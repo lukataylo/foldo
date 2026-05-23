@@ -10,7 +10,7 @@ import type {
   TranscriptStatus,
 } from '@foldo/protocol';
 import { exec, query, queryOne } from '../db.ts';
-import { newId, nowIso, parseJson } from '../util.ts';
+import { newId, nowIso } from '../util.ts';
 import { getStorage } from '../storage/index.ts';
 
 interface TestSessionRow {
@@ -20,14 +20,15 @@ interface TestSessionRow {
   status: string;
   recording_mode: string;
   tester_label: string;
-  tester_meta_json: string | null;
+  // JSONB columns — pg returns them already parsed.
+  tester_meta_json: Record<string, unknown> | null;
   consent_at: string | null;
   recording_key: string | null;
   recording_duration_ms: number | null;
-  transcript_json: string | null;
+  transcript_json: TranscriptCue[] | null;
   transcript_status: string;
-  responses_json: string | null;
-  synthesis_json: string | null;
+  responses_json: TestResponseAnswer[] | null;
+  synthesis_json: TestSessionSynthesis | null;
   result_frame_id: string | null;
   started_at: string;
   completed_at: string | null;
@@ -40,7 +41,7 @@ interface TestTaskResultRow {
   outcome: string;
   duration_ms: number;
   recording_offset_ms: number;
-  events_json: string | null;
+  events_json: unknown | null;
 }
 
 function rowToTaskResult(r: TestTaskResultRow): TestTaskResult {
@@ -62,24 +63,16 @@ function rowToSession(
     status: r.status as TestSessionStatus,
     recordingMode: r.recording_mode as RecordingMode,
     testerLabel: r.tester_label,
-    testerMeta: r.tester_meta_json
-      ? parseJson<Record<string, unknown>>(r.tester_meta_json, {})
-      : undefined,
+    testerMeta: r.tester_meta_json ?? undefined,
     consentAt: r.consent_at ?? undefined,
     recordingUrl: r.recording_key
       ? getStorage().pathFor(r.recording_key)
       : undefined,
     recordingDurationMs: r.recording_duration_ms ?? undefined,
-    transcript: r.transcript_json
-      ? parseJson<TranscriptCue[]>(r.transcript_json, [])
-      : undefined,
+    transcript: r.transcript_json ?? undefined,
     transcriptStatus: r.transcript_status as TranscriptStatus,
-    responses: r.responses_json
-      ? parseJson<TestResponseAnswer[]>(r.responses_json, [])
-      : undefined,
-    synthesis: r.synthesis_json
-      ? parseJson<TestSessionSynthesis | undefined>(r.synthesis_json, undefined)
-      : undefined,
+    responses: r.responses_json ?? undefined,
+    synthesis: r.synthesis_json ?? undefined,
     taskResults,
     resultFrameId: r.result_frame_id ?? undefined,
     startedAt: r.started_at,

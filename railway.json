@@ -1,6 +1,6 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
-  "//": "Multi-service Foldo deploy. Each Railway service should be created from this repo and pointed at one of the entries in `services`. Persistence is Postgres (provisioned as a Railway plugin) — wire its DATABASE_URL into the `server` service.",
+  "//": "Multi-service Foldo deploy. Each Railway service should be created from this repo and pointed at one of the entries in `services`. Persistence is Postgres (provisioned as a Railway plugin) — wire its DATABASE_URL into the `server` service. End-to-end runbook (env-var matrix, first-deploy steps, rollback, backups, observability) lives in docs/DEPLOYMENT.md.",
   "build": {
     "builder": "NIXPACKS"
   },
@@ -45,7 +45,7 @@
       }
     },
     "shotter": {
-      "//": "Headless Chromium screenshot service. Powers the /c/<url> fallback when iframing is blocked by X-Frame-Options. Optional — only deploy if you want server-side previews. Env vars: PORT (set automatically), FOLDO_SHOT_SECRET (optional bearer gate).",
+      "//": "Headless Chromium screenshot service. Powers the /c/<url> fallback when iframing is blocked by X-Frame-Options. OPTIONAL and NOT DEPLOYED TODAY — only turn this on if the canvas's `Capture from URL` modal is silently failing for a target host (X-Frame-Options or CSP frame-ancestors blocking the iframe). docs/DEPLOYMENT.md §3.5 covers the activation steps end-to-end. Env vars: PORT (set automatically), FOLDO_SHOT_SECRET (optional bearer gate; if set, mirror the same value on `server` and set VITE_SHOTTER_URL on `web`).",
       "build": {
         "builder": "DOCKERFILE",
         "dockerfilePath": "apps/shotter/Dockerfile"

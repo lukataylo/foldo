@@ -16,22 +16,49 @@ pg.types.setTypeParser(1184, (raw: string) => {
   return new Date(raw).toISOString();
 });
 
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error('DATABASE_URL is required (e.g. postgres://user:pass@host:5432/foldo)');
+// Lazy pool. Initialised on first use rather than at module load so importing
+// db.ts (or any repo file) in a unit-test context doesn't require a live
+// DATABASE_URL — only code paths that actually issue SQL do. The proxy
+// preserves the `pool.query(...)` / `pool.connect()` call sites everywhere.
+function buildPool(): pg.Pool {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      'DATABASE_URL is required (e.g. postgres://user:pass@host:5432/foldo)',
+    );
+  }
+  const needsSsl = /sslmode=require|render\.com|railway\.app|neon\.tech|supabase\.co/.test(
+    connectionString,
+  );
+  const p = new Pool({
+    connectionString,
+    ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
+    max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+  });
+  p.on('error', (err) => {
+    // eslint-disable-next-line no-console
+    console.error('pg pool error:', err);
+  });
+  return p;
 }
 
-const needsSsl = /sslmode=require|render\.com|railway\.app|neon\.tech|supabase\.co/.test(connectionString);
+let _pool: pg.Pool | null = null;
+function getPool(): pg.Pool {
+  if (!_pool) _pool = buildPool();
+  return _pool;
+}
 
-export const pool = new Pool({
-  connectionString,
-  ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
-  max: Number(process.env.DATABASE_POOL_MAX ?? 10),
-});
-
-pool.on('error', (err) => {
-  // eslint-disable-next-line no-console
-  console.error('pg pool error:', err);
+/**
+ * Public pool handle. Wrapped in a Proxy so accessing `.query` / `.connect` /
+ * `.idleCount` etc. triggers lazy initialisation; existing call-sites that
+ * just do `pool.query(sql, params)` are unchanged.
+ */
+export const pool = new Proxy({} as pg.Pool, {
+  get(_t, prop) {
+    const real = getPool() as unknown as Record<string | symbol, unknown>;
+    const value = real[prop];
+    return typeof value === 'function' ? (value as Function).bind(real) : value;
+  },
 });
 
 /**

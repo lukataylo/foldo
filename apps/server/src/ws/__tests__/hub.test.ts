@@ -1,0 +1,146 @@
+// Hub broadcast semantics — seq monotonicity, replay-buffer windowing, and
+// the gap-detection path that tells clients to refetch — are multiplayer-
+// critical. A regression here desyncs every connected canvas.
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PROTOCOL_VERSION } from '@foldo/protocol';
+import type { BoardId, PresenceUser, ServerMessage, UserId } from '@foldo/protocol';
+import { Hub, type BrowserConn } from '../hub.ts';
+
+// Stub out the prom-client metrics so unit tests don't pull in the global
+// registry. The hub imports `wsConnections` / `wsBroadcastSeq` from
+// ../metrics, which calls collectDefaultMetrics at module load — fine for
+// tests, just chatty.
+vi.mock('../metrics.ts', () => ({
+  wsConnections: { inc: vi.fn(), dec: vi.fn() },
+  wsBroadcastSeq: { inc: vi.fn() },
+}));
+
+const BOARD: BoardId = 'b-test';
+const USER_A: UserId = 'u-anna';
+const USER_M: UserId = 'u-mateo';
+
+function fakePresence(userId: UserId): PresenceUser {
+  return {
+    userId,
+    name: userId,
+    initial: userId[2]?.toUpperCase() ?? '?',
+    color: '#999',
+    online: true,
+    lastSeenAt: new Date().toISOString(),
+  };
+}
+
+function fakeConn(userId: UserId): {
+  conn: BrowserConn;
+  sent: string[];
+} {
+  const sent: string[] = [];
+  const conn: BrowserConn = {
+    boardId: BOARD,
+    userId,
+    presence: fakePresence(userId),
+    lastCursorBroadcastAt: 0,
+    socket: {
+      send(payload: string) {
+        sent.push(payload);
+      },
+    } as unknown as BrowserConn['socket'],
+  };
+  return { conn, sent };
+}
+
+function frameAdded(): ServerMessage {
+  return {
+    type: 'frame.added',
+    frame: {
+      id: 'f-1',
+      boardId: BOARD,
+      kind: 'sticky',
+      branchId: 'main',
+      commitSha: 'a7c1d29',
+      commitMessage: 'noop',
+      age: 'just now',
+      position: { x: 0, y: 0 },
+      size: { width: 100, height: 100 },
+      content: { kind: 'sticky', body: '', color: 'yellow' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+  };
+}
+
+describe('Hub', () => {
+  let hub: Hub;
+  beforeEach(() => {
+    hub = new Hub();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it('starts at seq 0 for an unknown board', () => {
+    expect(hub.latestSeq('b-never-broadcast-to' as BoardId)).toBe(0);
+  });
+
+  it('stamps every broadcast with monotonic seq + protocol version', () => {
+    const { conn, sent } = fakeConn(USER_A);
+    hub.subscribe(conn);
+    hub.broadcast(BOARD, frameAdded());
+    hub.broadcast(BOARD, frameAdded());
+    hub.broadcast(BOARD, frameAdded());
+    expect(sent.length).toBe(3);
+    const parsed = sent.map((p) => JSON.parse(p));
+    expect(parsed.map((m) => m.seq)).toEqual([1, 2, 3]);
+    for (const m of parsed) expect(m.version).toBe(PROTOCOL_VERSION);
+    expect(hub.latestSeq(BOARD)).toBe(3);
+  });
+
+  it('skips the excluded user on broadcast (cursor "echo" suppression)', () => {
+    const a = fakeConn(USER_A);
+    const m = fakeConn(USER_M);
+    hub.subscribe(a.conn);
+    hub.subscribe(m.conn);
+    hub.broadcast(BOARD, frameAdded(), USER_A);
+    expect(a.sent.length).toBe(0);
+    expect(m.sent.length).toBe(1);
+  });
+
+  it('replay buffer returns messages after the requested sinceSeq', () => {
+    const { conn } = fakeConn(USER_A);
+    hub.subscribe(conn);
+    for (let i = 0; i < 5; i++) hub.broadcast(BOARD, frameAdded());
+    // Client says "I have through seq 2", expect seqs 3,4,5.
+    const missed = hub.getMissedSince(BOARD, 2);
+    expect(missed).not.toBeNull();
+    expect(missed!.map((m) => m.seq)).toEqual([3, 4, 5]);
+  });
+
+  it('replay buffer returns empty when caller is already current', () => {
+    const { conn } = fakeConn(USER_A);
+    hub.subscribe(conn);
+    hub.broadcast(BOARD, frameAdded());
+    hub.broadcast(BOARD, frameAdded());
+    expect(hub.getMissedSince(BOARD, 2)).toEqual([]);
+  });
+
+  it('replay buffer signals a gap (null) when sinceSeq is older than the window', () => {
+    const { conn } = fakeConn(USER_A);
+    hub.subscribe(conn);
+    // Send 300 broadcasts so the first 44 fall out of the 256-slot ring.
+    for (let i = 0; i < 300; i++) hub.broadcast(BOARD, frameAdded());
+    // Asking for "since seq 1" — that's long gone.
+    expect(hub.getMissedSince(BOARD, 1)).toBeNull();
+    // But "since seq 250" is still within the window.
+    expect(hub.getMissedSince(BOARD, 250)?.length).toBe(50);
+  });
+
+  it('keeps board state alive after the last conn leaves so replay still works', () => {
+    const { conn } = fakeConn(USER_A);
+    hub.subscribe(conn);
+    hub.broadcast(BOARD, frameAdded());
+    hub.broadcast(BOARD, frameAdded());
+    hub.unsubscribe(conn);
+    // Next browser tab on the same board should still see the buffer.
+    expect(hub.getMissedSince(BOARD, 0)?.length).toBe(2);
+    expect(hub.latestSeq(BOARD)).toBe(2);
+  });
+});

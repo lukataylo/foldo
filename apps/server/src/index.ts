@@ -27,6 +27,7 @@ import { registerUploadRoutes } from './routes/uploads.ts';
 import { registerBrowserWs } from './ws/browser.ts';
 import { registerMcpWs } from './ws/mcp.ts';
 import { startSessionGc } from './gc.ts';
+import { registerMetrics } from './metrics.ts';
 
 const PORT = Number(process.env.PORT ?? 4000);
 
@@ -113,8 +114,10 @@ async function main(): Promise<void> {
   await registerBrowserWs(app);
   await registerMcpWs(app);
 
-  // Health
+  // Health + Prometheus metrics. Both unauthenticated — keep them behind a
+  // network allowlist in prod.
   app.get('/health', async () => ({ ok: true, ts: new Date().toISOString() }));
+  registerMetrics(app);
 
   // Centralised error handler, surface statusCode if attached.
   app.setErrorHandler((err, _req, reply) => {

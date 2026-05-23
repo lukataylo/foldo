@@ -38,16 +38,19 @@ async function requireEditor(
 /**
  * Compute per-line authorship for a markdown frame. Lines whose text differs
  * from the previous version are stamped with `editorUserId` and the current
- * timestamp. Untouched lines keep their existing attribution. Sparse object
- *, only edited lines carry an entry.
+ * timestamp. Untouched lines keep their existing attribution. Sparse object —
+ * only edited lines carry an entry.
  *
  * Returns a new MarkdownFrameContent with `lineAuthors`, `lastEditedAt`, and
  * `lastEditedBy` set. Body / docPath / title / kind passed through.
+ *
+ * Exported for unit tests in `__tests__/stampMarkdownAuthorship.test.ts`.
  */
-function stampMarkdownAuthorship(
+export function stampMarkdownAuthorship(
   prev: MarkdownFrameContent,
   next: MarkdownFrameContent,
   editorUserId: string,
+  nowFn: () => string = nowIso,
 ): MarkdownFrameContent {
   const prevBody = prev.body ?? '';
   const nextBody = next.body ?? '';
@@ -58,7 +61,7 @@ function stampMarkdownAuthorship(
   const nextLines = nextBody.split('\n');
   const prevAuthors = next.lineAuthors ?? prev.lineAuthors ?? {};
   const lineAuthors: Record<string, { authorUserId: string; editedAt: string }> = {};
-  const ts = nowIso();
+  const ts = nowFn();
 
   for (let i = 0; i < nextLines.length; i++) {
     const before = prevLines[i];

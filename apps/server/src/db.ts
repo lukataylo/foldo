@@ -402,6 +402,87 @@ DO $$ BEGIN
       FOREIGN KEY (frame_id) REFERENCES frames(id) ON DELETE CASCADE;
   END IF;
 END $$;
+
+-- ============================================================================
+-- Semantic CHECK constraints + composite uniques. Each block is idempotent so
+-- replays at boot are safe. Each constraint is named so we can detect prior
+-- application via pg_constraint and skip the ADD.
+-- ============================================================================
+DO $$ BEGIN
+  -- A branch with an empty head_sha is meaningless; refuse it at the DB.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'branches_head_sha_not_empty') THEN
+    UPDATE branches SET head_sha = 'unknown' WHERE head_sha = '';
+    ALTER TABLE branches
+      ADD CONSTRAINT branches_head_sha_not_empty CHECK (head_sha <> '');
+  END IF;
+
+  -- Comment pin coords are relative-to-frame fractions, so they must be in
+  -- [0,1]. Catches misplaced absolute pixel values that would render off-frame.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_pin_x_range') THEN
+    UPDATE comments SET pin_x = LEAST(GREATEST(pin_x, 0), 1) WHERE pin_x IS NOT NULL;
+    ALTER TABLE comments
+      ADD CONSTRAINT comments_pin_x_range
+      CHECK (pin_x IS NULL OR (pin_x >= 0 AND pin_x <= 1));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_pin_y_range') THEN
+    UPDATE comments SET pin_y = LEAST(GREATEST(pin_y, 0), 1) WHERE pin_y IS NOT NULL;
+    ALTER TABLE comments
+      ADD CONSTRAINT comments_pin_y_range
+      CHECK (pin_y IS NULL OR (pin_y >= 0 AND pin_y <= 1));
+  END IF;
+
+  -- Recording durations are physical: a negative one is a bug.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'test_sessions_recording_duration_nonneg') THEN
+    UPDATE test_sessions SET recording_duration_ms = 0
+      WHERE recording_duration_ms IS NOT NULL AND recording_duration_ms < 0;
+    ALTER TABLE test_sessions
+      ADD CONSTRAINT test_sessions_recording_duration_nonneg
+      CHECK (recording_duration_ms IS NULL OR recording_duration_ms >= 0);
+  END IF;
+
+  -- DOUBLE PRECISION can hold NaN, which breaks layout math and renders
+  -- frames at unreachable positions. x = x is the canonical NaN check
+  -- (NaN is the only value not equal to itself).
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'frames_position_finite') THEN
+    UPDATE frames SET position_x = 0 WHERE NOT (position_x = position_x);
+    UPDATE frames SET position_y = 0 WHERE NOT (position_y = position_y);
+    ALTER TABLE frames
+      ADD CONSTRAINT frames_position_finite
+      CHECK (position_x = position_x AND position_y = position_y);
+  END IF;
+
+  -- Two branches called "main" on the same board would render as duplicate
+  -- rows on the canvas and break the lookup-by-name code paths.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'branches_board_name_unique') THEN
+    -- Clean up any pre-existing duplicate (board_id, name) pairs by suffixing
+    -- the older rows with a short of their id, so the constraint can be added.
+    UPDATE branches b SET name = name || '-' || substring(id from 1 for 6)
+     WHERE EXISTS (
+       SELECT 1 FROM branches b2
+        WHERE b2.board_id = b.board_id AND b2.name = b.name AND b2.id <> b.id
+     );
+    ALTER TABLE branches
+      ADD CONSTRAINT branches_board_name_unique UNIQUE (board_id, name);
+  END IF;
+
+  -- One task per (test, order_index) — the order is meant to be a sortable
+  -- key for the tester UI, duplicates produce a non-deterministic order.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'test_tasks_test_order_unique') THEN
+    -- Re-pack duplicates: any (test_id, order_index) collisions get their
+    -- order_index bumped to the next free slot.
+    WITH dups AS (
+      SELECT id, test_id, order_index,
+             ROW_NUMBER() OVER (PARTITION BY test_id, order_index ORDER BY id) AS rn
+        FROM test_tasks
+    )
+    UPDATE test_tasks t
+       SET order_index = t.order_index + d.rn - 1
+      FROM dups d
+     WHERE d.id = t.id AND d.rn > 1;
+    ALTER TABLE test_tasks
+      ADD CONSTRAINT test_tasks_test_order_unique UNIQUE (test_id, order_index);
+  END IF;
+END $$;
 `;
 
 export async function initSchema(): Promise<void> {

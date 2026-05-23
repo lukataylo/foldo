@@ -2,10 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import type {
   Board,
   Branch,
+  Frame,
   GetBoardResponse,
   ListBoardsResponse,
   ListBranchesResponse,
   MeResponse,
+  PaginatedResponse,
 } from '@foldo/protocol';
 import { requireUser } from '../auth.ts';
 import {
@@ -20,7 +22,7 @@ import {
   upsertBranch,
   upsertCommit,
 } from '../repo/branches.ts';
-import { listFramesForBoard } from '../repo/frames.ts';
+import { listFramesForBoard, listFramesForBoardPage } from '../repo/frames.ts';
 import { listCommentsForBoard } from '../repo/comments.ts';
 import { listUsers } from '../repo/users.ts';
 import {
@@ -76,6 +78,37 @@ export async function registerBoardRoutes(app: FastifyInstance): Promise<void> {
       users,
       mcpConnected: isMcpConnected(board.id),
     } satisfies GetBoardResponse);
+  });
+
+  // Keyset-paginated frames list. Use this in place of the all-in-one
+  // GET /api/boards/:id for any board large enough to feel sluggish — the
+  // monolithic endpoint still works for back-compat but loads all frames in
+  // one shot.
+  //
+  //   /api/boards/:id/frames                              first page
+  //   /api/boards/:id/frames?limit=200                    larger page
+  //   /api/boards/:id/frames?cursor=<opaque>              next page
+  app.get<{
+    Params: { id: string };
+    Querystring: { limit?: string; cursor?: string };
+  }>('/api/boards/:id/frames', async (req, reply) => {
+    const me = requireUser(req);
+    if (!(await isMember(req.params.id, me.id))) {
+      return reply.code(404).send({ error: 'Board not found', code: 'NOT_FOUND' });
+    }
+    const limitRaw = req.query.limit ? Number(req.query.limit) : undefined;
+    const limit =
+      Number.isFinite(limitRaw) && limitRaw && limitRaw > 0 ? limitRaw : undefined;
+    const page = await listFramesForBoardPage(req.params.id, {
+      limit,
+      cursor: req.query.cursor,
+    });
+    const response: PaginatedResponse<Frame> = {
+      items: page.items,
+      hasMore: page.hasMore,
+      cursor: page.cursor,
+    };
+    return reply.send(response);
   });
 
   app.get<{ Params: { id: string } }>('/api/boards/:id/branches', async (req, reply) => {

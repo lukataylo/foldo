@@ -2,6 +2,7 @@ import type { ServerMessage, UserId, BoardId, PresenceUser } from '@foldo/protoc
 import { PROTOCOL_VERSION } from '@foldo/protocol';
 import type { WebSocket } from 'ws';
 import { wsBroadcastSeq, wsConnections } from '../metrics.ts';
+import { jobLogger } from '../log.ts';
 
 /**
  * How many recent broadcasts we keep per board, in memory. A client that's
@@ -16,9 +17,9 @@ import { wsBroadcastSeq, wsConnections } from '../metrics.ts';
 const REPLAY_BUFFER_SIZE = 256;
 
 /**
- * Browser-WS client connected to a board.
- * Swap this in-process hub for a Redis pub/sub backend by re-implementing
- * subscribe/unsubscribe/broadcast and re-using the same conn lookup.
+ * Browser-WS client connected to a board. Same record either backend
+ * uses — sockets are inherently per-process, but the broadcast machinery
+ * (in-memory or Redis pub/sub) is what fans the message out across them.
  */
 export interface BrowserConn {
   socket: WebSocket;
@@ -28,6 +29,30 @@ export interface BrowserConn {
   followingUserId?: UserId;
   /** Cursor broadcast throttling */
   lastCursorBroadcastAt: number;
+}
+
+/**
+ * Shared shape between the in-memory Hub and the Redis-backed RedisHub.
+ * `latestSeq` / `getMissedSince` return `Promise<...>` to accommodate the
+ * Redis impl; the in-memory impl returns them sync (which still satisfies a
+ * Promise<T> return type because TS narrows `T` to `T | Promise<T>` at the
+ * call site).
+ */
+export interface HubInterface {
+  subscribe(conn: BrowserConn): void;
+  unsubscribe(conn: BrowserConn): void;
+  connectionsOnBoard(boardId: BoardId): BrowserConn[];
+  findConn(boardId: BoardId, userId: UserId): BrowserConn | undefined;
+  latestSeq(boardId: BoardId): number | Promise<number>;
+  getMissedSince(
+    boardId: BoardId,
+    sinceSeq: number,
+  ): ServerMessage[] | null | Promise<ServerMessage[] | null>;
+  broadcast(
+    boardId: BoardId,
+    message: ServerMessage,
+    exceptUserId?: UserId,
+  ): void | Promise<void>;
 }
 
 interface BoardState {

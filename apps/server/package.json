@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --ignore=\"**/node_modules/**\" src/index.ts",
     "build": "echo 'tsx-only — no compile step'",
     "start": "tsx src/index.ts",
     "seed": "tsx src/seed.ts",

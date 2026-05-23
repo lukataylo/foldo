@@ -84,12 +84,21 @@ export function AppFrame({
   }, [content.overrides, inViewport]);
 
   // Listen for sample-app postMessage events. Only react to messages whose
-  // source matches our own iframe contentWindow.
+  // source matches our own iframe contentWindow AND whose origin matches the
+  // iframe's loaded origin — defence in depth against a navigated-away iframe
+  // sending us spoofed messages.
   useEffect(() => {
     if (!inViewport) return;
     function onMessage(ev: MessageEvent) {
       const iframe = iframeRef.current;
       if (!iframe || ev.source !== iframe.contentWindow) return;
+      let expectedOrigin: string | null = null;
+      try {
+        expectedOrigin = new URL(iframe.src).origin;
+      } catch {
+        return;
+      }
+      if (expectedOrigin === 'null' || ev.origin !== expectedOrigin) return;
       if (!isSampleAppOutbound(ev.data)) return;
       const msg = ev.data as SampleAppOutbound;
       switch (msg.type) {
@@ -143,6 +152,29 @@ export function AppFrame({
           // Scroll position from the iframe, currently informational only.
           // Future: sync follow-me cursors to the embedded sample-app scroll.
           return;
+        case 'foldo.sample.wheel': {
+          // A zoom gesture caught inside the iframe. Re-dispatch it on the
+          // canvas background as a synthetic ctrl+wheel so the Canvas's own
+          // wheel handler zooms the canvas (anchored at the cursor) instead
+          // of the browser zooming the whole page.
+          const rect = iframe.getBoundingClientRect();
+          const canvasBg = document.querySelector<HTMLElement>(
+            '[data-canvas-bg="true"]',
+          );
+          if (!canvasBg) return;
+          canvasBg.dispatchEvent(
+            new WheelEvent('wheel', {
+              bubbles: true,
+              cancelable: true,
+              ctrlKey: true,
+              deltaX: msg.deltaX,
+              deltaY: msg.deltaY,
+              clientX: rect.left + msg.clientX,
+              clientY: rect.top + msg.clientY,
+            }),
+          );
+          return;
+        }
         default:
           return;
       }
@@ -307,8 +339,20 @@ function buildIframeUrl(content: AppFrameContent, commitSha: string): string {
 }
 
 function postToFrame(iframe: HTMLIFrameElement, msg: SampleAppInbound) {
+  // Target the iframe's own origin rather than '*' — otherwise, if the iframe
+  // ever navigates cross-origin (link click, redirect), the message would
+  // leak to whatever now lives at the other end. Derive from the iframe's
+  // current src; if that's not a real URL (about:blank, data:, blob:) we
+  // just skip — the sample-app isn't there to receive it yet anyway.
+  let targetOrigin: string;
   try {
-    iframe.contentWindow?.postMessage(msg, '*');
+    targetOrigin = new URL(iframe.src).origin;
+  } catch {
+    return;
+  }
+  if (targetOrigin === 'null' || !targetOrigin) return;
+  try {
+    iframe.contentWindow?.postMessage(msg, targetOrigin);
   } catch {
     /* ignore */
   }

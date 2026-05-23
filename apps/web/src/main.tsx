@@ -8,6 +8,7 @@ import ShareViewer from './share/ShareViewer';
 import CaptureViewer from './capture/CaptureViewer';
 import TestRunner from './test/TestRunner';
 import { CookieBanner } from './marketing/CookieBanner';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 
 const path = typeof location !== 'undefined' ? location.pathname : '/';
@@ -16,19 +17,25 @@ const path = typeof location !== 'undefined' ? location.pathname : '/';
 // in or open boards — the cookie banner doesn't apply and would just be noise.
 const isTesterPage = path.startsWith('/t/');
 
-function pickRoot(): React.ReactNode {
-  if (path.startsWith('/s/') || path.startsWith('/share/')) return <ShareViewer />;
-  if (path.startsWith('/c/')) return <CaptureViewer />;
-  if (isTesterPage) return <TestRunner />;
-  if (path === '/home' || path.startsWith('/home/')) return <HomeApp />;
-  if (path === '/settings' || path.startsWith('/settings/')) return <SettingsApp />;
-  if (isMarketingPath(path)) return <MarketingRouter />;
-  return <App />;
+function pickRoot(): { node: React.ReactNode; label: string } {
+  if (path.startsWith('/s/') || path.startsWith('/share/'))
+    return { node: <ShareViewer />, label: 'share' };
+  if (path.startsWith('/c/')) return { node: <CaptureViewer />, label: 'capture' };
+  if (isTesterPage) return { node: <TestRunner />, label: 'test runner' };
+  if (path === '/home' || path.startsWith('/home/'))
+    return { node: <HomeApp />, label: 'home' };
+  if (path === '/settings' || path.startsWith('/settings/'))
+    return { node: <SettingsApp />, label: 'settings' };
+  if (isMarketingPath(path))
+    return { node: <MarketingRouter />, label: 'marketing' };
+  return { node: <App />, label: 'canvas' };
 }
+
+const { node, label } = pickRoot();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {pickRoot()}
+    <ErrorBoundary label={label}>{node}</ErrorBoundary>
     {!isTesterPage && <CookieBanner />}
   </React.StrictMode>,
 );

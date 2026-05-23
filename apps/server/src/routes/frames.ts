@@ -16,7 +16,10 @@ import {
   updateFrame,
 } from '../repo/frames.ts';
 import { canEditBoard } from '../repo/members.ts';
+import { getBoardById } from '../repo/boards.ts';
+import { upsertSource } from '../repo/sources.ts';
 import { hub } from '../ws/hub.ts';
+import { withTransaction } from '../db.ts';
 import { newId, nowIso } from '../util.ts';
 
 async function requireEditor(
@@ -127,12 +130,48 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
           ) as Frame['content'];
         }
       }
-      const next = await updateFrame(req.params.id, {
-        position: body.position,
-        size: body.size,
-        content: merged,
+      // Wrap the frame update + the sources mirror in a single transaction so
+      // a failure between them can't leave the two tables drifted (this is the
+      // bug class behind the "save doesn't save" issue: frames.content_json
+      // and sources.body must stay in lock-step for markdown).
+      const patchedMd =
+        body.content?.kind === 'markdown' ? body.content : undefined;
+      const board = patchedMd ? await getBoardById(existing.boardId) : null;
+      const next = await withTransaction(async (tx) => {
+        const updated = await updateFrame(
+          req.params.id,
+          {
+            position: body.position,
+            size: body.size,
+            content: merged,
+          },
+          tx,
+        );
+        if (!updated) return null;
+        if (
+          updated.content.kind === 'markdown' &&
+          existing.content.kind === 'markdown' &&
+          typeof patchedMd?.body === 'string' &&
+          patchedMd.body !== existing.content.body &&
+          board
+        ) {
+          await upsertSource(
+            {
+              repoSlug: board.repoSlug,
+              commitSha: updated.commitSha,
+              path: updated.content.docPath,
+              body: updated.content.body ?? '',
+              contentType: 'markdown',
+              updatedAt: nowIso(),
+            },
+            tx,
+          );
+        }
+        return updated;
       });
       if (!next) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
+      // Broadcast AFTER commit — never tell other clients about a write that
+      // might roll back.
       hub.broadcast(next.boardId, { type: 'frame.updated', frame: next });
       return reply.send(next);
     },

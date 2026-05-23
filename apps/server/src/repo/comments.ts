@@ -4,6 +4,7 @@ import type {
   CommentPin,
   CommentReply,
   CommentTarget,
+  User,
 } from '@foldo/protocol';
 import { query, queryOne, exec } from '../db.ts';
 import { nowIso, parseJson } from '../util.ts';
@@ -29,8 +30,8 @@ interface CommentRow {
   replies_json: string;
 }
 
-async function rowToComment(r: CommentRow): Promise<Comment> {
-  const author = await getUserById(r.author_user_id);
+/** Pure row → Comment mapping. No DB I/O — pass the resolved author in. */
+function rowToComment(r: CommentRow, author: User | null): Comment {
   const pin: CommentPin | undefined =
     r.pin_x != null && r.pin_y != null ? { x: Number(r.pin_x), y: Number(r.pin_y) } : undefined;
   const anchor: CommentAnchor | undefined = r.anchor_section
@@ -63,17 +64,53 @@ async function rowToComment(r: CommentRow): Promise<Comment> {
   };
 }
 
+interface UserRow {
+  id: string;
+  name: string;
+  initial: string;
+  color: string;
+  kind: 'human' | 'agent';
+  email: string | null;
+}
+
+function userRowToUser(r: UserRow): User {
+  return {
+    id: r.id,
+    name: r.name,
+    initial: r.initial,
+    color: r.color,
+    kind: r.kind,
+    email: r.email ?? undefined,
+  };
+}
+
 export async function listCommentsForBoard(boardId: string): Promise<Comment[]> {
   const rows = await query<CommentRow>(
     `SELECT * FROM comments WHERE board_id = $1 ORDER BY created_at`,
     [boardId],
   );
-  return Promise.all(rows.map(rowToComment));
+  if (rows.length === 0) return [];
+  // Batch-fetch every distinct author in a single SELECT instead of one
+  // per row — the previous code called getUserById per comment, so a board
+  // with 100 comments issued 101 queries (this listing + 100 author lookups).
+  const authorIds = Array.from(new Set(rows.map((r) => r.author_user_id)));
+  const authorRows = await query<UserRow>(
+    `SELECT id, name, initial, color, kind, email
+       FROM users
+      WHERE id = ANY($1::text[])`,
+    [authorIds],
+  );
+  const authors = new Map<string, User>(
+    authorRows.map((u) => [u.id, userRowToUser(u)]),
+  );
+  return rows.map((r) => rowToComment(r, authors.get(r.author_user_id) ?? null));
 }
 
 export async function getCommentById(id: string): Promise<Comment | null> {
   const r = await queryOne<CommentRow>(`SELECT * FROM comments WHERE id = $1`, [id]);
-  return r ? rowToComment(r) : null;
+  if (!r) return null;
+  const author = await getUserById(r.author_user_id);
+  return rowToComment(r, author);
 }
 
 export interface CommentInsert {
@@ -152,14 +189,19 @@ export async function addReply(
   commentId: string,
   reply: CommentReply,
 ): Promise<Comment | null> {
-  const existing = await getCommentById(commentId);
-  if (!existing) return null;
-  const replies = [...existing.replies, reply];
-  await exec(`UPDATE comments SET replies_json = $1, updated_at = $2 WHERE id = $3`, [
-    JSON.stringify(replies),
-    nowIso(),
-    commentId,
-  ]);
+  // Atomic append: previously this was read-mutate-write at the application
+  // layer, so two concurrent replies could each read the same `existing.replies`
+  // and one of the writes would silently clobber the other. Casting through
+  // `jsonb` lets Postgres do the array concat in a single statement; the row's
+  // implicit row-lock during UPDATE serialises concurrent appends.
+  const updated = await exec(
+    `UPDATE comments
+        SET replies_json = (COALESCE(NULLIF(replies_json, ''), '[]')::jsonb || $1::jsonb)::text,
+            updated_at = $2
+      WHERE id = $3`,
+    [JSON.stringify([reply]), nowIso(), commentId],
+  );
+  if (updated === 0) return null;
   return getCommentById(commentId);
 }
 

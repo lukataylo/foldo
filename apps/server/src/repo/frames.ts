@@ -1,5 +1,10 @@
-import type { Frame, FrameContent, FrameKind } from '@foldo/protocol';
-import { query, queryOne, exec } from '../db.ts';
+import type {
+  Frame,
+  FrameContent,
+  FrameKind,
+  MarkdownFrameContent,
+} from '@foldo/protocol';
+import { query, queryOne, exec, type SqlRunner } from '../db.ts';
 import { nowIso, parseJson } from '../util.ts';
 
 interface FrameRow {
@@ -51,12 +56,80 @@ export async function listFramesForBoard(boardId: string): Promise<Frame[]> {
     `SELECT * FROM frames WHERE board_id = $1 ORDER BY created_at`,
     [boardId],
   );
-  return rows.map(rowToFrame);
+  return overlayMarkdownBodies(rows.map(rowToFrame));
 }
 
-export async function getFrameById(id: string): Promise<Frame | null> {
-  const r = await queryOne<FrameRow>(`SELECT * FROM frames WHERE id = $1`, [id]);
-  return r ? rowToFrame(r) : null;
+export async function getFrameById(
+  id: string,
+  runner?: SqlRunner,
+): Promise<Frame | null> {
+  const r = await queryOne<FrameRow>(
+    `SELECT * FROM frames WHERE id = $1`,
+    [id],
+    runner,
+  );
+  if (!r) return null;
+  const [overlaid] = await overlayMarkdownBodies([rowToFrame(r)], runner);
+  return overlaid;
+}
+
+/**
+ * Single source of truth for any markdown frame's body is the `sources` table
+ * keyed by (repoSlug, commitSha, docPath). `frames.content.body` is treated as
+ * a write-side cache only: every read overlays the canonical sources row on
+ * top, so an out-of-date cache can't surface to the client.
+ *
+ * Without this, a saved edit landed in `sources` (mirror is transactional) but
+ * the GET path could still serve a stale `content.body` if anything else wrote
+ * it directly. Now `sources` always wins on read.
+ *
+ * Implementation: one boards lookup per distinct boardId + one sources lookup
+ * per markdown frame. Cheap for typical boards (≤10 md frames); when we move
+ * `content_json` to JSONB in Phase 2 we can collapse this into a single JOIN
+ * on the main query.
+ */
+async function overlayMarkdownBodies(
+  frames: Frame[],
+  runner?: SqlRunner,
+): Promise<Frame[]> {
+  if (frames.length === 0) return frames;
+  const mdIndices: number[] = [];
+  for (let i = 0; i < frames.length; i++) {
+    if (frames[i].content.kind === 'markdown') mdIndices.push(i);
+  }
+  if (mdIndices.length === 0) return frames;
+
+  const repoSlugByBoard = new Map<string, string | undefined>();
+  const out = frames.slice();
+
+  for (const i of mdIndices) {
+    const f = out[i];
+    const md = f.content as MarkdownFrameContent;
+    if (!md.docPath) continue;
+
+    let repoSlug = repoSlugByBoard.get(f.boardId);
+    if (repoSlug === undefined) {
+      const board = await queryOne<{ repo_slug: string }>(
+        `SELECT repo_slug FROM boards WHERE id = $1`,
+        [f.boardId],
+        runner,
+      );
+      repoSlug = board?.repo_slug;
+      repoSlugByBoard.set(f.boardId, repoSlug);
+    }
+    if (!repoSlug) continue;
+
+    const src = await queryOne<{ body: string }>(
+      `SELECT body FROM sources
+        WHERE repo_slug = $1 AND commit_sha = $2 AND path = $3`,
+      [repoSlug, f.commitSha, md.docPath],
+      runner,
+    );
+    if (src) {
+      out[i] = { ...f, content: { ...md, body: src.body } };
+    }
+  }
+  return out;
 }
 
 export async function insertFrame(f: Frame): Promise<Frame> {
@@ -94,8 +167,12 @@ export interface FrameUpdate {
   content?: FrameContent;
 }
 
-export async function updateFrame(id: string, patch: FrameUpdate): Promise<Frame | null> {
-  const existing = await getFrameById(id);
+export async function updateFrame(
+  id: string,
+  patch: FrameUpdate,
+  runner?: SqlRunner,
+): Promise<Frame | null> {
+  const existing = await getFrameById(id, runner);
   if (!existing) return null;
   const next: Frame = {
     ...existing,
@@ -122,6 +199,7 @@ export async function updateFrame(id: string, patch: FrameUpdate): Promise<Frame
       next.updatedAt,
       id,
     ],
+    runner,
   );
   return next;
 }

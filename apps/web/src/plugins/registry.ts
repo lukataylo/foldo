@@ -70,6 +70,20 @@ export function registerToastHook(fn: (msg: string) => void): void {
   (window as unknown as { __foldoToast?: (m: string) => void }).__foldoToast = fn;
 }
 
+/**
+ * Expose the current setTool callback to the plugin layer. The core/tools
+ * plugin's ToolSpec.activate() reads `window.__foldoSetTool` and calls it,
+ * mirroring the toast escape hatch above. App.tsx registers this on mount
+ * (the underlying setter is stable React state, so re-registering is cheap).
+ *
+ * Imported here as `unknown` rather than `Tool` to keep registry.ts free of
+ * canvas-only types — the plugin file owns the global declaration.
+ */
+export function registerSetToolHook(fn: (tool: string) => void): void {
+  (window as unknown as { __foldoSetTool?: (t: string) => void }).__foldoSetTool =
+    fn;
+}
+
 // Re-export useEffect so any plugin module that needs it doesn't need a
 // duplicate React import. (Kept for backwards-compat across plugin files.)
 export { useEffect };

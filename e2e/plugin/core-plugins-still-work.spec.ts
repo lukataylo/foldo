@@ -1,12 +1,14 @@
 // Step 9 no-regression gate. Asserts the plugin substrate landed without
 // breaking the canvas: existing LeftRail tools render, the TopBar still
-// shows the board name, and the plugin-toolbar slot is mounted-but-empty
-// (the core/tools plugin contributes zero tools today — the existing
-// LeftRail keeps owning that surface until the fast-follow refactor).
+// shows the board name, and the plugin-toolbar slot is mounted with the
+// core/tools plugin's tools after the fast-follow (LeftRail now reads from
+// the same registry, but its `foldo-rail-tool-*` testids stay alive for
+// the existing e2e suite).
 //
-// Locking this spec in protects against two specific regressions:
+// Locking this spec in protects against three specific regressions:
 //   1. A future plugin's activate() crash takes down the canvas
 //   2. The new LeftPanel/RightPanel slots steal click events from canvas
+//   3. The PluginToolBar dock fails to render its core/tools contributions
 
 import { expect, test } from '@playwright/test';
 import { createUser, loginAs } from '../helpers/factory';
@@ -34,15 +36,19 @@ test.describe('plugin substrate: no regression', () => {
     const canvas = new CanvasPage(page);
     await canvas.waitReady();
 
-    // Hardcoded LeftRail must still render its tools (existing behaviour
-    // owns this surface — the core/tools plugin contributes nothing yet).
+    // LeftRail must still render its tools — those buttons are now sourced
+    // from the core/tools plugin but the data-testids are preserved so the
+    // existing canvas e2e suite keeps clicking them by name.
     await expect(page.getByTestId('foldo-canvas-leftrail')).toBeVisible();
     await expect(page.getByTestId('foldo-rail-tool-select')).toBeVisible();
 
-    // The plugin ToolBar slot is rendered conditionally; with the v1
-    // core/tools plugin contributing zero tools, it must NOT mount any
-    // visible toolbar (an always-visible dock would be a regression).
-    await expect(page.getByTestId('foldo-plugin-toolbar')).toHaveCount(0);
+    // The bottom PluginToolBar slot also renders the core/tools tools (same
+    // contributions, different layout). Asserting visibility here catches a
+    // regression where the registry stops feeding contributions to slots.
+    await expect(page.getByTestId('foldo-plugin-toolbar')).toBeVisible();
+    await expect(
+      page.getByTestId('foldo-plugin-toolbar-tool-select'),
+    ).toBeVisible();
 
     // Same for LeftPanel / RightPanel — no tab contributions yet, so the
     // panels are absent (Step 10's Layer Navigator + Step 11's DOM Editor

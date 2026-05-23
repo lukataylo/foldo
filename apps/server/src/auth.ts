@@ -64,7 +64,13 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
   app.addHook('onRequest', async (req) => {
     const token = extractBearerToken(req);
     const user = await resolveUserFromToken(token);
-    if (user) req.user = user;
+    if (user) {
+      req.user = user;
+      // Re-bind the per-request logger so every subsequent log line
+      // (handler, error handler, hooks) carries `userId` — gives us one-line
+      // "everything this user did in this session" lookups in aggregators.
+      req.log = req.log.child({ userId: user.id });
+    }
   });
 }
 

@@ -2,6 +2,7 @@
 // module (e.g. ./db.ts) reads it. Must stay at the very top of this file.
 import './load-env.ts';
 
+import { randomBytes } from 'node:crypto';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
@@ -37,7 +38,18 @@ async function main(): Promise<void> {
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
+      // base fields appear on every log line and stay consistent across
+      // restarts so log aggregators can group by service.
+      base: {
+        service: 'foldo-server',
+        env: process.env.NODE_ENV ?? 'development',
+      },
     },
+    // Per-process counter reqIds collide on restart, making log search across
+    // a deploy painful. A short random suffix makes them globally unique
+    // without inflating every line (8 hex chars = 32 bits of entropy = plenty
+    // for trace correlation).
+    genReqId: () => `req-${randomBytes(4).toString('hex')}`,
     // Behind Railway/any proxy, derive req.ip + req.protocol from
     // X-Forwarded-* so rate limiting and logging see the real client.
     trustProxy: true,

@@ -17,7 +17,12 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
-      'e2e/**',
+      // Agent worktrees under .claude/worktrees/agent-* checkout the whole
+      // repo (including its e2e/ tree), so a root-relative `e2e/**` would
+      // miss them — use `**/e2e/**` to catch every checkout. Same logic for
+      // the harness's own scratch space.
+      '**/e2e/**',
+      '.claude/**',
       'apps/web/src/components/**',
       'apps/web/src/state/**',
       'apps/web/src/hooks/**',

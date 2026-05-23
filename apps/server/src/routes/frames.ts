@@ -189,10 +189,27 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
       if (!body?.position) {
         return reply.code(400).send({ error: 'Missing position', code: 'BAD_REQUEST' });
       }
+      // A+ W1: validate + clamp coordinates server-side. Without this, a
+      // misbehaving client (or a fuzzer) can ship NaN/Infinity, which the DB
+      // CHECK `frames_position_finite` rejects with a 500-grade error, or
+      // ship coordinates so far off-canvas the frame becomes unreachable
+      // through the UI. We clamp to [-CANVAS_RANGE, +CANVAS_RANGE] and
+      // return the *actual* persisted frame so the client picks up the
+      // coercion immediately.
+      const { x, y } = body.position;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return reply.code(400).send({
+          error: 'position.x and position.y must be finite numbers',
+          code: 'BAD_REQUEST',
+        });
+      }
+      const CANVAS_RANGE = 100_000;
+      const clampedX = Math.max(-CANVAS_RANGE, Math.min(CANVAS_RANGE, x));
+      const clampedY = Math.max(-CANVAS_RANGE, Math.min(CANVAS_RANGE, y));
       const existing = await getFrameById(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
       await requireEditor(me.id, existing.boardId);
-      const next = await moveFrame(req.params.id, body.position);
+      const next = await moveFrame(req.params.id, { x: clampedX, y: clampedY });
       if (!next) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
       hub.broadcast(next.boardId, {
         type: 'frame.moved',
@@ -200,6 +217,8 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
         x: next.position.x,
         y: next.position.y,
       });
+      // Return the updated frame so the client sees the persisted (possibly
+      // clamped) coordinates instead of the values it sent.
       return reply.send(next);
     },
   );

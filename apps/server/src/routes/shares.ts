@@ -113,14 +113,21 @@ export async function registerShareRoutes(app: FastifyInstance): Promise<void> {
         listCommentsForBoard(board.id),
         listUsers(),
       ]);
-      return reply.send({
-        board,
-        branches,
-        frames,
-        comments,
-        users,
-        readOnly: true,
-      });
+      // A+ W1: 60s private cache. Public share snapshots don't change often;
+      // letting the viewer's browser short-circuit refreshes avoids hammering
+      // the listFrames/comments pipeline on tab-switch behaviour. `private`
+      // because a share token is per-user-link and we don't want shared CDN
+      // caches to fan it out across viewers.
+      return reply
+        .header('Cache-Control', 'max-age=60, private')
+        .send({
+          board,
+          branches,
+          frames,
+          comments,
+          users,
+          readOnly: true,
+        });
     },
   );
 }

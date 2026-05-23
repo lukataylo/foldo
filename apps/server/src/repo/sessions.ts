@@ -16,6 +16,14 @@ export interface SessionRow {
 /** Sliding-window TTL. Browser sessions get bumped by this on every touch. */
 const BROWSER_SESSION_TTL = "interval '30 days'";
 
+/**
+ * Cap stored User-Agent strings. Real browsers send ~150 bytes; abusive
+ * clients have been spotted sending KBs of junk that bloat the sessions
+ * table and slow `/api/me/sessions`. 1024 is plenty of headroom for any
+ * legitimate UA without giving the attacker free DB writes.
+ */
+const USER_AGENT_MAX = 1024;
+
 export async function createSession(
   token: string,
   userId: string,
@@ -23,10 +31,11 @@ export async function createSession(
   kind: SessionKind = 'browser',
   label?: string,
 ): Promise<void> {
+  const ua = (userAgent ?? '').slice(0, USER_AGENT_MAX) || null;
   await exec(
     `INSERT INTO sessions (token, user_id, user_agent, kind, label)
      VALUES ($1, $2, $3, $4, $5)`,
-    [token, userId, userAgent ?? null, kind, label ?? null],
+    [token, userId, ua, kind, label ?? null],
   );
 }
 

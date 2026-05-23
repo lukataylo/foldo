@@ -43,7 +43,12 @@ export default defineConfig({
   webServer: process.env.RUN_PROD_SMOKE === '1' ? undefined : {
     command: 'npm run dev',
     url: process.env.FOLDO_WEB ?? 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
+    // CI's "boot dev servers" step in .github/workflows/ci.yml already
+    // launches the stack and waits for :5173 before this step runs, so
+    // Playwright must reuse it — the default `!process.env.CI` causes a
+    // port-in-use crash on every CI run. Locally we also reuse a stray
+    // dev server so the suite is dev-friendly.
+    reuseExistingServer: true,
     timeout: 120_000,
     env: {
       // Bring the shotter up alongside server/web/sample so Step 4's

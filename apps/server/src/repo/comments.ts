@@ -7,7 +7,7 @@ import type {
   User,
 } from '@foldo/protocol';
 import { query, queryOne, exec } from '../db.ts';
-import { nowIso, parseJson } from '../util.ts';
+import { nowIso } from '../util.ts';
 import { getUserById } from './users.ts';
 
 interface CommentRow {
@@ -26,8 +26,9 @@ interface CommentRow {
   anchor_section: string | null;
   anchor_line_start: number | null;
   anchor_line_end: number | null;
-  target_json: string | null;
-  replies_json: string;
+  // JSONB columns — pg driver returns these already parsed.
+  target_json: CommentTarget | null;
+  replies_json: CommentReply[] | null;
 }
 
 /** Pure row → Comment mapping. No DB I/O — pass the resolved author in. */
@@ -41,8 +42,8 @@ function rowToComment(r: CommentRow, author: User | null): Comment {
         lineEnd: r.anchor_line_end ?? undefined,
       }
     : undefined;
-  const target = parseJson<CommentTarget | null>(r.target_json, null) ?? undefined;
-  const replies = parseJson<CommentReply[]>(r.replies_json, []);
+  const target = r.target_json ?? undefined;
+  const replies = r.replies_json ?? [];
   return {
     id: r.id,
     boardId: r.board_id,
@@ -191,12 +192,12 @@ export async function addReply(
 ): Promise<Comment | null> {
   // Atomic append: previously this was read-mutate-write at the application
   // layer, so two concurrent replies could each read the same `existing.replies`
-  // and one of the writes would silently clobber the other. Casting through
-  // `jsonb` lets Postgres do the array concat in a single statement; the row's
-  // implicit row-lock during UPDATE serialises concurrent appends.
+  // and one of the writes would silently clobber the other. JSONB array
+  // concat in a single statement; the row's implicit row-lock during UPDATE
+  // serialises concurrent appends.
   const updated = await exec(
     `UPDATE comments
-        SET replies_json = (COALESCE(NULLIF(replies_json, ''), '[]')::jsonb || $1::jsonb)::text,
+        SET replies_json = COALESCE(replies_json, '[]'::jsonb) || $1::jsonb,
             updated_at = $2
       WHERE id = $3`,
     [JSON.stringify([reply]), nowIso(), commentId],

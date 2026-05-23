@@ -2,6 +2,20 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
+// pg returns TIMESTAMPTZ as a JS Date by default, which would force every
+// rowTo*() in the repo layer to do `r.created_at.toISOString()` after we
+// migrate TEXT timestamps to TIMESTAMPTZ. Override the parser to leave it
+// as the raw ISO-ish string Postgres already produces (`2026-05-23 16:42:11.012+00`)
+// and normalise that to a real ISO 8601 string. Net effect: repo code stays
+// untouched, wire format stays identical, callers can still pass either a
+// Date or a string back in (pg coerces both for TIMESTAMPTZ params).
+pg.types.setTypeParser(1184, (raw: string) => {
+  // 1184 = TIMESTAMPTZ. Convert Postgres' "2026-05-23 16:42:11.012+00" to
+  // canonical "2026-05-23T16:42:11.012Z" so JS Date parsing is unambiguous
+  // and the wire shape matches the existing TEXT-stored values.
+  return new Date(raw).toISOString();
+});
+
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
   throw new Error('DATABASE_URL is required (e.g. postgres://user:pass@host:5432/foldo)');
@@ -482,6 +496,131 @@ DO $$ BEGIN
     ALTER TABLE test_tasks
       ADD CONSTRAINT test_tasks_test_order_unique UNIQUE (test_id, order_index);
   END IF;
+END $$;
+
+-- ============================================================================
+-- Migrate the 13 TEXT-storing-JSON columns to JSONB. JSONB gives us native
+-- containment / indexability, SQL-level validation (a malformed write fails
+-- at the DB instead of being silently accepted), and removes the per-row
+-- JSON.parse cost on read. The pg driver returns JSONB columns as parsed
+-- objects, so repo readers drop their parseJson() shim — writers keep
+-- JSON.stringify() (pg accepts a string for a JSONB param and parses
+-- server-side).
+--
+-- Each ALTER is guarded by an information_schema check so reboots and CI are
+-- safe. Uses USING (col::jsonb) so existing TEXT data is parsed in place;
+-- if any row is invalid JSON, the migration fails loudly rather than
+-- silently dropping data.
+-- ============================================================================
+-- ============================================================================
+-- Standardize 19 TEXT-storing-ISO-timestamp columns to TIMESTAMPTZ. Without
+-- this we mix two timestamp types across the same DB — SQL date math fails,
+-- timezone bugs are latent, and indexes on (date, ...) sort lexicographically
+-- not chronologically. The pg driver's TIMESTAMPTZ parser is overridden at
+-- the top of this module to return an ISO string, so repo readers don't
+-- have to change.
+--
+-- Idempotent: only ALTER columns currently typed text (information_schema
+-- check). Existing TEXT values are cast with USING (col::timestamptz) which
+-- accepts the ISO strings the app has been writing.
+-- ============================================================================
+DO $$
+DECLARE
+  cols TEXT[][] := ARRAY[
+    ARRAY['users',         'created_at'],
+    ARRAY['boards',        'created_at'],
+    ARRAY['branches',      'created_at'],
+    ARRAY['branches',      'updated_at'],
+    ARRAY['commits',       'created_at'],
+    ARRAY['frames',        'created_at'],
+    ARRAY['frames',        'updated_at'],
+    ARRAY['comments',      'created_at'],
+    ARRAY['comments',      'updated_at'],
+    ARRAY['comments',      'resolved_at'],
+    ARRAY['dispatches',    'created_at'],
+    ARRAY['dispatches',    'started_at'],
+    ARRAY['dispatches',    'finished_at'],
+    ARRAY['sources',       'updated_at'],
+    ARRAY['tests',         'created_at'],
+    ARRAY['tests',         'updated_at'],
+    ARRAY['test_sessions', 'started_at'],
+    ARRAY['test_sessions', 'completed_at'],
+    ARRAY['test_sessions', 'consent_at']
+  ];
+  tname TEXT;
+  cname TEXT;
+  i INT;
+BEGIN
+  FOR i IN 1..array_upper(cols, 1) LOOP
+    tname := cols[i][1];
+    cname := cols[i][2];
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = tname AND column_name = cname AND data_type = 'text'
+    ) THEN
+      EXECUTE format('UPDATE %I SET %I = NULL WHERE %I = ''''', tname, cname, cname);
+      EXECUTE format(
+        'ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I::timestamptz',
+        tname, cname, cname
+      );
+    END IF;
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  -- (table, column, default-when-jsonb-or-NULL).
+  cols TEXT[][] := ARRAY[
+    ARRAY['frames',            'content_json',         NULL],
+    ARRAY['comments',          'target_json',          NULL],
+    ARRAY['comments',          'replies_json',         '[]'::text],
+    ARRAY['dispatches',        'target_json',          NULL],
+    ARRAY['dispatches',        'events_json',          '[]'::text],
+    ARRAY['tests',             'recording_modes_json', '["screen_voice","voice_only"]'::text],
+    ARRAY['tests',             'questionnaire_json',   NULL],
+    ARRAY['test_tasks',        'start_recipe_json',    NULL],
+    ARRAY['test_sessions',     'tester_meta_json',     NULL],
+    ARRAY['test_sessions',     'transcript_json',      NULL],
+    ARRAY['test_sessions',     'responses_json',       NULL],
+    ARRAY['test_sessions',     'synthesis_json',       NULL],
+    ARRAY['test_task_results', 'events_json',          NULL]
+  ];
+  tname TEXT;
+  cname TEXT;
+  dval  TEXT;
+  i INT;
+BEGIN
+  FOR i IN 1..array_upper(cols, 1) LOOP
+    tname := cols[i][1];
+    cname := cols[i][2];
+    dval  := cols[i][3];
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = tname AND column_name = cname AND data_type = 'text'
+    ) THEN
+      -- An empty string isn't valid JSON; normalise to NULL or the default
+      -- before the cast.
+      IF dval IS NULL THEN
+        EXECUTE format('UPDATE %I SET %I = NULL WHERE %I = ''''', tname, cname, cname);
+      ELSE
+        EXECUTE format('UPDATE %I SET %I = $1 WHERE %I = '''' OR %I IS NULL', tname, cname, cname, cname) USING dval;
+      END IF;
+      -- Drop the TEXT default first — DROP/ADD is the canonical way to swap
+      -- a default across an incompatible type. DEFAULT clauses need a SQL
+      -- literal expression, not a parameter, so we use format()'s %L.
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP DEFAULT', tname, cname);
+      EXECUTE format(
+        'ALTER TABLE %I ALTER COLUMN %I TYPE JSONB USING %I::jsonb',
+        tname, cname, cname
+      );
+      IF dval IS NOT NULL THEN
+        EXECUTE format(
+          'ALTER TABLE %I ALTER COLUMN %I SET DEFAULT %L::jsonb',
+          tname, cname, dval
+        );
+      END IF;
+    END IF;
+  END LOOP;
 END $$;
 `;
 

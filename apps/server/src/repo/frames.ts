@@ -5,7 +5,7 @@ import type {
   MarkdownFrameContent,
 } from '@foldo/protocol';
 import { query, queryOne, exec, type SqlRunner } from '../db.ts';
-import { nowIso, parseJson } from '../util.ts';
+import { nowIso } from '../util.ts';
 
 interface FrameRow {
   id: string;
@@ -19,7 +19,9 @@ interface FrameRow {
   position_y: number;
   width: number;
   height: number;
-  content_json: string;
+  // JSONB column — pg returns it already parsed. May be null if the row
+  // was migrated from an empty string; rowToFrame falls back to a stub.
+  content_json: FrameContent | null;
   parent_frame_id: string | null;
   generated_by_dispatch_id: string | null;
   captured_from_url: string | null;
@@ -38,7 +40,7 @@ function rowToFrame(r: FrameRow): Frame {
     age: r.age,
     position: { x: Number(r.position_x), y: Number(r.position_y) },
     size: { width: Number(r.width), height: Number(r.height) },
-    content: parseJson<FrameContent>(r.content_json, {
+    content: r.content_json ?? ({
       kind: 'markdown',
       docPath: '',
       title: '',

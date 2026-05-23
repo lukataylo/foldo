@@ -5,7 +5,7 @@ import type {
   DispatchStatus,
 } from '@foldo/protocol';
 import { query, queryOne, exec } from '../db.ts';
-import { nowIso, parseJson } from '../util.ts';
+import { nowIso } from '../util.ts';
 
 interface DispatchRow {
   id: string;
@@ -13,11 +13,12 @@ interface DispatchRow {
   frame_id: string;
   branch_id: string;
   initiator_user_id: string;
-  target_json: string;
+  // JSONB columns — pg returns them already parsed.
+  target_json: CommentTarget | null;
   base_commit_sha: string;
   intent: string;
   status: DispatchStatus;
-  events_json: string;
+  events_json: DispatchEvent[] | null;
   result_frame_id: string | null;
   result_commit_sha: string | null;
   created_at: string;
@@ -33,11 +34,11 @@ function rowToDispatch(r: DispatchRow): Dispatch {
     frameId: r.frame_id,
     branchId: r.branch_id,
     initiatorUserId: r.initiator_user_id,
-    target: parseJson<CommentTarget>(r.target_json, {}),
+    target: r.target_json ?? ({} as CommentTarget),
     baseCommitSha: r.base_commit_sha,
     intent: r.intent,
     status: r.status,
-    events: parseJson<DispatchEvent[]>(r.events_json, []),
+    events: r.events_json ?? [],
     resultFrameId: r.result_frame_id ?? undefined,
     resultCommitSha: r.result_commit_sha ?? undefined,
     createdAt: r.created_at,

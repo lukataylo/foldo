@@ -271,6 +271,20 @@ CREATE TABLE IF NOT EXISTS board_members (
 );
 CREATE INDEX IF NOT EXISTS idx_board_members_user ON board_members(user_id);
 
+-- Single-use, time-boxed tokens that back the password-reset flow. We store
+-- only sha256(token) so a DB leak doesn't hand the attacker reset links.
+-- expires_at lets the cleanup sweep drop stale rows; used_at is set on
+-- successful reset so the same token can't be replayed.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_pw_reset_user ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_pw_reset_expires ON password_reset_tokens(expires_at);
+
 CREATE TABLE IF NOT EXISTS demo_requests (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

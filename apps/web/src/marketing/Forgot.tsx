@@ -1,25 +1,46 @@
 import { useState, type FormEvent } from 'react';
 import SimplePage from './SimplePage';
+import { API_BASE } from './auth';
 
 export default function Forgot() {
   const [email, setEmail] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const onSubmit = (e: FormEvent): void => {
+  const onSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
-    // Honest UX: we don't have email infrastructure wired yet. Show a friendly
-    // confirmation but be clear we'll follow up by hand.
-    setSubmitted(true);
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      // Server intentionally returns 200 even on unknown email (no account-
+      // enumeration). Network failure is the only client-side error path.
+      const res = await fetch(`${API_BASE}/api/auth/password-reset/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok && res.status !== 200) {
+        throw new Error(`request failed (${res.status})`);
+      }
+      setSubmitted(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <SimplePage
       title="Forgot it?"
       chip="🐕 Help"
-      intro="Drop your email and we'll get you back into the canvas. Email-based reset isn't fully automated yet. A human will reach out within a business day."
+      intro="Drop your email and we'll send you a reset link. The link expires in 15 minutes."
     >
       {submitted ? (
         <div
+          data-testid="foldo-forgot-confirmation"
           style={{
             background: '#fff',
             border: '1.5px solid #E6E3DE',
@@ -27,11 +48,11 @@ export default function Forgot() {
             padding: '20px 22px',
           }}
         >
-          <strong>Got it.</strong>
+          <strong>Check your inbox.</strong>
           <p style={{ marginTop: 8, color: '#555', lineHeight: 1.55 }}>
-            If <code>{email}</code> matches an account, we'll send a reset
-            link as soon as a human ack's the queue. Sit, stay, refresh your
-            inbox.
+            If <code>{email}</code> matches an account we just sent a reset
+            link. It expires in 15 minutes. Didn't get it? Wait a minute,
+            then try again.
           </p>
         </div>
       ) : (
@@ -39,6 +60,7 @@ export default function Forgot() {
           <label className="field-label" htmlFor="forgot-email">Account email</label>
           <input
             id="forgot-email"
+            data-testid="foldo-forgot-email"
             className="field-input"
             type="email"
             value={email}
@@ -46,21 +68,28 @@ export default function Forgot() {
             placeholder="you@company.com"
             required
             autoFocus
+            disabled={submitting}
           />
+          {error && (
+            <div role="alert" style={{ marginTop: 12, color: '#a02020', fontSize: 13.5 }}>
+              {error}
+            </div>
+          )}
           <button
             type="submit"
+            data-testid="foldo-forgot-submit"
             className="btn-primary"
-            style={{ marginTop: 14 }}
+            style={{ marginTop: 14, opacity: submitting ? 0.6 : 1 }}
+            disabled={submitting}
           >
-            Send me a reset
+            {submitting ? 'Sending…' : 'Send me a reset'}
           </button>
         </form>
       )}
 
       <p style={{ marginTop: 26, fontSize: 13, color: '#777' }}>
-        In the meantime: if you remember your password, just{' '}
-        <a href="/login">log in</a>. If you're truly stuck, email{' '}
-        <a href="mailto:hi@foldo.dev">hi@foldo.dev</a> and we'll reset by hand.
+        Remember your password? <a href="/login">Log in</a>. Still stuck?{' '}
+        <a href="mailto:hi@foldo.dev">hi@foldo.dev</a>.
       </p>
     </SimplePage>
   );

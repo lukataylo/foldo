@@ -12,6 +12,7 @@ const KNOWN_MARKETING_PATHS = new Set<string>([
   '/demo',
   '/docs',
   '/forgot',
+  '/reset',
   '/terms',
   '/privacy',
   '/about',

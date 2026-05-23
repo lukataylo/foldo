@@ -24,6 +24,11 @@ import { DEMO_BOARD_ID } from '../seed.ts';
 import { extractBearerToken, requireUser } from '../auth.ts';
 import { rateLimitPreHandler } from '../rateLimit.ts';
 import { nowIso } from '../util.ts';
+import {
+  consumePasswordResetToken,
+  mintPasswordResetToken,
+} from '../repo/passwordResets.ts';
+import { getEmailSender } from '../email/index.ts';
 
 interface ScryptParams {
   /** CPU/memory cost factor — must be a power of 2. */
@@ -169,6 +174,15 @@ function newSessionToken(): string {
 
 function newUserId(): string {
   return `u-${randomBytes(8).toString('hex')}`;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function deriveInitial(name: string): string {
@@ -318,6 +332,111 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     if (token) await deleteSession(token);
     return reply.send({ ok: true });
   });
+
+  // ---- Password reset: request a token + send the email ----
+  // Public endpoint. ALWAYS returns 200 — never leaks whether the email
+  // exists. Rate-limited per IP because token generation is cheap enough
+  // that a flood is annoying. The actual delivery is via EmailSender;
+  // dev/CI stub writes to .foldo-email-outbox/.
+  app.post<{ Body: { email?: string } }>(
+    '/api/auth/password-reset/request',
+    { preHandler: rateLimitPreHandler('auth-pw-reset-req', 5, 60_000) },
+    async (req, reply) => {
+      const email = (req.body?.email ?? '').trim().toLowerCase();
+      // Always reply success — no account-enumeration leak.
+      const ack = { ok: true } as const;
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return reply.send(ack);
+      }
+      const user = await getUserByEmail(email);
+      if (!user) {
+        // Quiet warn, not a failure — useful telemetry without leaking the
+        // signal to the caller.
+        req.log.info({ email }, 'password-reset requested for unknown email');
+        return reply.send(ack);
+      }
+      try {
+        const { token, expiresAt } = await mintPasswordResetToken(user.id);
+        const origin =
+          process.env.FOLDO_PUBLIC_WEB_ORIGIN ?? 'http://localhost:5173';
+        const resetUrl = `${origin}/reset?token=${encodeURIComponent(token)}`;
+        const ttlMin = Math.max(
+          1,
+          Math.round((expiresAt.getTime() - Date.now()) / 60_000),
+        );
+        await getEmailSender().send({
+          to: user.email ?? email,
+          subject: 'Reset your Foldo password',
+          kind: 'password-reset',
+          text:
+            `Hi ${user.name},\n\n` +
+            `Click the link below to choose a new password. It expires in ${ttlMin} minutes.\n\n` +
+            `${resetUrl}\n\n` +
+            `If you didn't request this, ignore this email — your existing password still works.\n`,
+          html:
+            `<p>Hi ${escapeHtml(user.name)},</p>` +
+            `<p>Click the link below to choose a new password. It expires in ${ttlMin} minutes.</p>` +
+            `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
+            `<p>If you didn't request this, ignore this email — your existing password still works.</p>`,
+        });
+        req.log.info({ userId: user.id }, 'password-reset email sent');
+      } catch (err) {
+        req.log.error({ err, userId: user.id }, 'password-reset send failed');
+      }
+      return reply.send(ack);
+    },
+  );
+
+  // ---- Password reset: consume the token + set the new password ----
+  // Public endpoint. Returns the freshly-issued session token + user so the
+  // client can log the user in immediately without a second login form.
+  // EVERY other session for this user is revoked — the assumption is that
+  // a password reset is triggered because the old password may have leaked.
+  app.post<{ Body: { token?: string; newPassword?: string } }>(
+    '/api/auth/password-reset/complete',
+    { preHandler: rateLimitPreHandler('auth-pw-reset-cmp', 10, 60_000) },
+    async (req, reply) => {
+      const token = (req.body?.token ?? '').trim();
+      const newPassword = req.body?.newPassword ?? '';
+      if (!token) {
+        return reply
+          .code(400)
+          .send({ error: 'Reset token required', code: 'BAD_REQUEST' });
+      }
+      if (newPassword.length < PASSWORD_MIN || newPassword.length > PASSWORD_MAX) {
+        return reply.code(400).send({
+          error: `Password must be ${PASSWORD_MIN}–${PASSWORD_MAX} characters`,
+          code: 'BAD_REQUEST',
+        });
+      }
+      const consumed = await consumePasswordResetToken(token);
+      if (!consumed) {
+        return reply.code(400).send({
+          error: 'Reset link is invalid or has expired',
+          code: 'INVALID_TOKEN',
+        });
+      }
+      const user = await getUserById(consumed.userId);
+      if (!user) {
+        return reply.code(400).send({
+          error: 'Reset link is invalid or has expired',
+          code: 'INVALID_TOKEN',
+        });
+      }
+      const hash = await hashPassword(newPassword);
+      await setUserPasswordHash(user.id, hash);
+      // Mint a fresh session for the requester, then invalidate every other
+      // session belonging to this user.
+      const sessionToken = newSessionToken();
+      await createSession(sessionToken, user.id, req.headers['user-agent']);
+      const revoked = await deleteAllSessionsForUserExcept(user.id, sessionToken);
+      req.log.info(
+        { userId: user.id, revokedSessions: revoked },
+        'password reset completed',
+      );
+      return reply.send({ token: sessionToken, user });
+    },
+  );
 
   // ---------- authenticated routes ----------
 

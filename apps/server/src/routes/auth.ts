@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { User } from '@foldo/protocol';
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import {
@@ -6,6 +7,7 @@ import {
   getUserById,
   getUserPasswordHash,
   listUsers,
+  markEmailVerified,
   setUserPasswordHash,
   updateUserProfile,
   upsertUser,
@@ -28,6 +30,10 @@ import {
   consumePasswordResetToken,
   mintPasswordResetToken,
 } from '../repo/passwordResets.ts';
+import {
+  consumeEmailVerificationToken,
+  mintEmailVerificationToken,
+} from '../repo/emailVerifications.ts';
 import { getEmailSender } from '../email/index.ts';
 
 interface ScryptParams {
@@ -176,6 +182,47 @@ function newUserId(): string {
   return `u-${randomBytes(8).toString('hex')}`;
 }
 
+/**
+ * Mint a fresh email-verification token for the given user and send the
+ * email via the configured EmailSender. Used on signup and from the
+ * resend endpoint. Errors are caught + logged so a transient send failure
+ * doesn't break the parent request.
+ */
+async function sendVerificationEmail(
+  user: User,
+  email: string,
+  log: { info: Function; warn: Function; error: Function },
+): Promise<void> {
+  try {
+    const { token, expiresAt } = await mintEmailVerificationToken(user.id, email);
+    const origin =
+      process.env.FOLDO_PUBLIC_WEB_ORIGIN ?? 'http://localhost:5173';
+    const verifyUrl = `${origin}/verify?token=${encodeURIComponent(token)}`;
+    const ttlHrs = Math.max(
+      1,
+      Math.round((expiresAt.getTime() - Date.now()) / 3600_000),
+    );
+    await getEmailSender().send({
+      to: email,
+      subject: 'Verify your Foldo email',
+      kind: 'email-verification',
+      text:
+        `Hi ${user.name},\n\n` +
+        `Welcome to Foldo. Confirm this email by opening the link below. It expires in ${ttlHrs} hours.\n\n` +
+        `${verifyUrl}\n\n` +
+        `If you didn't sign up, ignore this email.\n`,
+      html:
+        `<p>Hi ${escapeHtml(user.name)},</p>` +
+        `<p>Welcome to Foldo. Confirm this email by opening the link below. It expires in ${ttlHrs} hours.</p>` +
+        `<p><a href="${verifyUrl}">${verifyUrl}</a></p>` +
+        `<p>If you didn't sign up, ignore this email.</p>`,
+    });
+    log.info({ userId: user.id }, 'verification email sent');
+  } catch (err) {
+    log.error({ err, userId: user.id }, 'verification email send failed');
+  }
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -281,6 +328,13 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     await createSession(token, id, req.headers['user-agent']);
 
     const user = await getUserById(id);
+    if (user) {
+      // Mint + send the verification email. Don't await — the signup
+      // response shouldn't be held up by the SMTP round-trip, and the
+      // helper handles its own errors so a transient send failure doesn't
+      // 500 the signup.
+      void sendVerificationEmail(user, email, req.log);
+    }
     return reply.send({ token, user, createdAt: nowIso() });
     },
   );
@@ -435,6 +489,72 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         'password reset completed',
       );
       return reply.send({ token: sessionToken, user });
+    },
+  );
+
+  // ---- Email verification: consume the token ----
+  // Public endpoint. We accept either GET (link in email) or POST (the SPA
+  // when it intercepts /verify?token=...). Either way: validate, stamp
+  // users.email_verified_at, return 200. Always returns a JSON body so the
+  // SPA can show a success state.
+  const verifyHandler = async (
+    req: import('fastify').FastifyRequest,
+    reply: import('fastify').FastifyReply,
+    rawToken: string | undefined,
+  ): Promise<void> => {
+    const token = (rawToken ?? '').trim();
+    if (!token) {
+      reply.code(400).send({
+        error: 'Verification token required',
+        code: 'BAD_REQUEST',
+      });
+      return;
+    }
+    const consumed = await consumeEmailVerificationToken(token);
+    if (!consumed) {
+      reply.code(400).send({
+        error: 'Verification link is invalid or has expired',
+        code: 'INVALID_TOKEN',
+      });
+      return;
+    }
+    await markEmailVerified(consumed.userId);
+    req.log.info(
+      { userId: consumed.userId, email: consumed.email },
+      'email verified',
+    );
+    reply.send({ ok: true, email: consumed.email });
+  };
+  app.get<{ Querystring: { token?: string } }>(
+    '/api/auth/verify-email',
+    { preHandler: rateLimitPreHandler('auth-verify', 20, 60_000) },
+    async (req, reply) => verifyHandler(req, reply, req.query.token),
+  );
+  app.post<{ Body: { token?: string } }>(
+    '/api/auth/verify-email',
+    { preHandler: rateLimitPreHandler('auth-verify', 20, 60_000) },
+    async (req, reply) => verifyHandler(req, reply, req.body?.token),
+  );
+
+  // ---- Resend the verification email ----
+  // Authenticated — only the user themselves can request a resend.
+  // Idempotent on the verified case (no-op + 200). Rate-limited per user.
+  app.post(
+    '/api/auth/resend-verification',
+    { preHandler: rateLimitPreHandler('auth-verify-resend', 3, 60_000) },
+    async (req, reply) => {
+      const me = requireUser(req);
+      if (me.emailVerifiedAt) {
+        return reply.send({ ok: true, alreadyVerified: true });
+      }
+      if (!me.email) {
+        return reply.code(400).send({
+          error: 'This account has no email on file',
+          code: 'NO_EMAIL',
+        });
+      }
+      await sendVerificationEmail(me, me.email, req.log);
+      return reply.send({ ok: true });
     },
   );
 

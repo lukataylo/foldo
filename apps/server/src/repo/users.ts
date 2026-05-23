@@ -8,6 +8,7 @@ interface UserRow {
   initial: string;
   color: string;
   email: string | null;
+  email_verified_at: string | null;
   kind: 'human' | 'agent';
   created_at: string;
 }
@@ -19,8 +20,18 @@ function rowToUser(r: UserRow): User {
     initial: r.initial,
     color: r.color,
     email: r.email ?? undefined,
+    emailVerifiedAt: r.email_verified_at ?? undefined,
     kind: r.kind,
   };
+}
+
+/** Stamp the user's email_verified_at to now. Idempotent — safe to call twice. */
+export async function markEmailVerified(userId: string): Promise<void> {
+  await exec(
+    `UPDATE users SET email_verified_at = COALESCE(email_verified_at, now())
+      WHERE id = $1`,
+    [userId],
+  );
 }
 
 export async function listUsers(): Promise<User[]> {

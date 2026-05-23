@@ -9,6 +9,8 @@ export interface AuthUser {
   initial: string;
   color: string;
   email?: string;
+  /** ISO timestamp when the user clicked the verify-email link; undefined if not yet. */
+  emailVerifiedAt?: string;
   kind: 'human' | 'agent';
 }
 

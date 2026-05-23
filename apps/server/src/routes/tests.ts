@@ -17,7 +17,7 @@ import type {
   TestTaskInput,
   UpdateTestRequest,
 } from '@foldo/protocol';
-import { requireUser } from '../auth.ts';
+import { assertEmailVerified, requireUser } from '../auth.ts';
 import { getBoardById } from '../repo/boards.ts';
 import { canEditBoard, isMember } from '../repo/members.ts';
 import {
@@ -384,6 +384,23 @@ export async function registerTestRoutes(app: FastifyInstance): Promise<void> {
           return reply
             .code(400)
             .send({ error: 'Invalid status', code: 'BAD_REQUEST' });
+        }
+        // Going live = the test becomes a publicly-shareable foldo.dev/t/:token
+        // link that pings real users. Require a verified email before allowing
+        // it so spam signups can't immediately weaponise the platform. Draft +
+        // closed are unrestricted (a test owner can still iterate locally).
+        if (body.status === 'live' && test.status !== 'live') {
+          try {
+            assertEmailVerified(req);
+          } catch (err) {
+            const e = err as { statusCode?: number; code?: string; message?: string };
+            return reply
+              .code(e.statusCode ?? 403)
+              .send({
+                error: e.message ?? 'Verify your email first',
+                code: e.code ?? 'EMAIL_NOT_VERIFIED',
+              });
+          }
         }
         patch.status = body.status;
       }

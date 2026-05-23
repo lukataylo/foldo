@@ -28,7 +28,7 @@ export interface SessionSummary {
   current: boolean;
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   const token = readToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }

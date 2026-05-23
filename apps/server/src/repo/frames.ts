@@ -61,6 +61,82 @@ export async function listFramesForBoard(boardId: string): Promise<Frame[]> {
   return overlayMarkdownBodies(rows.map(rowToFrame));
 }
 
+const FRAMES_PAGE_DEFAULT = 100;
+const FRAMES_PAGE_MAX = 500;
+
+/**
+ * Keyset-paginated frames list. Cursor is the (created_at, id) tuple of the
+ * last row in the previous page, base64-encoded. Keyset beats OFFSET on big
+ * boards because the index on (board_id, created_at) gives us O(log n)
+ * page-start lookup instead of O(n*offset) scans.
+ */
+export interface FramePage {
+  items: Frame[];
+  hasMore: boolean;
+  cursor?: string;
+}
+
+export async function listFramesForBoardPage(
+  boardId: string,
+  opts: { limit?: number; cursor?: string },
+): Promise<FramePage> {
+  const limit = Math.min(
+    Math.max(opts.limit ?? FRAMES_PAGE_DEFAULT, 1),
+    FRAMES_PAGE_MAX,
+  );
+  // Decode cursor → (created_at, id). Anything malformed falls back to "no
+  // cursor" rather than throwing — pagination is resumable from the start.
+  let cursorTs: string | null = null;
+  let cursorId: string | null = null;
+  if (opts.cursor) {
+    try {
+      const raw = Buffer.from(opts.cursor, 'base64url').toString('utf8');
+      const split = raw.indexOf('|');
+      if (split > 0) {
+        cursorTs = raw.slice(0, split);
+        cursorId = raw.slice(split + 1);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Fetch limit+1 so we can tell whether there's a next page without a
+  // second COUNT query.
+  const rows =
+    cursorTs && cursorId
+      ? await query<FrameRow>(
+          `SELECT * FROM frames
+            WHERE board_id = $1
+              AND (created_at, id) > ($2::timestamptz, $3)
+            ORDER BY created_at, id
+            LIMIT $4`,
+          [boardId, cursorTs, cursorId, limit + 1],
+        )
+      : await query<FrameRow>(
+          `SELECT * FROM frames
+            WHERE board_id = $1
+            ORDER BY created_at, id
+            LIMIT $2`,
+          [boardId, limit + 1],
+        );
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const items = await overlayMarkdownBodies(page.map(rowToFrame));
+  let nextCursor: string | undefined;
+  if (hasMore) {
+    const last = page[page.length - 1];
+    if (last) {
+      nextCursor = Buffer.from(
+        `${last.created_at}|${last.id}`,
+        'utf8',
+      ).toString('base64url');
+    }
+  }
+  return { items, hasMore, cursor: nextCursor };
+}
+
 export async function getFrameById(
   id: string,
   runner?: SqlRunner,

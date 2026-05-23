@@ -18,6 +18,7 @@ import { requireUser } from '../auth.ts';
 import { rateLimitPreHandler } from '../rateLimit.ts';
 import {
   DELETED_USER_ID,
+  DELETED_USER_NAME,
   ensureDeletedSentinelUser,
   getUserPasswordHash,
   softDeleteUser,
@@ -25,6 +26,7 @@ import {
 import { listBoardsOwnedBy } from '../repo/boards.ts';
 import { listBranchesAuthoredBy } from '../repo/branches.ts';
 import {
+  anonymiseRepliesByAuthor,
   listCommentsAuthoredBy,
   reassignCommentsAuthor,
 } from '../repo/comments.ts';
@@ -211,6 +213,15 @@ export async function registerMeRoutes(app: FastifyInstance): Promise<void> {
 
       await ensureDeletedSentinelUser();
       await reassignCommentsAuthor(me.id, DELETED_USER_ID);
+      // top-level reassignment doesn't touch nested replies that live in
+      // `comments.replies_json` — anonymise those too. Mirrors the identity
+      // shape the sentinel row carries (see ensureDeletedSentinelUser).
+      const repliesAnonymised = await anonymiseRepliesByAuthor(me.id, {
+        userId: DELETED_USER_ID,
+        name: DELETED_USER_NAME,
+        initial: '?',
+        color: '#999',
+      });
       await reassignTestCreator(me.id, DELETED_USER_ID);
       const emailHash = await softDeleteUser(me.id);
       // Kill every session belonging to this user — both browser and API
@@ -219,7 +230,7 @@ export async function registerMeRoutes(app: FastifyInstance): Promise<void> {
       await exec(`DELETE FROM sessions WHERE user_id = $1`, [me.id]);
 
       req.log.info(
-        { userId: me.id, emailHash },
+        { userId: me.id, emailHash, repliesAnonymised },
         'user soft-deleted (GDPR)',
       );
       return reply.send({ ok: true });

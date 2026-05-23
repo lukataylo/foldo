@@ -20,7 +20,21 @@ import { getBoardById } from '../repo/boards.ts';
 import { upsertSource } from '../repo/sources.ts';
 import { hub } from '../ws/hub.ts';
 import { withTransaction } from '../db.ts';
+import { userMutationLimit } from '../rateLimit.ts';
 import { newId, nowIso } from '../util.ts';
+
+/**
+ * Cap a single user's frame-creation rate. 100/min is generous enough for
+ * a human dragging a stack of stickies onto the canvas in rapid succession
+ * but a script trying to flood the board hits the wall fast. Applied as a
+ * Fastify preHandler so the rejection comes BEFORE the DB write — no half-
+ * inserted rows on burst.
+ */
+const frameCreateLimit = userMutationLimit({
+  bucket: 'frames-create',
+  max: 100,
+  windowMs: 60_000,
+});
 
 async function requireEditor(
   userId: string,
@@ -82,7 +96,10 @@ export function stampMarkdownAuthorship(
 }
 
 export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: CreateFrameRequest }>('/api/frames', async (req, reply) => {
+  app.post<{ Body: CreateFrameRequest }>(
+    '/api/frames',
+    { preHandler: frameCreateLimit },
+    async (req, reply) => {
     const me = requireUser(req);
     const body = req.body;
     if (!body || !body.boardId || !body.branchId || !body.content) {
@@ -108,7 +125,8 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
     await insertFrame(frame);
     hub.broadcast(frame.boardId, { type: 'frame.added', frame });
     return reply.send(frame);
-  });
+    },
+  );
 
   app.patch<{ Params: { id: string }; Body: UpdateFrameRequest }>(
     '/api/frames/:id',

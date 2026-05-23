@@ -448,7 +448,11 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   // a password reset is triggered because the old password may have leaked.
   app.post<{ Body: { token?: string; newPassword?: string } }>(
     '/api/auth/password-reset/complete',
-    { preHandler: rateLimitPreHandler('auth-pw-reset-cmp', 10, 60_000) },
+    // 5 attempts per 15 minutes per IP. Matches the login limit so a bot
+    // can't pivot from "spray logins" to "spray reset-token completions"
+    // — they're equally cheap to abuse if uncapped. The previous 10/min
+    // was generous enough that a bot could try ~150 tokens before tripping.
+    { preHandler: rateLimitPreHandler('auth-pw-reset-cmp', 5, 15 * 60_000) },
     async (req, reply) => {
       const token = (req.body?.token ?? '').trim();
       const newPassword = req.body?.newPassword ?? '';

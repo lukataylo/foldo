@@ -770,8 +770,43 @@ END $$;
 -- ============================================================================
 `;
 
+/**
+ * Constant lock id for the schema-init advisory lock. pg_advisory_lock takes
+ * a single bigint key; the value is arbitrary as long as every replica picks
+ * the same one. 7331 (leetspeak "lees") is the project convention — easy to
+ * grep for, doesn't collide with anything else we hold.
+ */
+const SCHEMA_INIT_LOCK_ID = 7331;
+
+/**
+ * Run the schema bootstrap. Wrapped in a Postgres advisory lock so when two
+ * replicas (or a rolling-deploy old+new pair) boot concurrently, only one
+ * actually runs the ALTER/CREATE statements. The second blocks until the
+ * lock releases and then re-runs the (now-idempotent) script — every block
+ * is guarded with `IF NOT EXISTS` / `pg_constraint` checks so the second
+ * pass is a near-noop.
+ *
+ * The lock is session-scoped; we explicitly unlock in a finally so a thrown
+ * migration doesn't leave the next boot hanging.
+ */
 export async function initSchema(): Promise<void> {
-  await pool.query(SCHEMA);
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_ID]);
+    try {
+      await client.query(SCHEMA);
+    } finally {
+      try {
+        await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_ID]);
+      } catch {
+        // Best-effort: the lock auto-releases when the session ends, which
+        // happens immediately below on client.release(). Logging this would
+        // just be noise.
+      }
+    }
+  } finally {
+    client.release();
+  }
 }
 
 export async function closePool(): Promise<void> {

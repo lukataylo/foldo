@@ -103,3 +103,47 @@ export function rateLimitPreHandler(
     }
   };
 }
+
+/**
+ * Per-USER mutation rate limit. Keyed by the authenticated user id rather
+ * than the request IP — a single user behind a corporate NAT shouldn't be
+ * able to DoS the API for every other tab sharing their egress, and
+ * conversely an attacker with one stolen session shouldn't be able to spin
+ * up many IPs to dodge a per-IP cap.
+ *
+ * Anonymous / unauthenticated requests fall through to per-IP keying so
+ * we still have some coverage if this preHandler runs before requireUser
+ * — that's intentional, lets routes choose preHandler order without losing
+ * the limiter. Loopback traffic is exempted same as the IP-based limiter
+ * so dev / CI / e2e never trip it.
+ *
+ * Usage:
+ *   app.post('/api/frames', {
+ *     preHandler: userMutationLimit({ bucket: 'frames-write', max: 100, windowMs: 60_000 }),
+ *   }, handler)
+ */
+export function userMutationLimit(opts: {
+  bucket: string;
+  max: number;
+  windowMs: number;
+}): (req: FastifyRequest, reply: FastifyReply) => Promise<void> {
+  const { bucket, max, windowMs } = opts;
+  return async (req, reply) => {
+    const ip = req.ip || 'unknown';
+    if (isLoopback(ip)) return;
+    // req.user is set by the global auth hook in apps/server/src/auth.ts.
+    // Falling back to ip keeps the limiter active even before requireUser
+    // runs (e.g. if a route forgets to call requireUser).
+    const userId = req.user?.id ?? `ip:${ip}`;
+    const result = rateLimit(bucket, userId, max, windowMs);
+    if (!result.ok) {
+      reply
+        .code(429)
+        .header('Retry-After', String(result.retryAfterSeconds))
+        .send({
+          error: 'Too many requests, please slow down',
+          code: 'RATE_LIMITED',
+        });
+    }
+  };
+}

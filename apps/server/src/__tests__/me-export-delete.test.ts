@@ -29,7 +29,7 @@ import { addBoardMember } from '../repo/members.ts';
 import { upsertBoard } from '../repo/boards.ts';
 import { upsertBranch, upsertCommit } from '../repo/branches.ts';
 import { insertFrame } from '../repo/frames.ts';
-import { insertComment } from '../repo/comments.ts';
+import { addReply, insertComment } from '../repo/comments.ts';
 import { nowIso } from '../util.ts';
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -336,6 +336,57 @@ d('me-export-delete routes', () => {
     // Cleanup
     await exec(`DELETE FROM sessions WHERE user_id = $1`, [id]);
     await exec(`DELETE FROM users WHERE id = $1`, [id]);
+  });
+
+  it('delete anonymises nested replies authored by the deleted user', async () => {
+    // Two users on one board: alice owns a comment, bob replies to it. After
+    // bob deletes his account, bob's reply on alice's comment must lose its
+    // identity (authorUserId / authorName / authorColor) — otherwise an
+    // exported board still leaks bob's name forever.
+    const alice = await signupViaApi(app);
+    const bob = await signupViaApi(app);
+    const seeded = await seedBoardWithCommentBy(alice, `parent-${unique()}`);
+    await addBoardMember(seeded.boardId, bob.id, 'editor');
+    // Bob replies on alice's comment.
+    const bobReplyId = `cr-bob-${unique()}`;
+    await addReply(seeded.commentId, {
+      id: bobReplyId,
+      authorUserId: bob.id,
+      authorName: bob.name,
+      authorInitial: bob.name[0] ?? 'B',
+      authorColor: '#ff00aa',
+      text: `bob-reply-${unique()}`,
+      createdAt: nowIso(),
+    });
+
+    // Bob deletes his account.
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/me/delete',
+      headers: { Authorization: `Bearer ${bob.token}` },
+      payload: { currentPassword: bob.password },
+    });
+    expect(res.statusCode).toBe(200);
+
+    // The reply row survives but its identity fields are the sentinel's.
+    const row = await queryOne<{ replies_json: Array<{
+      id: string;
+      authorUserId: string;
+      authorName: string;
+      authorColor: string;
+      text: string;
+    }> }>(
+      `SELECT replies_json FROM comments WHERE id = $1`,
+      [seeded.commentId],
+    );
+    expect(row).not.toBeNull();
+    const reply = row!.replies_json.find((r) => r.id === bobReplyId);
+    expect(reply).toBeDefined();
+    expect(reply!.authorUserId).toBe(DELETED_USER_ID);
+    expect(reply!.authorName).toBe('deleted user');
+    expect(reply!.authorColor).toBe('#999');
+    // Text + id are preserved so thread continuity reads correctly.
+    expect(reply!.text).toMatch(/^bob-reply-/);
   });
 
   it('export rejects unauthenticated requests', async () => {

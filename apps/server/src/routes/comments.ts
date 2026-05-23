@@ -16,7 +16,21 @@ import {
 } from '../repo/comments.ts';
 import { canEditBoard, isMember } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
+import { userMutationLimit } from '../rateLimit.ts';
 import { newId, nowIso } from '../util.ts';
+
+/**
+ * Cap a single user's comment-creation rate. 500/hour easily covers an
+ * active reviewer landing pins on every frame of a busy board, but rejects
+ * a script trying to drown a board in noise. Hourly window (not per-minute)
+ * because comment activity is bursty — humans land 10 in a minute then go
+ * back to thinking for 20.
+ */
+const commentCreateLimit = userMutationLimit({
+  bucket: 'comments-create',
+  max: 500,
+  windowMs: 60 * 60_000,
+});
 
 async function requireEditor(userId: string, boardId: string): Promise<void> {
   if (!(await canEditBoard(boardId, userId))) {
@@ -39,27 +53,31 @@ async function requireMember(userId: string, boardId: string): Promise<void> {
 }
 
 export async function registerCommentRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: CreateCommentRequest }>('/api/comments', async (req, reply) => {
-    const user = requireUser(req);
-    const body = req.body;
-    if (!body?.boardId || !body?.frameId || !body?.text) {
-      return reply.code(400).send({ error: 'Invalid comment body', code: 'BAD_REQUEST' });
-    }
-    // Comments require membership; even viewers can leave them in this MVP.
-    await requireMember(user.id, body.boardId);
-    const comment = await insertComment({
-      id: newId('c'),
-      boardId: body.boardId,
-      frameId: body.frameId,
-      authorUserId: user.id,
-      text: body.text,
-      pin: body.pin,
-      anchor: body.anchor,
-      target: body.target,
-    });
-    hub.broadcast(comment.boardId, { type: 'comment.added', comment });
-    return reply.send(comment);
-  });
+  app.post<{ Body: CreateCommentRequest }>(
+    '/api/comments',
+    { preHandler: commentCreateLimit },
+    async (req, reply) => {
+      const user = requireUser(req);
+      const body = req.body;
+      if (!body?.boardId || !body?.frameId || !body?.text) {
+        return reply.code(400).send({ error: 'Invalid comment body', code: 'BAD_REQUEST' });
+      }
+      // Comments require membership; even viewers can leave them in this MVP.
+      await requireMember(user.id, body.boardId);
+      const comment = await insertComment({
+        id: newId('c'),
+        boardId: body.boardId,
+        frameId: body.frameId,
+        authorUserId: user.id,
+        text: body.text,
+        pin: body.pin,
+        anchor: body.anchor,
+        target: body.target,
+      });
+      hub.broadcast(comment.boardId, { type: 'comment.added', comment });
+      return reply.send(comment);
+    },
+  );
 
   app.patch<{ Params: { id: string }; Body: UpdateCommentRequest }>(
     '/api/comments/:id',

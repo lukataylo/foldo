@@ -385,24 +385,32 @@ export async function registerTestRoutes(app: FastifyInstance): Promise<void> {
             .code(400)
             .send({ error: 'Invalid status', code: 'BAD_REQUEST' });
         }
-        // Going live = the test becomes a publicly-shareable foldo.dev/t/:token
-        // link that pings real users. Require a verified email before allowing
-        // it so spam signups can't immediately weaponise the platform. Draft +
-        // closed are unrestricted (a test owner can still iterate locally).
-        if (body.status === 'live' && test.status !== 'live') {
-          try {
-            assertEmailVerified(req);
-          } catch (err) {
-            const e = err as { statusCode?: number; code?: string; message?: string };
-            return reply
-              .code(e.statusCode ?? 403)
-              .send({
-                error: e.message ?? 'Verify your email first',
-                code: e.code ?? 'EMAIL_NOT_VERIFIED',
-              });
-          }
-        }
         patch.status = body.status;
+      }
+
+      // Going live = the test becomes a publicly-shareable foldo.dev/t/:token
+      // link that pings real users. Require a verified email before allowing
+      // it so spam signups can't immediately weaponise the platform. Draft +
+      // closed are unrestricted (a test owner can still iterate locally).
+      //
+      // Done AFTER all body validation but BEFORE the updateTest write so a
+      // failed email-verify check can never half-apply the patch — previous
+      // ordering ran the assert inside the status branch but other patch
+      // fields (name, intro, …) had already been collected into `patch` and
+      // a thrown assert would just be a 403, leaving room for a future
+      // refactor to accidentally do partial writes.
+      if (patch.status === 'live' && test.status !== 'live') {
+        try {
+          assertEmailVerified(req);
+        } catch (err) {
+          const e = err as { statusCode?: number; code?: string; message?: string };
+          return reply
+            .code(e.statusCode ?? 403)
+            .send({
+              error: e.message ?? 'Verify your email first',
+              code: e.code ?? 'EMAIL_NOT_VERIFIED',
+            });
+        }
       }
 
       const next = await updateTest(test.id, patch);

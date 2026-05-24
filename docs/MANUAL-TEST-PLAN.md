@@ -617,7 +617,7 @@ Run on a real iPad. Skip section if no iPad available.
 - [ ] No console errors. No memory leaks visible in DevTools Memory tab.
 
 ### 17.5 Live database performance check
-- [ ] `curl -s -H 'Authorization: Bearer YOUR_TOKEN' https://api.foldo.dev/api/home | jq '. | length'` — completes in <300ms even with many boards (Wave 1 GROUP BY rewrite).
+- [ ] Issue a `GET /api/home` with your session token in the `Authorization` header (use DevTools → Network → copy as curl from a real page load). Response completes in <300ms even with many boards (Wave 1 GROUP BY rewrite).
 
 ---
 

@@ -6,6 +6,12 @@ export interface HomeBoardSummary {
   repoSlug: string;
   devUrl?: string;
   createdAt: string;
+  /**
+   * ISO timestamp when the board was soft-deleted via DELETE /api/boards/:id.
+   * NULL for live boards. The home grid only sees archived boards when the
+   * "Show archived" toggle calls /api/home?includeArchived=true.
+   */
+  archivedAt?: string | null;
   /** Membership role: 'owner' lets you delete/share, 'editor' can write, 'viewer' read-only. */
   role?: 'owner' | 'editor' | 'viewer';
   branchCount: number;
@@ -52,10 +58,35 @@ export async function fetchMe(): Promise<MeResponse> {
   return asJson<MeResponse>(res);
 }
 
-export async function fetchHomeBoards(): Promise<HomeBoardSummary[]> {
-  const res = await fetch(`${API_BASE}/api/home`, { headers: authHeaders() });
+export async function fetchHomeBoards(opts?: {
+  includeArchived?: boolean;
+}): Promise<HomeBoardSummary[]> {
+  const qs = opts?.includeArchived ? '?includeArchived=true' : '';
+  const res = await fetch(`${API_BASE}/api/home${qs}`, { headers: authHeaders() });
   const data = await asJson<{ boards: HomeBoardSummary[] }>(res);
   return data.boards;
+}
+
+/**
+ * Soft-delete a board on the server. Caller should optimistically remove
+ * the card from the active list. Restorable via restoreBoard() while the
+ * archived view is visible.
+ */
+export async function archiveBoard(boardId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+  await asJson<{ ok: boolean }>(res);
+}
+
+/** Inverse of archiveBoard — un-soft-delete on the server. */
+export async function restoreBoard(boardId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/restore`,
+    { method: 'POST', headers: authHeaders() },
+  );
+  await asJson<{ ok: boolean }>(res);
 }
 
 export async function updateProfile(patch: {

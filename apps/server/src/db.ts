@@ -768,6 +768,27 @@ END $$;
 -- ============================================================================
 -- END: A+ W1 perf indexes
 -- ============================================================================
+
+-- ============================================================================
+-- BEGIN: A+ W2 product gaps — board soft-delete (archive)
+-- ----------------------------------------------------------------------------
+-- Soft-delete column. A NULL value means "live"; a set timestamp means the
+-- board was archived (and is excluded from the standard list-boards path).
+-- Hard DELETE would cascade through frames, comments, dispatches, etc. — an
+-- accidental click would wipe weeks of work and break the GDPR contract that
+-- says the user is the one who decides when data goes. Soft-delete keeps the
+-- row recoverable via POST /api/boards/:id/restore.
+--
+-- A partial index on (archived_at IS NULL) lets the default "active boards"
+-- filter stay a cheap index scan.
+-- ============================================================================
+ALTER TABLE boards ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_boards_active
+  ON boards(created_at)
+  WHERE archived_at IS NULL;
+-- ============================================================================
+-- END: A+ W2 product gaps
+-- ============================================================================
 `;
 
 /**

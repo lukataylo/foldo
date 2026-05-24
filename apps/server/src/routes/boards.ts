@@ -11,9 +11,11 @@ import type {
 } from '@foldo/protocol';
 import { requireUser } from '../auth.ts';
 import {
+  archiveBoard,
   getBoardById,
   getBoardByRepoSlug,
   listBoards,
+  restoreBoard,
   upsertBoard,
 } from '../repo/boards.ts';
 import {
@@ -48,14 +50,21 @@ export async function registerBoardRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ user, token } satisfies MeResponse);
   });
 
-  app.get('/api/boards', async (req, reply) => {
-    const me = requireUser(req);
-    const ids = new Set(await listBoardIdsForUser(me.id));
-    const all = await listBoards();
-    return reply.send({
-      boards: all.filter((b) => ids.has(b.id)),
-    } satisfies ListBoardsResponse);
-  });
+  app.get<{ Querystring: { includeArchived?: string } }>(
+    '/api/boards',
+    async (req, reply) => {
+      const me = requireUser(req);
+      const ids = new Set(await listBoardIdsForUser(me.id));
+      // ?includeArchived=true flips the soft-delete filter so the home
+      // grid's "Show archived" toggle can list everything the user used to
+      // see. Default path stays cheap (uses the partial index).
+      const includeArchived = req.query.includeArchived === 'true';
+      const all = await listBoards({ includeArchived });
+      return reply.send({
+        boards: all.filter((b) => ids.has(b.id)),
+      } satisfies ListBoardsResponse);
+    },
+  );
 
   app.get<{ Params: { id: string } }>('/api/boards/:id', async (req, reply) => {
     const me = requireUser(req);
@@ -257,4 +266,40 @@ export async function registerBoardRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.code(201).send({ branch });
   });
+
+  // Soft-delete a board (archive). NOT a hard DELETE — we want the data to
+  // survive an accidental click and a GDPR-compliant "I changed my mind"
+  // window. The row's archived_at gets stamped; child frames / comments /
+  // dispatches stay in place. Restore via POST /api/boards/:id/restore.
+  // Requires owner-or-editor (canEditBoard) so a viewer can't nuke a board
+  // they only have read access to.
+  app.delete<{ Params: { id: string } }>(
+    '/api/boards/:id',
+    async (req, reply) => {
+      const me = requireUser(req);
+      const board = await getBoardById(req.params.id);
+      if (!board || !(await canEditBoard(board.id, me.id))) {
+        return reply
+          .code(404)
+          .send({ error: 'Board not found', code: 'NOT_FOUND' });
+      }
+      await archiveBoard(board.id);
+      return reply.send({ ok: true, archived: true });
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/boards/:id/restore',
+    async (req, reply) => {
+      const me = requireUser(req);
+      const board = await getBoardById(req.params.id);
+      if (!board || !(await canEditBoard(board.id, me.id))) {
+        return reply
+          .code(404)
+          .send({ error: 'Board not found', code: 'NOT_FOUND' });
+      }
+      await restoreBoard(board.id);
+      return reply.send({ ok: true, restored: true });
+    },
+  );
 }

@@ -50,6 +50,13 @@ export interface Board {
   /** Where the in-directory MCP for this repo serves the dev preview, if connected */
   devUrl?: string;
   createdAt: string; // ISO
+  /**
+   * Soft-delete marker. NULL/undefined for live boards. Set to an ISO
+   * timestamp when the owner archives the board via DELETE /api/boards/:id.
+   * Archived boards are filtered out of the default /api/boards and /api/home
+   * responses; pass `?includeArchived=true` to see them and offer Restore.
+   */
+  archivedAt?: string | null;
 }
 
 // ---------- Branches ----------

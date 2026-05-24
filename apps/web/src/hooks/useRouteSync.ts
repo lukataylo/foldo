@@ -55,14 +55,42 @@ export function useRouteSync({
 }: RouteSyncOptions): RouteSyncApi {
   const focusedFrameRef = useRef<string | null>(null);
 
+  // First-focus marker: when set we know we've already done one fitTo()
+  // for this session and any subsequent focus should be the gentler
+  // pan-only path (to avoid the "zoom jumps around when I click frames"
+  // feedback). Reset when the boot state cycles, not per-frame.
+  const hasFittedOnceRef = useRef(false);
+
   const fitToFrame = useCallback(
     (frame: Frame, padding = 60) => {
-      canvasRef.current?.fitTo({
+      const handle = canvasRef.current;
+      if (!handle) return;
+      const target = {
         x: frame.position.x - padding,
         y: frame.position.y - padding - 40,
         width: frame.size.width + padding * 2,
         height: frame.size.height + padding * 2 + 40,
-      });
+      };
+      // First focus of the session (cold deep-link, fresh page load): do
+      // the full fit so the user lands on the frame at a comfortable
+      // zoom. Every subsequent navigation pans gently — keeps the user's
+      // chosen zoom level + matches the camera's existing framing.
+      if (!hasFittedOnceRef.current) {
+        hasFittedOnceRef.current = true;
+        handle.fitTo(target);
+        return;
+      }
+      // panTo if the handle supports it; otherwise fall back to fitTo so
+      // we never silently no-op a navigation. The Canvas's `panTo` keeps
+      // the current zoom level and just centers the target.
+      const panTo = (handle as unknown as {
+        panTo?: (r: { x: number; y: number; width: number; height: number }) => void;
+      }).panTo;
+      if (typeof panTo === 'function') {
+        panTo(target);
+      } else {
+        handle.fitTo(target);
+      }
     },
     [canvasRef],
   );

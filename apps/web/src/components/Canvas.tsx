@@ -18,6 +18,12 @@ export interface ViewportState {
 export interface CanvasHandle {
   setZoom: (next: number, anchor?: { x: number; y: number }) => void;
   fitTo: (worldRect: { x: number; y: number; width: number; height: number }) => void;
+  /**
+   * Pan the camera so `rect` is centered, WITHOUT changing zoom level.
+   * Use this for in-canvas navigation (e.g. clicking a frame) — the user
+   * chose their zoom, don't smash it. Use fitTo for cold/deep-link entry.
+   */
+  panTo: (worldRect: { x: number; y: number; width: number; height: number }) => void;
   zoomIn: () => void;
   zoomOut: () => void;
   zoomToFit: () => void;
@@ -148,18 +154,34 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     [],
   );
 
+  // Pan-only navigation — keep the user's current zoom. Use for
+  // in-canvas hops (clicking a frame, Layer Navigator row click) so the
+  // camera doesn't keep snapping to different zoom levels.
+  const panTo = useCallback(
+    (rect: { x: number; y: number; width: number; height: number }) => {
+      const c = containerRef.current?.getBoundingClientRect();
+      if (!c) return;
+      const z = viewport.zoom;
+      const cx = c.width / 2 - (rect.x + rect.width / 2) * z;
+      const cy = c.height / 2 - (rect.y + rect.height / 2) * z;
+      setViewport({ x: cx, y: cy, zoom: z });
+    },
+    [viewport.zoom],
+  );
+
   useImperativeHandle(
     ref,
     () => ({
       setZoom: setZoomAtAnchor,
       fitTo,
+      panTo,
       zoomIn: () => setZoomAtAnchor(viewport.zoom * 1.2),
       zoomOut: () => setZoomAtAnchor(viewport.zoom / 1.2),
       zoomToFit,
       getViewport: () => viewport,
       screenToWorld,
     }),
-    [setZoomAtAnchor, viewport, zoomToFit, fitTo, screenToWorld],
+    [setZoomAtAnchor, viewport, zoomToFit, fitTo, panTo, screenToWorld],
   );
 
   // Wheel handler: ctrl/meta = zoom (anchored at the cursor), plain = pan.

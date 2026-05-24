@@ -93,33 +93,14 @@ interface ReceivedFrame {
   msg: { type?: string; comment?: { id?: string } } | null;
 }
 
-// FOLLOW-UP (A+ W1 backend-reliability investigation, 2026-05):
-//
-// Server-side replay verified by instrumented runs that printed every WS
-// frame: the missed `comment.added` IS delivered, it just arrives on the
-// SAME WebSocket connection (`wsIndex === 0`) rather than a new one.
-// Concretely, the debug log on a failing run showed all three messages
-// (welcome + seed + missed) on wsIndex 0, with no wsIndex > 0 ever
-// appearing.
-//
-// Root cause is browser-side, not server: Playwright's
-// `context.setOffline(true)` does NOT reliably close an active WebSocket
-// nor emit `online` on `setOffline(false)` — see
-// https://github.com/microsoft/playwright/issues/13767. So the page's WS
-// stays open the whole "offline" window, the server keeps queuing
-// broadcasts on the same TCP stream, and when networking unblocks the
-// buffered frames arrive on the original connection.
-//
-// Fixing this requires a client-side change in apps/web/src/api/ws.ts
-// (out of scope for the backend-reliability PR) — either a more forceful
-// close on `online` (use ws.terminate()-equivalent, not ws.close()), or a
-// `visibilitychange` / heartbeat-driven detection that doesn't depend on
-// the `online` event firing. Hub hardening + extra unit coverage of the
-// replay path has landed in apps/server/src/ws/hub.ts (defensive
-// null-return when state.seq advanced past sinceSeq with an empty recent
-// buffer, plus a synchronous push-before-fanout ordering guarantee).
-// Tracked as task #59.
-test.describe.skip('multiplayer: WS replay on reconnect', () => {
+// Closed by task #59: apps/web/src/api/ws.ts now uses `forceReconnect()`
+// from BOTH the `online` event AND the missed-pongs heartbeat path. The
+// heartbeat fires every 15s with an 8s pong timeout; under Playwright's
+// `setOffline(true)` the heartbeat will time out and trigger the hard
+// reconnect (detaching old handlers + opening a fresh socket without
+// waiting for the dead socket's TCP FIN). With this fix, the missed
+// `comment.added` arrives on the new wsIndex > 0 connection as expected.
+test.describe('multiplayer: WS replay on reconnect', () => {
   test('missed comment replays via sinceSeq when the client comes back online', async ({
     page,
     context,

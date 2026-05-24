@@ -405,16 +405,45 @@ export function MarketingStyles() {
         color: #333;
       }
 
+      /* A+ W3 marketing: tablet band (iPad portrait, 768–1100px).
+         The previous breakpoint set jumped from "desktop" (>900) to "mobile"
+         (≤900). iPad portrait at 1024px landed firmly in the desktop band but
+         the hero column got too narrow for the 76px display type, the 4-step
+         "how it works" row crammed, and the pillow CTA's 112px left padding
+         pushed the right-side image off-screen. This band keeps the desktop
+         feel but relaxes the layout enough to breathe. */
+      @media (min-width: 901px) and (max-width: 1100px) {
+        .h-display { font-size: 56px !important; line-height: 1.05 !important; }
+        .stack-tablet { grid-template-columns: 1fr !important; }
+        .pillow-cta { padding: 48px 40px !important; }
+        .step-grid { grid-template-columns: repeat(2, 1fr) !important; }
+        .step-grid .step-arrow { display: none !important; }
+      }
+
       @media (max-width: 900px) {
         .nav-links { display: none !important; }
         .hide-mobile { display: none !important; }
         .stack-mobile { grid-template-columns: 1fr !important; }
+        .stack-tablet { grid-template-columns: 1fr !important; }
         .h-display { font-size: 48px !important; line-height: 1.05 !important; }
+        .pillow-cta { padding: 40px 28px !important; }
+        .step-grid { grid-template-columns: repeat(2, 1fr) !important; }
+        .step-grid .step-arrow { display: none !important; }
       }
       @media (max-width: 560px) {
         .h-display { font-size: 38px !important; }
         .stack-sm { grid-template-columns: 1fr !important; }
+        .step-grid { grid-template-columns: 1fr !important; }
+        .pillow-cta { padding: 32px 22px !important; }
       }
+
+      /* A+ W3 marketing: stop horizontal scroll on phones. Some sections
+         (the pillow CTA, hero illustrations) deliberately overflow their
+         column by a few % for visual punch — clipping at .marketing-root
+         protects the rest of the viewport. We can't put this on html/body
+         because useMarketingTheme sets overflow:auto inline (shorthand
+         beats stylesheet), so we wrap. */
+      .marketing-root { overflow-x: clip; }
     `}</style>
   );
 }
@@ -674,6 +703,7 @@ export function MarketingLayout({
   useMarketingTheme(title);
   return (
     <div
+      className="marketing-root"
       style={{
         background: PAPER,
         color: INK,

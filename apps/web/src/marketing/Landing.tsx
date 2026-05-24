@@ -221,7 +221,7 @@ export default function Landing() {
         style={{ background: '#FBF8F4', padding: '64px 0' }}
       >
         <div
-          className="stack-sm"
+          className="stack-sm step-grid"
           style={{
             maxWidth: 1240,
             margin: '0 auto',
@@ -249,7 +249,7 @@ export default function Landing() {
               />
               {i < STEPS.length - 1 && (
                 <div
-                  className="hide-mobile"
+                  className="hide-mobile step-arrow"
                   style={{
                     position: 'absolute',
                     top: '48%',
@@ -382,7 +382,7 @@ export default function Landing() {
       {/* ============== BIG CTA ============== */}
       <section style={{ maxWidth: 1240, margin: '0 auto', padding: '40px 32px 60px' }}>
         <div
-          className="stack-mobile"
+          className="stack-mobile pillow-cta"
           style={{
             background: PILLOW,
             borderRadius: 24,

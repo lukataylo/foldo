@@ -1,17 +1,79 @@
 {
-  "name": "Foldo",
+  "name": "Foldo — Review canvas for AI-generated code",
   "short_name": "Foldo",
+  "description": "Multiplayer review canvas for AI-generated code, docs, and app states. Pin comments to pixels, dispatch edits to Claude Code, watch the result land back on the board.",
   "start_url": "/home",
+  "id": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#0f1014",
   "theme_color": "#FDB306",
-  "scope": "/",
+  "categories": ["productivity", "design", "developer"],
+  "lang": "en",
+  "dir": "ltr",
   "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192-maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
     {
       "src": "/foldo-mark.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
-  ]
+  ],
+  "shortcuts": [
+    {
+      "name": "Open home",
+      "short_name": "Home",
+      "description": "Jump to your boards list",
+      "url": "/home",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Capture from URL",
+      "short_name": "Capture",
+      "description": "Open the new-board capture modal",
+      "url": "/home?action=capture",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Settings",
+      "short_name": "Settings",
+      "description": "Manage account, sessions, and data export",
+      "url": "/settings",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "related_applications": [],
+  "prefer_related_applications": false
 }

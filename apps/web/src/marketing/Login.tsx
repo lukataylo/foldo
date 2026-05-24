@@ -26,6 +26,7 @@ export default function Login() {
 
   return (
     <div
+      className="marketing-root"
       style={{
         background: PAPER,
         color: INK,

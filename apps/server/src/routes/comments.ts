@@ -14,7 +14,7 @@ import {
   insertComment,
   updateComment,
 } from '../repo/comments.ts';
-import { canEditBoard, isMember } from '../repo/members.ts';
+import { canEditBoard } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { userMutationLimit } from '../rateLimit.ts';
 import { newId, nowIso } from '../util.ts';
@@ -32,26 +32,6 @@ const commentCreateLimit = userMutationLimit({
   windowMs: 60 * 60_000,
 });
 
-async function requireEditor(userId: string, boardId: string): Promise<void> {
-  if (!(await canEditBoard(boardId, userId))) {
-    const err = new Error('Not a member of this board') as Error & {
-      statusCode?: number;
-    };
-    err.statusCode = 403;
-    throw err;
-  }
-}
-
-async function requireMember(userId: string, boardId: string): Promise<void> {
-  if (!(await isMember(boardId, userId))) {
-    const err = new Error('Not a member of this board') as Error & {
-      statusCode?: number;
-    };
-    err.statusCode = 403;
-    throw err;
-  }
-}
-
 export async function registerCommentRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: CreateCommentRequest }>(
     '/api/comments',
@@ -63,7 +43,7 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
         return reply.code(400).send({ error: 'Invalid comment body', code: 'BAD_REQUEST' });
       }
       // Comments require membership; even viewers can leave them in this MVP.
-      await requireMember(user.id, body.boardId);
+      await app.requireMember(req, body.boardId);
       const comment = await insertComment({
         id: newId('c'),
         boardId: body.boardId,
@@ -106,7 +86,7 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
       const user = requireUser(req);
       const existing = await getCommentById(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'Comment not found', code: 'NOT_FOUND' });
-      await requireMember(user.id, existing.boardId);
+      await app.requireMember(req, existing.boardId);
       if (!req.body?.text) {
         return reply.code(400).send({ error: 'Missing reply text', code: 'BAD_REQUEST' });
       }

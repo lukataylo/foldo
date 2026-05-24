@@ -4,6 +4,7 @@ import {
   CheckCircle,
   INK,
   MarketingLayout,
+  MarketingPicture,
   PILLOW,
   PromptCaret,
   Star,
@@ -166,9 +167,10 @@ export default function Landing() {
             </div>
           </div>
           <div>
-            <img
+            <MarketingPicture
               src="/marketing/hero.png"
               alt="Foldo origami dog reviewing AI output"
+              eager
               style={{ width: '100%', height: 'auto', display: 'block' }}
             />
           </div>
@@ -235,7 +237,7 @@ export default function Landing() {
               key={s.n}
               style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}
             >
-              <img
+              <MarketingPicture
                 src={s.img}
                 alt={`${s.title} step`}
                 style={{
@@ -351,7 +353,7 @@ export default function Landing() {
             </a>
           </div>
           <div className="card">
-            <img
+            <MarketingPicture
               src="/marketing/step-2-review.png"
               alt="A User Test session replaying on a Foldo board"
               style={{
@@ -447,7 +449,7 @@ export default function Landing() {
             </div>
           </div>
           <div style={{ position: 'relative' }}>
-            <img
+            <MarketingPicture
               src="/marketing/pillow.png"
               alt="Foldo resting on a pillow"
               style={{

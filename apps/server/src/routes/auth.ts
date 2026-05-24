@@ -115,11 +115,20 @@ async function hashPassword(password: string): Promise<string> {
   return `scrypt:N=${CURRENT_PARAMS.N},r=${CURRENT_PARAMS.r},p=${CURRENT_PARAMS.p}:${salt.toString('hex')}:${key.toString('hex')}`;
 }
 
-interface VerifyResult {
-  ok: boolean;
-  /** True when the stored hash uses params weaker than `CURRENT_PARAMS`. */
-  needsRehash: boolean;
-}
+/**
+ * Discriminated result of {@link verifyPassword}.
+ *
+ * Historically this returned `{ ok: boolean, needsRehash: boolean }`, but a
+ * boolean success flag muddled the "ok with a flag" and "rejected for reason X"
+ * branches at every call site. We now mirror the public `{ error, code }` REST
+ * shape so the call sites read like normal error handling — `if (!result.ok)`
+ * still works for the happy-path guard, and on failure the `code` is a stable
+ * machine-readable reason ('HASH_MALFORMED', 'HASH_MISMATCH', 'SCRYPT_FAILED')
+ * we can log/branch on without inferring it from the boolean alone.
+ */
+type VerifyResult =
+  | { ok: true; needsRehash: boolean }
+  | { ok: false; error: string; code: 'HASH_MALFORMED' | 'HASH_MISMATCH' | 'SCRYPT_FAILED' };
 
 function parseParams(spec: string): ScryptParams | null {
   // spec is like "N=32768,r=8,p=1"
@@ -152,26 +161,31 @@ async function verifyPassword(stored: string, password: string): Promise<VerifyR
     keyHex = parts[2];
     isLegacy = true;
   }
-  if (!params || !saltHex || !keyHex) return { ok: false, needsRehash: false };
+  if (!params || !saltHex || !keyHex) {
+    return { ok: false, error: 'Stored hash is malformed', code: 'HASH_MALFORMED' };
+  }
   const salt = Buffer.from(saltHex, 'hex');
   const expected = Buffer.from(keyHex, 'hex');
   let actual: Buffer;
   try {
     actual = await scryptAsync(password, salt, expected.length, params);
   } catch {
-    return { ok: false, needsRehash: false };
+    return { ok: false, error: 'scrypt failed', code: 'SCRYPT_FAILED' };
   }
-  if (actual.length !== expected.length) return { ok: false, needsRehash: false };
-  const ok = timingSafeEqual(actual, expected);
+  if (actual.length !== expected.length) {
+    return { ok: false, error: 'Password does not match', code: 'HASH_MISMATCH' };
+  }
+  if (!timingSafeEqual(actual, expected)) {
+    return { ok: false, error: 'Password does not match', code: 'HASH_MISMATCH' };
+  }
   // A successful verify against a legacy hash, OR against any params weaker
   // than CURRENT_PARAMS, signals the route to re-hash on this login.
   const needsRehash =
-    ok &&
-    (isLegacy ||
-      params.N < CURRENT_PARAMS.N ||
-      params.r < CURRENT_PARAMS.r ||
-      params.p < CURRENT_PARAMS.p);
-  return { ok, needsRehash };
+    isLegacy ||
+    params.N < CURRENT_PARAMS.N ||
+    params.r < CURRENT_PARAMS.r ||
+    params.p < CURRENT_PARAMS.p;
+  return { ok: true, needsRehash };
 }
 
 function newSessionToken(): string {

@@ -1,4 +1,4 @@
-import { CheckCircle, INK, MarketingLayout, PILLOW, PromptCaret, SOFT_GREY, YELLOW } from './shared';
+import { CheckCircle, INK, MarketingLayout, MarketingPicture, PILLOW, PromptCaret, SOFT_GREY, YELLOW } from './shared';
 
 interface Tier {
   name: string;
@@ -218,7 +218,7 @@ export default function Pricing() {
           }}
         >
           <div style={{ display: 'flex', gap: 18, alignItems: 'center' }}>
-            <img
+            <MarketingPicture
               src="/marketing/step-4-verify.png"
               alt="Foldo verifying"
               style={{ width: 110, height: 'auto', flex: 'none' }}

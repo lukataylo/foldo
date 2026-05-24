@@ -15,7 +15,6 @@ import {
   moveFrame,
   updateFrame,
 } from '../repo/frames.ts';
-import { canEditBoard } from '../repo/members.ts';
 import { getBoardById } from '../repo/boards.ts';
 import { upsertSource } from '../repo/sources.ts';
 import { hub } from '../ws/hub.ts';
@@ -36,18 +35,6 @@ const frameCreateLimit = userMutationLimit({
   windowMs: 60_000,
 });
 
-async function requireEditor(
-  userId: string,
-  boardId: string,
-): Promise<void> {
-  if (!(await canEditBoard(boardId, userId))) {
-    const err = new Error('Not a member of this board') as Error & {
-      statusCode?: number;
-    };
-    err.statusCode = 403;
-    throw err;
-  }
-}
 
 /**
  * Compute per-line authorship for a markdown frame. Lines whose text differs
@@ -105,7 +92,7 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
     if (!body || !body.boardId || !body.branchId || !body.content) {
       return reply.code(400).send({ error: 'Invalid frame body', code: 'BAD_REQUEST' });
     }
-    await requireEditor(me.id, body.boardId);
+    await app.requireEditor(req, body.boardId);
     const now = nowIso();
     const frame: Frame = {
       id: newId('f'),
@@ -134,7 +121,7 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
       const me = requireUser(req);
       const existing = await getFrameById(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
-      await requireEditor(me.id, existing.boardId);
+      await app.requireEditor(req, existing.boardId);
       const body = req.body ?? {};
       let merged: Frame['content'] | undefined;
       if (body.content) {
@@ -226,7 +213,7 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
       const clampedY = Math.max(-CANVAS_RANGE, Math.min(CANVAS_RANGE, y));
       const existing = await getFrameById(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
-      await requireEditor(me.id, existing.boardId);
+      await app.requireEditor(req, existing.boardId);
       const next = await moveFrame(req.params.id, { x: clampedX, y: clampedY });
       if (!next) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
       hub.broadcast(next.boardId, {
@@ -245,7 +232,7 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
     const me = requireUser(req);
     const existing = await getFrameById(req.params.id);
     if (!existing) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
-    await requireEditor(me.id, existing.boardId);
+    await app.requireEditor(req, existing.boardId);
     await deleteFrame(existing.id);
     hub.broadcast(existing.boardId, { type: 'frame.deleted', frameId: existing.id });
     return reply.send({ ok: true } satisfies SuccessResponse);

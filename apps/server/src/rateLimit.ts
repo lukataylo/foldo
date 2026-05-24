@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { rateLimitHits } from './metrics.ts';
 
 /**
  * Tiny dependency-free in-memory rate limiter for the public test endpoints.
@@ -92,6 +93,7 @@ export function rateLimitPreHandler(
     const ip = req.ip || 'unknown';
     if (isLoopback(ip)) return; // dev / CI / same-box — not a real client
     const result = rateLimit(bucket, ip, limit, windowMs);
+    rateLimitHits.inc({ bucket, outcome: result.ok ? 'allowed' : 'denied' });
     if (!result.ok) {
       reply
         .code(429)
@@ -136,6 +138,7 @@ export function userMutationLimit(opts: {
     // runs (e.g. if a route forgets to call requireUser).
     const userId = req.user?.id ?? `ip:${ip}`;
     const result = rateLimit(bucket, userId, max, windowMs);
+    rateLimitHits.inc({ bucket, outcome: result.ok ? 'allowed' : 'denied' });
     if (!result.ok) {
       reply
         .code(429)

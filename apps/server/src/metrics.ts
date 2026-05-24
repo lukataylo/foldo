@@ -152,6 +152,22 @@ export const jobOutcomes = new Counter({
   registers: [registry],
 });
 
+/**
+ * Rate-limit hit counter. `bucket` matches the bucket arg passed to
+ * `rateLimitPreHandler` / `userMutationLimit` (e.g. `auth-login`,
+ * `comments-create`). `outcome` = `allowed` for under-cap requests,
+ * `denied` for the 429 path. The ratio `denied / (allowed+denied)` per
+ * bucket is the alerting signal — sustained > 1 % on a public endpoint
+ * means a script is hammering us; sustained > 0.1 % on a mutation
+ * bucket means our cap is too low for legit usage.
+ */
+export const rateLimitHits = new Counter({
+  name: 'foldo_rate_limit_hits_total',
+  help: 'Rate-limit decisions per bucket. outcome=allowed|denied.',
+  labelNames: ['bucket', 'outcome'] as const,
+  registers: [registry],
+});
+
 export const dbPoolIdle = new Gauge({
   name: 'foldo_db_pool_idle',
   help: 'Idle connections in the pg pool right now.',

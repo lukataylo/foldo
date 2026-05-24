@@ -74,6 +74,12 @@ import { useRoute } from './routing/Router';
 import { boardStore, useBoardSelector } from './state/useBoardStore';
 import { setAuth } from './api/client';
 import { updateComment as apiUpdateComment } from './api/comments';
+/* A+W1 features — layer-nav action hooks call these. */
+import {
+  deleteFrame as apiDeleteFrame,
+  moveFrame as apiMoveFrame,
+  updateFrame as apiUpdateFrame,
+} from './api/frames';
 import {
   readOrCreateDemoUserId,
   readStoredAuth,

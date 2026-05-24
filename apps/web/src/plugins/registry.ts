@@ -9,7 +9,7 @@ import {
   type PluginSurface,
   registry,
 } from '@foldo/plugin';
-import { boardStore } from '../state/useBoardStore';
+import { boardStore, type BoardSnapshot } from '../state/BoardStore';
 
 export { registry };
 export type { Plugin, PluginSurface };
@@ -20,9 +20,11 @@ export type { Plugin, PluginSurface };
  * happens once App's toast queue moves into a plugin itself.
  *
  * The `subscribe` channel lets a plugin observe per-key store slices
- * without importing BoardStore directly. Currently maps to the same
- * Map keys as `BoardSnapshot`; the unsubscribe is a no-op until we
- * grow the surface beyond the LeftRail wrap.
+ * without importing BoardStore directly. The listener is only invoked
+ * when `snap[key]` reference-changes from the previous snapshot — i.e.
+ * a `cursor.move` patch (touching `presence`) won't notify a layer
+ * navigator that subscribed to `frames`. Equality is `Object.is`, so
+ * Maps swapped by `BoardStore.patch` are correctly detected as changed.
  */
 export function defaultContext(): PluginContext {
   return {
@@ -32,26 +34,58 @@ export function defaultContext(): PluginContext {
       if (fn) fn(msg);
     },
     subscribe<T>(key: string, listener: (value: T) => void): () => void {
-      // Best-effort: emit the current value and on every store update.
-      const send = (): void => {
+      const read = (): T | undefined => {
         const snap = boardStore.getSnapshot() as unknown as Record<string, T>;
-        if (key in snap) listener(snap[key]);
+        return key in snap ? snap[key] : undefined;
       };
-      send();
-      return boardStore.subscribe(send);
+      // Seed: emit the current value once so the listener doesn't need
+      // its own initial-read path.
+      let last = read();
+      if (last !== undefined) listener(last);
+      return boardStore.subscribe(() => {
+        const next = read();
+        if (next === undefined) return;
+        if (Object.is(next, last)) return;
+        last = next;
+        listener(next);
+      });
     },
   };
 }
 
 /**
+ * Module-level cache for surface lookups. The plugin registry is frozen
+ * after boot (install-once, activate-once) so `registry.surfaces(kind)`
+ * returns the same logical list forever — caching avoids the per-render
+ * filter+allocation across every consumer of `usePluginSurfaces`.
+ *
+ * Cleared by `__resetPluginSurfaceCache` (test-only) when a unit test
+ * mutates the registry between cases.
+ */
+const surfaceCache = new Map<string, PluginSurface[]>();
+
+/** Test-only escape hatch — production code never calls this. */
+export function __resetPluginSurfaceCache(): void {
+  surfaceCache.clear();
+}
+
+/**
  * React hook returning every contribution of the given surface kind. The
  * registry is install-once / frozen-after-boot, so the underlying array
- * is stable across re-renders — the hook is effectively a memoised getter.
+ * is stable across re-renders. We memoise the list module-level so that
+ * a render of N panels doesn't pay N filter passes over the plugin list.
  */
 export function usePluginSurfaces<K extends PluginSurface['kind']>(
   kind: K,
 ): Array<Extract<PluginSurface, { kind: K }>> {
-  const [list] = useState(() => registry.surfaces(kind));
+  let cached = surfaceCache.get(kind);
+  if (!cached) {
+    cached = registry.surfaces(kind) as PluginSurface[];
+    surfaceCache.set(kind, cached);
+  }
+  // useState seed runs once per consumer; the reference is the cached
+  // array, so two panels listening to the same kind share one allocation.
+  const [list] = useState(() => cached as Array<Extract<PluginSurface, { kind: K }>>);
   return list;
 }
 
@@ -61,6 +95,9 @@ export function usePluginSurfaces<K extends PluginSurface['kind']>(
  * anything renders.
  */
 export function bootPlugins(plugins: Plugin[]): void {
+  // Reset the surface cache so a hot-reload during dev (which re-imports
+  // this module) doesn't serve a stale array.
+  surfaceCache.clear();
   registry.installAll(plugins);
   registry.activate(defaultContext());
 }
@@ -127,6 +164,8 @@ export function registerLayerActionHooks(hooks: LayerActionHooks): void {
   if (hooks.reorder) w.__foldoReorderFrame = hooks.reorder;
 }
 
+// Re-export so callers that need the type don't reach into BoardStore.ts.
+export type { BoardSnapshot };
 
 // Re-export useEffect so any plugin module that needs it doesn't need a
 // duplicate React import. (Kept for backwards-compat across plugin files.)

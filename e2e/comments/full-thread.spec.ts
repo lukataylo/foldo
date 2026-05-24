@@ -17,10 +17,14 @@ const DEMO_BOARD_ID = 'board-acme-landing';
 // it doesn't depend on the sample-app iframe being live.
 const SEED_MD_FRAME = 'f-cta-prd';
 
-// FOLLOW-UP — Step 5.3: pin-drop on a markdown frame isn't completing the
-// optimistic-comment swap in the spec timing. Re-investigate alongside the
-// 5.2 follow-up — same root cause is likely.
-test.describe.skip('comments: full thread lifecycle', () => {
+// PIN-DROP FIX (A+ W2): the optimistic-comment swap in
+// `useCommentHandlers.handleDropPin` now reads the latest optimistic store
+// entry right before removing it, so a body typed during the in-flight POST
+// is preserved when the server response lands. The popover state is also
+// re-pointed at the server id when the swap completes mid-compose. The
+// previous flake (the typed text being clobbered by `text: ''` from the
+// initial POST body) is fixed; this spec activates without changes.
+test.describe('comments: full thread lifecycle', () => {
   test('drop pin → type → reply → resolve → delete', async ({ page }) => {
     const user = await createUser();
     await loginAs(page, user);

@@ -226,6 +226,22 @@ export default function App() {
     setTestsOpen,
   } = topBar;
 
+  // Flag the body element when the AI edit panel is mounted so CSS can hide
+  // the right plugin slot (Inspect tab) — they both want the right rail
+  // and were overlapping. Cleanup removes the attr on unmount so the
+  // Inspect panel can re-appear once the edit flow closes.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (selectedElement) {
+      document.body.setAttribute('data-edit-panel-open', 'true');
+    } else {
+      document.body.removeAttribute('data-edit-panel-open');
+    }
+    return () => {
+      document.body.removeAttribute('data-edit-panel-open');
+    };
+  }, [selectedElement]);
+
   const canvasRef = useRef<CanvasHandle>(null);
   const lastBroadcastSelectionRef = useRef<string | null>(null);
   const viewportBroadcastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(

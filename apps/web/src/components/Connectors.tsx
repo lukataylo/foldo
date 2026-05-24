@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { Frame } from '@foldo/protocol';
 
 interface Props {
@@ -13,7 +14,7 @@ interface Props {
 
 // Renders subtle curves between parent and child frames in world coords.
 // Sits inside the transformed layer so it scales with zoom.
-export function Connectors({ frames, inViewportFrameIds }: Props) {
+function ConnectorsImpl({ frames, inViewportFrameIds }: Props) {
   const map = new Map(frames.map((f) => [f.id, f]));
   let links = frames
     .filter((f) => f.parentFrameId && map.has(f.parentFrameId))
@@ -101,3 +102,22 @@ export function Connectors({ frames, inViewportFrameIds }: Props) {
     </svg>
   );
 }
+
+/* A+W1 features — React.memo wrapper. Cursor/presence updates upstream
+   re-render App on every tick; without memoisation, every Connectors
+   re-render re-walks the frame list and rebuilds every SVG path. We
+   short-circuit on a shallow compare: same frames array identity AND
+   same in-viewport set identity → skip. The upstream useMemo for both
+   keeps identity stable when the inputs are unchanged. */
+function shallowEqualProps(a: Props, b: Props): boolean {
+  if (a.frames !== b.frames) {
+    if (a.frames.length !== b.frames.length) return false;
+    for (let i = 0; i < a.frames.length; i++) {
+      if (a.frames[i] !== b.frames[i]) return false;
+    }
+  }
+  if (a.inViewportFrameIds !== b.inViewportFrameIds) return false;
+  return true;
+}
+
+export const Connectors = memo(ConnectorsImpl, shallowEqualProps);

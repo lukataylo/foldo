@@ -198,6 +198,16 @@ export function useCommentHandlers({
         currentSource: c.text,
         rect: { x: 0, y: 0, width: 0, height: 0 },
       });
+    } else {
+      /* A+W1 features — previously silently no-op when the comment has
+         no element target and no markdown anchor (pin-only). Surface a
+         toast and bail so the user understands why nothing happened. The
+         CommentPopover also disables the button visually for the same
+         case, so this branch covers keyboard / programmatic callers. */
+      pushToast(
+        'Comment must target an element or a markdown line to make an edit',
+      );
+      return;
     }
     setInitialIntent(c.text);
     setCommentPopover(null);
@@ -208,6 +218,7 @@ export function useCommentHandlers({
     setSelectedElement,
     setInitialIntent,
     setCommentPopover,
+    pushToast,
   ]);
 
   // "Make this an edit" from a test_session synthesis issue: drop a comment on

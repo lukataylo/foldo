@@ -33,6 +33,11 @@ export function TopBar({
   const [shared, setShared] = useState(false);
   const users = useBoardSelector((s) => s.users);
   const mcpConnected = useBoardSelector((s) => s.mcpConnected);
+  /* A+W1 features — pending test session count for the Tests button badge.
+     `activeTestSessions` is the canonical source (driven by WS
+     test.session.started / completed); rendered with a small absolute
+     overlay so we don't perturb the button's padding or font. */
+  const pendingTestSessions = useBoardSelector((s) => s.activeTestSessions.size);
   const me = meUserId ? users.get(meUserId) ?? null : null;
   const switchable: User[] = [];
   for (const u of users.values()) if (u.kind === 'human') switchable.push(u);
@@ -155,12 +160,44 @@ export function TopBar({
         >
           <ExtensionIcon /> Capture from URL
         </button>
+        {/* A+W1 features — testid + pending session badge. Position is
+            relative so the badge can absolutely-position over the corner;
+            the button's padding / sizing stays exactly as it was. */}
         <button
+          data-testid="foldo-topbar-tests"
           onClick={onOpenTests}
-          title="Create unmoderated UX test links"
-          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink hover:bg-white/5"
+          title={
+            pendingTestSessions > 0
+              ? `Tests — ${pendingTestSessions} session${pendingTestSessions === 1 ? '' : 's'} in progress`
+              : 'Create unmoderated UX test links'
+          }
+          className="relative flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink hover:bg-white/5"
         >
           <FlaskIcon /> Tests
+          {pendingTestSessions > 0 && (
+            <span
+              data-testid="foldo-topbar-tests-badge"
+              aria-label={`${pendingTestSessions} pending sessions`}
+              style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                minWidth: 14,
+                height: 14,
+                padding: '0 3px',
+                borderRadius: 7,
+                background: '#FDB306',
+                color: '#1a1a1d',
+                fontSize: 9.5,
+                fontWeight: 700,
+                lineHeight: '14px',
+                textAlign: 'center',
+                boxShadow: '0 0 0 1.5px #1a1a1d',
+              }}
+            >
+              {pendingTestSessions > 9 ? '9+' : pendingTestSessions}
+            </span>
+          )}
         </button>
         <button
           onClick={onShare}

@@ -6,6 +6,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import SimplePage from './SimplePage';
 import { API_BASE, storeAuth, type AuthUser } from './auth';
+/* A+W1 features — share the password validator with Forgot/Signup. */
+import { isValidPassword, MIN_PASSWORD_LENGTH } from './validation';
 
 export default function Reset() {
   const [token, setToken] = useState<string | null>(null);
@@ -32,8 +34,8 @@ export default function Reset() {
       setError('Reset link is missing its token. Open the link from your email again.');
       return;
     }
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
+    if (!isValidPassword(password)) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
     if (password !== confirm) {
@@ -133,14 +135,21 @@ export default function Reset() {
               {error}
             </div>
           )}
+          {/* A+W1 features — explicit "Resetting…" label so the submit
+              state is unambiguous (previously "Saving…" matched Signup). */}
           <button
             type="submit"
             data-testid="foldo-reset-submit"
             className="btn-primary"
-            style={{ marginTop: 14, opacity: submitting ? 0.6 : 1 }}
+            style={{
+              marginTop: 14,
+              opacity: submitting ? 0.6 : 1,
+              cursor: submitting ? 'not-allowed' : 'pointer',
+            }}
             disabled={submitting}
+            aria-busy={submitting}
           >
-            {submitting ? 'Saving…' : 'Save new password'}
+            {submitting ? 'Resetting…' : 'Save new password'}
           </button>
         </form>
       )}

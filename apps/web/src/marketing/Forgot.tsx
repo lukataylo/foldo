@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import SimplePage from './SimplePage';
 import { API_BASE } from './auth';
+/* A+W1 features — email format validation before POSTing. */
+import { isValidEmail } from './validation';
 
 export default function Forgot() {
   const [email, setEmail] = useState('');
@@ -11,6 +13,12 @@ export default function Forgot() {
   const onSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
     if (submitting) return;
+    /* A+W1 features — short-circuit invalid emails locally rather than
+       round-tripping to the server and discarding the response. */
+    if (!isValidEmail(email)) {
+      setError('Please enter a valid email');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {

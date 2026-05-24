@@ -29,12 +29,21 @@ import { LeftRail } from './components/LeftRail';
 /* A+W1 touch */ import { PhoneNotSupportedBanner } from './components/PhoneNotSupportedBanner';
 /* A+W1 touch */ import { useMediaQuery } from './hooks/useMediaQuery';
 import { ToastStack, useToastQueue } from './components/ToastQueue';
+/* A+W1 features — simulator banner shown at the top of the canvas when
+   mcpConnected === false (i.e. dispatches are being answered by the
+   local sim rather than a real Claude Code session). */
+import {
+  ClaudeSimulatorBanner,
+  useBannerDismissal,
+} from './components/ClaudeSimulatorBanner';
 import { LeftPanel, RightPanel } from './plugins/slots/SidePanel';
 import { ToolBar as PluginToolBar } from './plugins/slots/ToolBar';
 import {
   registerToastHook,
   registerSetToolHook,
   registerSelectFrameHook,
+  /* A+W1 features — layer-nav delete/rename/reorder window hooks. */
+  registerLayerActionHooks,
 } from './plugins/registry';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useFrameTools, ArrowDraftPreview } from './hooks/useFrameTools';
@@ -62,6 +71,12 @@ import {
 } from './api/comments';
 import { createDispatch as apiCreateDispatch } from './api/dispatches';
 import { createFrame as apiCreateFrame } from './api/frames';
+/* A+W1 features — layer-nav action hooks call these. */
+import {
+  deleteFrame as apiDeleteFrame,
+  moveFrame as apiMoveFrame,
+  updateFrame as apiUpdateFrame,
+} from './api/frames';
 import { uploadImage as apiUploadImage } from './api/uploads';
 import { FoldoWsClient, type WsStatus } from './api/ws';
 import {
@@ -122,6 +137,9 @@ export default function App() {
   const meUserId = useBoardSelector((s) => s.meUserId);
   const hydrated = useBoardSelector((s) => s.hydrated);
   const wsStatus = useBoardSelector((s) => s.wsStatus);
+  /* A+W1 features — drives the ClaudeSimulatorBanner. */
+  const mcpConnected = useBoardSelector((s) => s.mcpConnected);
+  const simBanner = useBannerDismissal();
   const snap = {
     board,
     frames: frames_,
@@ -432,6 +450,119 @@ export default function App() {
     });
   }, [snap.board, navigate, fitToFrame]);
 
+  /* A+W1 features — layer-nav action hooks. The Layer Navigator's
+     toolbar (touch agent's surface) calls window.__foldoDeleteFrame /
+     __foldoRenameFrame / __foldoReorderFrame; we own the implementations
+     so they go through the REST API + optimistic store writes. Offline
+     mode skips the REST call but keeps the store in sync. */
+  useEffect(() => {
+    const offline = boot.kind === 'offline';
+    registerLayerActionHooks({
+      delete: async (frameId: string) => {
+        const f = boardStore.getSnapshot().frames.get(frameId);
+        if (!f) return;
+        boardStore.removeFrame(frameId);
+        if (!offline) {
+          try {
+            await apiDeleteFrame(frameId);
+          } catch (err) {
+            // Re-insert on failure so the UI doesn't silently lose state.
+            // eslint-disable-next-line no-console
+            console.warn('[foldo] delete frame failed', err);
+            boardStore.upsertFrame(f);
+            pushToast('Failed to delete frame');
+          }
+        }
+      },
+      rename: async (frameId: string, newName: string) => {
+        const f = boardStore.getSnapshot().frames.get(frameId);
+        if (!f) return;
+        // Translate "name" into the per-kind content slot the user would
+        // visually edit — sticky body, markdown title, image caption.
+        const trimmed = (newName ?? '').trim();
+        if (!trimmed) return;
+        let nextContent: Frame['content'] = f.content;
+        if (f.content.kind === 'sticky') {
+          nextContent = { ...f.content, body: trimmed };
+        } else if (f.content.kind === 'markdown') {
+          nextContent = { ...f.content, title: trimmed };
+        } else if (f.content.kind === 'image') {
+          nextContent = { ...f.content, caption: trimmed };
+        } else {
+          // app / arrow frames don't have an obvious user-editable name slot;
+          // fall back to surfacing the rename in commitMessage so the layer
+          // tree still updates.
+          boardStore.upsertFrame({ ...f, commitMessage: trimmed });
+          return;
+        }
+        const optimistic = { ...f, content: nextContent };
+        boardStore.upsertFrame(optimistic);
+        if (!offline) {
+          try {
+            const updated = await apiUpdateFrame(frameId, { content: nextContent });
+            boardStore.upsertFrame(updated);
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn('[foldo] rename frame failed', err);
+            boardStore.upsertFrame(f);
+            pushToast('Failed to rename frame');
+          }
+        }
+      },
+      reorder: async (frameId: string, newIndex: number) => {
+        // v1: "reorder" within a branch means shuffling x positions on the
+        // canvas. We compute the target x relative to the branch siblings
+        // sorted by current x and pin the frame there.
+        const snap = boardStore.getSnapshot();
+        const f = snap.frames.get(frameId);
+        if (!f) return;
+        const siblings: Frame[] = [];
+        for (const s of snap.frames.values()) {
+          if (s.branchId === f.branchId && s.id !== frameId) siblings.push(s);
+        }
+        siblings.sort((a, b) => a.position.x - b.position.x);
+        const clamped = Math.max(0, Math.min(newIndex, siblings.length));
+        const before = siblings[clamped - 1];
+        const after = siblings[clamped];
+        const targetX = before && after
+          ? (before.position.x + after.position.x) / 2
+          : before
+            ? before.position.x + (before.size.width + 80)
+            : after
+              ? Math.max(0, after.position.x - (f.size.width + 80))
+              : f.position.x;
+        boardStore.moveFrame(frameId, targetX, f.position.y);
+        if (!offline) {
+          try {
+            await apiMoveFrame(frameId, {
+              position: { x: targetX, y: f.position.y },
+            });
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn('[foldo] reorder frame failed', err);
+            boardStore.moveFrame(frameId, f.position.x, f.position.y);
+            pushToast('Failed to reorder frame');
+          }
+        }
+      },
+    });
+  }, [boot.kind, pushToast]);
+
+  /* A+W1 features — global unhandled rejection listener. Without this,
+     a stray `void fetch(...).then()` that rejects only prints to the
+     console; the user sees nothing. We log + surface a generic toast
+     so the failure is at least visible. The ErrorBoundary catches
+     render-time errors; this is the runtime/async counterpart. */
+  useEffect(() => {
+    const onReject = (e: PromiseRejectionEvent): void => {
+      // eslint-disable-next-line no-console
+      console.error('[foldo] unhandledrejection', e.reason);
+      pushToast('Something went wrong — please refresh');
+    };
+    window.addEventListener('unhandledrejection', onReject);
+    return () => window.removeEventListener('unhandledrejection', onReject);
+  }, [pushToast]);
+
   // ---------- keyboard shortcuts ----------
   // Hook owns the keydown handler; this site keeps the Esc semantics local
   // because clearing the popover/intent reaches into App-only state.
@@ -735,7 +866,9 @@ export default function App() {
         wsStatus={snap.wsStatus}
         offline={boot.kind === 'offline'}
       />
-      <LeftRail tool={tool} onChange={setTool} />
+      {/* A+W1 features — `onChange` was a dead prop; the plugin tools
+          route through window.__foldoSetTool. */}
+      <LeftRail tool={tool} />
       {/*
         Plugin substrate slots (Step 9). LeftPanel / RightPanel / PluginToolBar
         render nothing if no plugin contributes to them, so today they're
@@ -830,6 +963,17 @@ export default function App() {
         boardId={snap.board?.id ?? null}
         onClose={() => setTestsOpen(false)}
       />
+
+      {/* A+W1 features — show the simulator banner when MCP isn't
+          connected (dispatches are answered by the local simulator).
+          Hidden in the offline demo and once the user dismisses it for
+          the session. */}
+      {boot.kind === 'ready' &&
+        snap.hydrated &&
+        !mcpConnected &&
+        !simBanner.dismissed && (
+          <ClaudeSimulatorBanner onDismiss={simBanner.dismiss} />
+        )}
 
       {boot.kind === 'loading' && <BootLoadingOverlay />}
       {boot.kind === 'unreachable' && (

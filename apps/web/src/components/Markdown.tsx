@@ -32,6 +32,10 @@ function slug(s: string) {
 }
 
 export function parseMarkdown(body: string): MarkdownLine[] {
+  /* A+W1 features — empty-body short-circuit. parseMarkdown gets called
+     on every keystroke in the MarkdownFrame editor; bail before split()
+     when there's nothing to do. */
+  if (!body || !body.trim()) return [];
   const lines = body.split('\n');
   const out: MarkdownLine[] = [];
   let currentSection = 'top';

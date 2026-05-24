@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Board, UserId, User } from '@foldo/protocol';
 import { PresenceAvatars } from '../multiplayer/PresenceAvatars';
 import { useBoardSelector } from '../state/useBoardStore';
+import { ShareManagementModal } from './ShareManagementModal';
 
 const HOME_URL = '/home';
 
@@ -31,12 +32,36 @@ export function TopBar({
   const [open, setOpen] = useState(false);
   const [userPickerOpen, setUserPickerOpen] = useState(false);
   const [shared, setShared] = useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [shareMgmtOpen, setShareMgmtOpen] = useState(false);
+  const shareMenuRef = useRef<HTMLDivElement | null>(null);
   const users = useBoardSelector((s) => s.users);
   const mcpConnected = useBoardSelector((s) => s.mcpConnected);
   const me = meUserId ? users.get(meUserId) ?? null : null;
   const switchable: User[] = [];
   for (const u of users.values()) if (u.kind === 'human') switchable.push(u);
   const repoName = board?.repoSlug ?? 'unloaded';
+
+  // Close the small share-menu dropdown on outside click / Esc — mirrors
+  // the kebab menu in BoardCard so the affordance feels the same across
+  // home + canvas.
+  useEffect(() => {
+    if (!shareMenuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) {
+        setShareMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShareMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [shareMenuOpen]);
 
   const onShare = async () => {
     try {
@@ -162,24 +187,64 @@ export function TopBar({
         >
           <FlaskIcon /> Tests
         </button>
-        <button
-          onClick={onShare}
-          title="Copy this canvas URL to clipboard"
-          className={
-            'rounded-lg border px-2.5 py-2 text-[12px] transition-colors ' +
-            (shared
-              ? 'border-ok/40 bg-ok/15 text-ok'
-              : 'border-hairlineSoft bg-panel text-ink hover:bg-white/5')
-          }
-        >
-          {shared ? 'Copied!' : 'Share'}
-        </button>
+        <div className="relative inline-flex" ref={shareMenuRef}>
+          <button
+            data-testid="foldo-canvas-topbar-share"
+            onClick={onShare}
+            title="Copy this canvas URL to clipboard"
+            className={
+              'rounded-l-lg border px-2.5 py-2 text-[12px] transition-colors ' +
+              (shared
+                ? 'border-ok/40 bg-ok/15 text-ok'
+                : 'border-hairlineSoft bg-panel text-ink hover:bg-white/5')
+            }
+          >
+            {shared ? 'Copied!' : 'Share'}
+          </button>
+          <button
+            data-testid="foldo-canvas-topbar-share-menu"
+            onClick={() => setShareMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={shareMenuOpen}
+            title="Manage share links"
+            className={
+              '-ml-px rounded-r-lg border border-l-0 px-1.5 py-2 text-[12px] transition-colors ' +
+              'border-hairlineSoft bg-panel text-ink hover:bg-white/5'
+            }
+          >
+            <Chevron />
+          </button>
+          {shareMenuOpen && (
+            <div className="absolute right-0 top-9 z-50 w-52 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
+              <button
+                type="button"
+                data-testid="foldo-canvas-topbar-share-manage"
+                onClick={() => {
+                  setShareMenuOpen(false);
+                  setShareMgmtOpen(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink hover:bg-white/5"
+              >
+                Manage share links…
+              </button>
+              <div className="border-t border-hairlineSoft px-2 py-1 text-[10.5px] text-inkFaint">
+                Revoke any active links to this board.
+              </div>
+            </div>
+          )}
+        </div>
         <PresenceAvatars
           meUserId={meUserId}
           followingUserId={followingUserId}
           onFollow={onFollow}
         />
       </div>
+
+      <ShareManagementModal
+        open={shareMgmtOpen}
+        boardId={board?.id ?? null}
+        onClose={() => setShareMgmtOpen(false)}
+      />
     </div>
   );
 }

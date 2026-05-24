@@ -8,6 +8,7 @@ interface BoardRow {
   repo_slug: string;
   dev_url: string | null;
   created_at: string;
+  archived_at: string | null;
 }
 
 function rowToBoard(r: BoardRow): Board {
@@ -17,11 +18,23 @@ function rowToBoard(r: BoardRow): Board {
     repoSlug: r.repo_slug,
     devUrl: r.dev_url ?? undefined,
     createdAt: r.created_at,
+    archivedAt: r.archived_at ?? null,
   };
 }
 
-export async function listBoards(): Promise<Board[]> {
-  const rows = await query<BoardRow>(`SELECT * FROM boards ORDER BY created_at`);
+export interface ListBoardsOptions {
+  /** When true, returns archived boards as well (default: false). */
+  includeArchived?: boolean;
+}
+
+export async function listBoards(opts: ListBoardsOptions = {}): Promise<Board[]> {
+  // Default path filters out archived boards — a soft-deleted board is
+  // off the user's home grid until they tick "Show archived" and call us
+  // again with includeArchived=true.
+  const where = opts.includeArchived ? '' : 'WHERE archived_at IS NULL';
+  const rows = await query<BoardRow>(
+    `SELECT * FROM boards ${where} ORDER BY created_at`,
+  );
   return rows.map(rowToBoard);
 }
 
@@ -63,4 +76,31 @@ export async function upsertBoard(b: Board): Promise<Board> {
     [b.id, b.name, b.repoSlug, b.devUrl ?? null, b.createdAt ?? nowIso()],
   );
   return b;
+}
+
+/**
+ * Soft-delete: set archived_at = NOW(). The row stays in place (and so do
+ * all child frames / comments / dispatches) so a Restore call can revive
+ * the board without losing any history. Idempotent: if the board is
+ * already archived, this is a no-op (the WHERE clause leaves the timestamp
+ * pinned at the first archive moment).
+ */
+export async function archiveBoard(id: string): Promise<number> {
+  return exec(
+    `UPDATE boards SET archived_at = now()
+      WHERE id = $1 AND archived_at IS NULL`,
+    [id],
+  );
+}
+
+/**
+ * Inverse of archiveBoard — clears the archived_at marker so the board
+ * shows up in the default list again. Idempotent for already-live boards.
+ */
+export async function restoreBoard(id: string): Promise<number> {
+  return exec(
+    `UPDATE boards SET archived_at = NULL
+      WHERE id = $1 AND archived_at IS NOT NULL`,
+    [id],
+  );
 }

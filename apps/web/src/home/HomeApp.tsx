@@ -57,6 +57,7 @@ export default function HomeApp() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>('recents');
   const [search, setSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
   const [me, setMe] = useState<{
     name: string;
     initial: string;
@@ -82,7 +83,13 @@ export default function HomeApp() {
     let cancelled = false;
     (async () => {
       try {
-        const [b, m] = await Promise.all([fetchHomeBoards(), fetchMe()]);
+        // Re-fetch whenever the archived toggle flips so the grid shape
+        // matches what the user asked for. fetchMe stays the first time
+        // round; refetch on toggle just hits /api/home.
+        const [b, m] = await Promise.all([
+          fetchHomeBoards({ includeArchived: showArchived }),
+          fetchMe(),
+        ]);
         if (cancelled) return;
         setBoards(b);
         setMe({
@@ -100,7 +107,7 @@ export default function HomeApp() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showArchived]);
 
   const recents = useMemo(() => readStringSet(RECENTS_KEY), []);
 
@@ -360,11 +367,41 @@ export default function HomeApp() {
               {view === 'recents' && (me ? `Welcome back, ${me.name.split(' ')[0]}.` : 'Recents')}
               {view === 'starred' && 'Starred.'}
             </h1>
-            <p style={{ color: '#666', fontSize: 14, marginTop: 6 }}>
-              {boards == null
-                ? 'Loading the pack…'
-                : `${filtered.length} board${filtered.length === 1 ? '' : 's'}`}
-            </p>
+            <div
+              style={{
+                marginTop: 6,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                flexWrap: 'wrap',
+              }}
+            >
+              <p style={{ color: '#666', fontSize: 14, margin: 0 }}>
+                {boards == null
+                  ? 'Loading the pack…'
+                  : `${filtered.length} board${filtered.length === 1 ? '' : 's'}`}
+              </p>
+              <label
+                data-testid="foldo-home-show-archived"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 13,
+                  color: '#555',
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => setShowArchived(e.target.checked)}
+                  style={{ accentColor: INK, cursor: 'pointer' }}
+                />
+                Show archived
+              </label>
+            </div>
           </div>
 
           {error && (
@@ -409,6 +446,34 @@ export default function HomeApp() {
                   onOpen={() => openBoard(b.id)}
                   onToggleStar={() => toggleStar(b.id)}
                   onToast={(m) => setToast(m)}
+                  onArchived={() => {
+                    // Optimistically remove from the active list unless the
+                    // user is also showing archived boards (in which case the
+                    // card stamps itself "Archived" instead of vanishing).
+                    setBoards((prev) =>
+                      prev == null
+                        ? prev
+                        : showArchived
+                          ? prev.map((x) =>
+                              x.id === b.id
+                                ? { ...x, archivedAt: new Date().toISOString() }
+                                : x,
+                            )
+                          : prev.filter((x) => x.id !== b.id),
+                    );
+                  }}
+                  onRestored={() => {
+                    // When restoring inside the archived view, drop the
+                    // archivedAt stamp so the card flips back to its
+                    // clickable shape immediately.
+                    setBoards((prev) =>
+                      prev == null
+                        ? prev
+                        : prev.map((x) =>
+                            x.id === b.id ? { ...x, archivedAt: null } : x,
+                          ),
+                    );
+                  }}
                 />
               ))}
               <button

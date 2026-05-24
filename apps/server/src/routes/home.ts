@@ -8,6 +8,7 @@ interface HomeBoardRow {
   repo_slug: string;
   dev_url: string | null;
   created_at: string;
+  archived_at: string | null;
   role: 'owner' | 'editor' | 'viewer';
   branch_count: string;
   frame_count: string;
@@ -22,6 +23,8 @@ export interface HomeBoardSummary {
   repoSlug: string;
   devUrl?: string;
   createdAt: string;
+  /** ISO timestamp if the board has been soft-deleted; null/undefined otherwise. */
+  archivedAt?: string | null;
   role: 'owner' | 'editor' | 'viewer';
   branchCount: number;
   frameCount: number;
@@ -31,8 +34,14 @@ export interface HomeBoardSummary {
 }
 
 export async function registerHomeRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/home', async (req, reply) => {
+  app.get<{ Querystring: { includeArchived?: string } }>(
+    '/api/home',
+    async (req, reply) => {
     const me = requireUser(req);
+    // A+ W2: soft-deleted boards are filtered out of the home grid by
+    // default. `?includeArchived=true` flips it so the home UI's "Show
+    // archived" toggle can render every board for Restore.
+    const includeArchived = req.query.includeArchived === 'true';
     // A+ W1 perf rewrite: the previous shape issued 5 correlated subqueries
     // per board row (branch count, frame count, comment count, max updated_at
     // across 3 tables, ARRAY_AGG of branch colors). On a board list of N this
@@ -58,6 +67,7 @@ export async function registerHomeRoutes(app: FastifyInstance): Promise<void> {
          b.repo_slug,
          b.dev_url,
          b.created_at,
+         b.archived_at,
          m.role,
          COALESCE(bra.branch_count, 0)  AS branch_count,
          COALESCE(fr.frame_count, 0)    AS frame_count,
@@ -89,8 +99,9 @@ export async function registerHomeRoutes(app: FastifyInstance): Promise<void> {
            FROM comments
           GROUP BY board_id
        ) cm ON cm.board_id = b.id
+       WHERE ($2::boolean OR b.archived_at IS NULL)
        ORDER BY b.created_at DESC`,
-      [me.id],
+      [me.id, includeArchived],
     );
 
     const summaries: HomeBoardSummary[] = rows.map((r) => ({
@@ -99,6 +110,7 @@ export async function registerHomeRoutes(app: FastifyInstance): Promise<void> {
       repoSlug: r.repo_slug,
       devUrl: r.dev_url ?? undefined,
       createdAt: r.created_at,
+      archivedAt: r.archived_at ?? null,
       role: r.role,
       branchCount: Number(r.branch_count),
       frameCount: Number(r.frame_count),
@@ -110,5 +122,6 @@ export async function registerHomeRoutes(app: FastifyInstance): Promise<void> {
       branchColors: r.branch_colors ?? [],
     }));
     return reply.send({ boards: summaries });
-  });
+    },
+  );
 }

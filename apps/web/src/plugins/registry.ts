@@ -25,8 +25,18 @@ export type { HotkeySpec, Plugin, PluginSurface };
 let hotkeyCache: HotkeySpec[] | null = null;
 function readHotkeyCache(): HotkeySpec[] {
   if (hotkeyCache) return hotkeyCache;
-  hotkeyCache = registry.surfaces('hotkey').map((s) => s.spec);
-  return hotkeyCache;
+  // Use a local before assigning back to the module-level slot so TS can
+  // narrow the return value to HotkeySpec[]. Without this, the return on
+  // the next line is typed as HotkeySpec[] | null because TS can't prove
+  // the slot wasn't mutated to null again between the assignment and
+  // the return (which is exactly what Railway's TS2322 was complaining
+  // about even though local typecheck is happy — different TS versions
+  // narrow `let` differently).
+  const computed: HotkeySpec[] = registry
+    .surfaces('hotkey')
+    .map((s: { spec: HotkeySpec }) => s.spec);
+  hotkeyCache = computed;
+  return computed;
 }
 
 /**

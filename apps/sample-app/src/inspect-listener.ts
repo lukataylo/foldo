@@ -1,35 +1,62 @@
 // Iframe-side counterpart for the DOM Editor postMessage protocol defined
 // in apps/web/src/plugins/core-dom-editor/inspect-bridge.ts.
 //
-// Three message shapes are exchanged:
-//   canvas → iframe: { type: 'foldo:inspect:pick' }
-//   iframe → canvas: { type: 'foldo:inspect:picked', selector, computed, label? }
-//   canvas → iframe: { type: 'foldo:inspect:apply', selector, styles }
+// Five message shapes are exchanged (see inspect-bridge.ts for the full
+// protocol doc):
+//   canvas → iframe: foldo:inspect:pick { multi? }
+//   iframe → canvas: foldo:inspect:picked { selector, computed, label?, additive? }
+//   canvas → iframe: foldo:inspect:apply { selectors[], styles }
+//   canvas → iframe: foldo:inspect:revert { selectors[], properties[] }
+//   iframe → canvas: foldo:inspect:error { code, message?, expected?, got? }
+//
+// All messages carry an integer `version` field; mismatches are rejected
+// with a PROTOCOL_VERSION error reply.
 //
 // Behaviour:
-//   - On `foldo:inspect:pick`: enter pick mode. A capture-phase mousemove
-//     listener paints a subtle outline on the currently-hovered element.
-//     The next click swallows the original action, computes a "good enough"
-//     unique selector for the element, snapshots its computed styles, and
-//     posts `foldo:inspect:picked` back to the parent. Pick mode then exits.
-//   - On `foldo:inspect:apply`: find every element matching `selector` and
-//     write `styles` into their inline style. In-memory only — refreshing
-//     the iframe clears every override, which is the correct v1 behaviour
-//     (the "Save to source" path in DomEditor is a separate pipeline).
+//   - On pick: paint a subtle outline on the hovered element; the next
+//     click snapshots a selector + computed styles and posts `picked`.
+//     If the inbound pick message has `multi: true`, the listener stays
+//     armed after the click — successive shift/cmd-clicks add to the
+//     selection from the canvas's POV (`additive: true` on the reply).
+//   - On apply: write the supplied styles as inline overrides on every
+//     element matching any selector in the message.
+//   - On revert: remove the named inline-style properties.
+//   - Any throw inside the handler is caught and reported as a
+//     PICK_FAILED / APPLY_FAILED error message so the canvas can show
+//     the user instead of failing silently (typical for cross-origin
+//     iframes that can't run the picker at all).
 //
 // Origin discipline:
-//   - The parent's origin is supplied via the existing PARENT_ORIGIN env in
-//     bridge/messages.ts (read by parentBridge.ts). We use the same value
-//     so the two surfaces share one allowlist source. Incoming messages
-//     from any other origin are silently dropped.
+//   - The parent's origin is supplied via the existing PARENT_ORIGIN env
+//     in bridge/messages.ts. Incoming messages from any other origin are
+//     silently dropped before they reach the dispatch table.
 
 import { PARENT_ORIGIN } from './bridge/messages';
 
-// Computed-style keys mirrored from apps/web/src/plugins/core-dom-editor/
-// inspect-bridge.ts > DEFAULT_PICK_KEYS. Kept inline (rather than imported)
-// so this iframe-side module doesn't reach into the canvas package — the
-// protocol is the contract, not the file boundary.
+/**
+ * Bump this whenever the wire protocol changes in a non-backwards-
+ * compatible way. Keep in sync with PROTOCOL_VERSION in
+ * apps/web/src/plugins/core-dom-editor/inspect-bridge.ts.
+ */
+const PROTOCOL_VERSION = 1;
+
+// Computed-style keys mirrored from inspect-bridge.ts > DEFAULT_PICK_KEYS.
+// Kept inline so this iframe-side module doesn't reach into the canvas
+// package — the protocol is the contract, not the file boundary.
 const PICK_KEYS: readonly string[] = [
+  // Layout
+  'display',
+  'position',
+  'flex-direction',
+  'gap',
+  'width',
+  'height',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'z-index',
+  // Spacing
   'padding-top',
   'padding-right',
   'padding-bottom',
@@ -38,13 +65,23 @@ const PICK_KEYS: readonly string[] = [
   'margin-right',
   'margin-bottom',
   'margin-left',
+  // Typography
   'font-size',
   'font-weight',
   'line-height',
   'color',
+  // Fill
   'background-color',
+  // Border & shadow
   'border-radius',
+  'border-top-width',
+  'border-top-style',
+  'border-top-color',
   'box-shadow',
+  // Transform
+  'transform',
+  // Visibility
+  'opacity',
 ];
 
 interface InspectListenerHandle {
@@ -55,6 +92,8 @@ type Mode = 'idle' | 'picking';
 
 export function initInspectListener(): InspectListenerHandle {
   let mode: Mode = 'idle';
+  let multi = false; // stay-armed flag from the inbound pick message
+  let pendingAdditive = false; // set during onClick if user held shift/meta
   let hoverEl: Element | null = null;
   let prevOutline: string | null = null;
   let prevOutlineOffset: string | null = null;
@@ -93,19 +132,30 @@ export function initInspectListener(): InspectListenerHandle {
     if (mode !== 'picking') return;
     const target = e.target instanceof Element ? e.target : null;
     if (!target) return;
-    // Swallow the click so we don't navigate / submit forms while picking.
     e.preventDefault();
     e.stopPropagation();
-    const selector = buildSelector(target);
-    const computed = snapshotComputedStyles(target);
-    const label = humanLabel(target);
-    exitPickMode();
-    postPicked(selector, computed, label);
+    pendingAdditive = e.metaKey || e.ctrlKey || e.shiftKey;
+    try {
+      const selector = buildSelector(target);
+      const computed = snapshotComputedStyles(target);
+      const label = humanLabel(target);
+      if (!multi) exitPickMode();
+      else clearHoverOutline(); // keep the listeners armed; clear the paint
+      postPicked(selector, computed, label, pendingAdditive);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      postError('PICK_FAILED', msg);
+      exitPickMode();
+    }
   };
 
-  const enterPickMode = (): void => {
-    if (mode === 'picking') return;
+  const enterPickMode = (multiMode: boolean): void => {
+    if (mode === 'picking') {
+      multi = multiMode; // allow re-arming to flip the flag
+      return;
+    }
     mode = 'picking';
+    multi = multiMode;
     document.body.dataset.foldoInspectPick = '1';
     document.addEventListener('mousemove', onMouseMove, true);
     document.addEventListener('click', onClick, true);
@@ -114,6 +164,7 @@ export function initInspectListener(): InspectListenerHandle {
   const exitPickMode = (): void => {
     if (mode === 'idle') return;
     mode = 'idle';
+    multi = false;
     delete document.body.dataset.foldoInspectPick;
     document.removeEventListener('mousemove', onMouseMove, true);
     document.removeEventListener('click', onClick, true);
@@ -125,33 +176,101 @@ export function initInspectListener(): InspectListenerHandle {
     // or apply overlays. Any other source (a sibling iframe, a hostile
     // attacker, a stale dev tab) is dropped silently.
     if (e.origin !== PARENT_ORIGIN) return;
-    const data = e.data as { type?: unknown } | null;
+    const data = e.data as { type?: unknown; version?: unknown } | null;
     if (!data || typeof data !== 'object') return;
+    // Only react to foldo:inspect:* messages — the sample-app shares its
+    // window with the parent bridge and the recipe replayer, both of which
+    // push other shapes through. Ignore anything outside our namespace
+    // before the version check so we don't false-positive on protocol
+    // mismatches from unrelated traffic.
+    if (typeof data.type !== 'string' || !data.type.startsWith('foldo:inspect:')) {
+      return;
+    }
+    // Version check — replies always include the version so the canvas can
+    // detect a sample-app that's behind the schema.
+    if (typeof data.version !== 'number' || data.version !== PROTOCOL_VERSION) {
+      postError('PROTOCOL_VERSION', undefined, {
+        expected: PROTOCOL_VERSION,
+        got: typeof data.version === 'number' ? data.version : 0,
+      });
+      return;
+    }
+    try {
+      dispatchMessage(data as Record<string, unknown>);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      postError('APPLY_FAILED', msg);
+    }
+  };
+
+  function dispatchMessage(data: Record<string, unknown>): void {
     if (data.type === 'foldo:inspect:pick') {
-      enterPickMode();
+      enterPickMode(data.multi === true);
       return;
     }
     if (data.type === 'foldo:inspect:apply') {
-      const msg = data as { selector?: unknown; styles?: unknown };
-      if (typeof msg.selector !== 'string') return;
-      if (!msg.styles || typeof msg.styles !== 'object') return;
-      applyStyles(msg.selector, msg.styles as Record<string, string>);
+      const selectors = normalizeSelectors(data);
+      const styles = data.styles;
+      if (!selectors || !styles || typeof styles !== 'object') return;
+      for (const sel of selectors) {
+        applyStyles(sel, styles as Record<string, string>);
+      }
       return;
     }
-  };
+    if (data.type === 'foldo:inspect:revert') {
+      const selectors = normalizeSelectors(data);
+      const props = Array.isArray(data.properties)
+        ? (data.properties as unknown[]).filter((p): p is string => typeof p === 'string')
+        : null;
+      if (!selectors || !props) return;
+      for (const sel of selectors) {
+        revertStyles(sel, props);
+      }
+      return;
+    }
+  }
 
   function postPicked(
     selector: string,
     computed: Record<string, string>,
     label: string,
+    additive: boolean,
   ): void {
     try {
       window.parent.postMessage(
-        { type: 'foldo:inspect:picked', selector, computed, label },
+        {
+          type: 'foldo:inspect:picked',
+          version: PROTOCOL_VERSION,
+          selector,
+          computed,
+          label,
+          additive,
+        },
         PARENT_ORIGIN,
       );
     } catch {
       // ignore — parent likely detached or origin mismatch
+    }
+  }
+
+  function postError(
+    code: 'PROTOCOL_VERSION' | 'PICK_FAILED' | 'APPLY_FAILED',
+    message?: string,
+    extra: { expected?: number; got?: number } = {},
+  ): void {
+    try {
+      window.parent.postMessage(
+        {
+          type: 'foldo:inspect:error',
+          version: PROTOCOL_VERSION,
+          code,
+          message,
+          ...extra,
+        },
+        PARENT_ORIGIN,
+      );
+    } catch {
+      // ignore
     }
   }
 
@@ -168,14 +287,29 @@ export function initInspectListener(): InspectListenerHandle {
 // ---------- helpers ----------
 
 /**
+ * Coerce the `selectors` / legacy `selector` field on an inbound apply /
+ * revert message into a string[]. Returns null on a malformed shape so the
+ * caller can drop the message without surfacing a confusing error.
+ */
+function normalizeSelectors(data: Record<string, unknown>): string[] | null {
+  if (Array.isArray(data.selectors)) {
+    const out = (data.selectors as unknown[]).filter(
+      (s): s is string => typeof s === 'string' && s.length > 0,
+    );
+    return out.length > 0 ? out : null;
+  }
+  if (typeof data.selector === 'string' && data.selector.length > 0) {
+    return [data.selector];
+  }
+  return null;
+}
+
+/**
  * Build a "good enough" selector for the given element. Order of preference:
  *   1. data-foldo-element (the sample-app's own annotation — most stable)
  *   2. id (if present and idempotent)
  *   3. unique data-testid (very common in this codebase)
  *   4. tag + nth-of-type chain up to the nearest stable ancestor
- *
- * Doesn't have to round-trip perfectly — it just needs to be unique
- * enough for the apply step's querySelectorAll to find the same node.
  */
 export function buildSelector(el: Element): string {
   if (el instanceof HTMLElement) {
@@ -183,7 +317,6 @@ export function buildSelector(el: Element): string {
     if (fld) return `[data-foldo-element="${cssEscape(fld)}"]`;
   }
   if (el.id) {
-    // Validate the id is selector-safe; CSS.escape covers the rest.
     return `#${cssEscape(el.id)}`;
   }
   const testid = el.getAttribute('data-testid');
@@ -191,9 +324,6 @@ export function buildSelector(el: Element): string {
     const sel = `[data-testid="${cssEscape(testid)}"]`;
     if (document.querySelectorAll(sel).length === 1) return sel;
   }
-  // Walk up building tag:nth-of-type segments until we hit a node we can
-  // anchor with one of the strategies above. Cap depth so we don't return
-  // a 30-segment selector that still isn't unique.
   const parts: string[] = [];
   let cur: Element | null = el;
   let depth = 0;
@@ -217,7 +347,6 @@ function segmentFor(el: Element): string {
   if (el.id) return `${tag}#${cssEscape(el.id)}`;
   const parent = el.parentElement;
   if (!parent) return tag;
-  // nth-of-type among siblings with the same tag
   let n = 0;
   for (const sib of Array.from(parent.children)) {
     if (sib.tagName === el.tagName) {
@@ -229,8 +358,6 @@ function segmentFor(el: Element): string {
 }
 
 function cssEscape(s: string): string {
-  // Use the browser's CSS.escape when available; fall back to a
-  // conservative pre-escape for older targets.
   if (typeof (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS?.escape === 'function') {
     return (globalThis as { CSS: { escape: (s: string) => string } }).CSS.escape(s);
   }
@@ -271,6 +398,25 @@ function applyStyles(selector: string, styles: Record<string, string>): void {
         node.style.setProperty(k, v);
       } catch {
         /* ignore individual property failures */
+      }
+    }
+  });
+}
+
+function revertStyles(selector: string, properties: string[]): void {
+  let nodes: NodeListOf<Element>;
+  try {
+    nodes = document.querySelectorAll(selector);
+  } catch {
+    return;
+  }
+  nodes.forEach((node) => {
+    if (!(node instanceof HTMLElement)) return;
+    for (const p of properties) {
+      try {
+        node.style.removeProperty(p);
+      } catch {
+        /* ignore */
       }
     }
   });

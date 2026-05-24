@@ -204,6 +204,8 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
               type="button"
               role="tab"
               aria-selected={isActive}
+              aria-controls={`foldo-plugin-${side}-body-${t.id}`}
+              id={`foldo-plugin-${side}-tab-${t.id}-trigger`}
               onClick={() => onSelectTab(t.id)}
               style={isActive ? tabBtnActive : tabBtn}
               data-testid={`foldo-plugin-${side}-tab-${t.id}`}
@@ -236,7 +238,13 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
           </button>
         )}
       </div>
-      <div style={body} data-testid={`foldo-plugin-${side}-body-${active.id}`}>
+      <div
+        style={body}
+        role="tabpanel"
+        id={`foldo-plugin-${side}-body-${active.id}`}
+        aria-labelledby={`foldo-plugin-${side}-tab-${active.id}-trigger`}
+        data-testid={`foldo-plugin-${side}-body-${active.id}`}
+      >
         {active.render()}
       </div>
     </aside>

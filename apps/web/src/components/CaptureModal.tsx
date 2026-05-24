@@ -143,9 +143,10 @@ export function CaptureModal({
           </div>
           <button
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+            aria-label="Close capture modal"
+            className="flex h-11 w-11 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
           >
-            <svg width="11" height="11" viewBox="0 0 16 16">
+            <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
               <path
                 d="M4 4l8 8M12 4l-8 8"
                 stroke="currentColor"

@@ -21,41 +21,59 @@ function pickWidth(vw: number): number {
   return 280;
 }
 
+// Floating Figma-style panel: insets from the screen edges (so the
+// TopBar above and PluginToolBar below stay fully visible and the panel
+// reads as a "card" floating on the canvas), rounded corners, soft
+// outer shadow + crisp inner hairline. zIndex sits BELOW the TopBar
+// (z=50) so a stray full-bleed panel can never paint over it.
 const containerBase: CSSProperties = {
   position: 'fixed',
-  top: 56, // below TopBar
-  bottom: 64, // above ToolBar
+  top: 64, // below TopBar (~56px) + 8px gap
+  bottom: 80, // above PluginToolBar (~60px) + 20px gap
   display: 'flex',
   flexDirection: 'column',
-  background: 'rgba(20, 20, 22, 0.92)',
-  backdropFilter: 'blur(12px)',
-  boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06)',
-  zIndex: 40,
+  background: 'rgba(20, 20, 22, 0.96)',
+  backdropFilter: 'blur(14px)',
+  WebkitBackdropFilter: 'blur(14px)',
+  borderRadius: 12,
+  border: '1px solid rgba(255,255,255,0.06)',
+  boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
+  zIndex: 35,
   color: '#e8e8ea',
+  overflow: 'hidden', // round body corners with the parent
 };
 
+// Tab strip header: subtle, compact. When there's only ONE tab we
+// shrink-wrap the label so the strip reads as a "panel title" rather
+// than a giant button (the previous full-width treatment looked like a
+// CTA dominating the top of the panel).
 const tabStrip: CSSProperties = {
   display: 'flex',
   gap: 2,
-  padding: 6,
+  padding: '8px 10px',
   borderBottom: '1px solid rgba(255,255,255,0.06)',
+  flexShrink: 0,
 };
 
 const tabBtn: CSSProperties = {
-  flex: 1,
-  /* A+W1 touch: padding 6x8 → 10x12 so the tab is comfortable on iPad. */
-  padding: '10px 12px',
-  minHeight: 40,
+  // Default tab button: equal-width when multiple tabs, content-width
+  // when single. The flex value is overridden inline below based on
+  // tabs.length so a 1-tab panel reads as a title not a button.
+  padding: '6px 10px',
+  minHeight: 28,
   border: 'none',
   background: 'transparent',
   color: '#9a9aa0',
   borderRadius: 6,
-  fontSize: 13,
+  fontSize: 12,
+  fontWeight: 500,
+  letterSpacing: 0.2,
   cursor: 'pointer',
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  gap: 4,
+  gap: 6,
+  transition: 'background 80ms, color 80ms',
 };
 
 const tabBtnActive: CSSProperties = {
@@ -64,7 +82,11 @@ const tabBtnActive: CSSProperties = {
   color: '#e8e8ea',
 };
 
-const body: CSSProperties = { flex: 1, overflow: 'auto', padding: 12 };
+const body: CSSProperties = {
+  flex: 1,
+  overflow: 'auto',
+  padding: '8px 12px 12px 12px',
+};
 
 /* A+W1 touch: small floating "Tabs" toggle for very narrow viewports — sits
    along the panel's edge so the user has a way to bring the collapsed panel
@@ -169,8 +191,11 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
     setRouteTab(id);
   };
 
+  // Inset from the screen edge so the panel reads as a floating card
+  // rather than a full-bleed sidebar. 12px on desktop, 8px on narrow.
+  const edgeInset = vw < 900 ? 8 : 12;
   const positional: CSSProperties =
-    side === 'left' ? { left: 0 } : { right: 0 };
+    side === 'left' ? { left: edgeInset } : { right: edgeInset };
 
   // Collapsed state: render only a small toggle button along the screen edge.
   if (userCollapsed) {
@@ -198,6 +223,12 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
       <div style={tabStrip} role="tablist">
         {tabs.map((t) => {
           const isActive = t.id === active.id;
+          // Single-tab panel: render as left-aligned title, no flex
+          // expansion. Multi-tab: equal-width segmented control.
+          const widthStyle: CSSProperties =
+            tabs.length === 1
+              ? { flex: 'initial', justifyContent: 'flex-start', paddingLeft: 4 }
+              : { flex: 1 };
           return (
             <button
               key={t.id}
@@ -207,7 +238,23 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
               aria-controls={`foldo-plugin-${side}-body-${t.id}`}
               id={`foldo-plugin-${side}-tab-${t.id}-trigger`}
               onClick={() => onSelectTab(t.id)}
-              style={isActive ? tabBtnActive : tabBtn}
+              style={{
+                ...(isActive ? tabBtnActive : tabBtn),
+                ...widthStyle,
+                // Single-tab acts as a panel title — no hover/active
+                // background since there's nothing to switch to.
+                ...(tabs.length === 1
+                  ? {
+                      background: 'transparent',
+                      color: '#9a9aa0',
+                      cursor: 'default',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: 0.6,
+                      textTransform: 'uppercase',
+                    }
+                  : {}),
+              }}
               data-testid={`foldo-plugin-${side}-tab-${t.id}`}
             >
               {t.icon}

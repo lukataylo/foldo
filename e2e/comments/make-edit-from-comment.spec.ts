@@ -10,22 +10,16 @@
 //      text so the dispatch flow opens with the comment as the initial
 //      intent.
 //
-// FOLLOW-UP — Step 5.4: this spec sits on top of the same UI pin-drop path
-// that 5.3 (`comments/full-thread.spec.ts`) and 5.6 (`multiplayer/two-tabs`)
-// hit a timing flake on — the optimistic-comment swap doesn't always land
-// in the spec environment, so the pin never materialises and the rest of
-// the flow can't run. Skipped until 5.3's root cause is fixed; once the
-// pin-drop reliably swaps in CI, this spec activates without changes.
-//
-// Separately: `onMakeEditFromComment` in `useCommentHandlers.ts` only
-// calls `setSelectedElement` when the comment has either a code `target`
-// (app frames) or an `anchor` (markdown line anchors). A pin-dropped
-// comment on a markdown frame has neither, so today clicking "Make this
-// an edit" sets the initial-intent state but doesn't mount the EditPanel.
-// Fixing 5.4 end-to-end therefore likely also requires extending
-// `onMakeEditFromComment` to synthesise a SelectedElement from the
-// `pin` + frame for pin-only markdown comments (or, equivalently, opening
-// the EditPanel against the frame as a whole when no element is resolved).
+// PIN-DROP FIX (A+ W2): both halves of the 5.4 flake are addressed:
+//   1. The optimistic-comment swap in `useCommentHandlers.handleDropPin`
+//      now preserves text typed during the in-flight POST (the previous
+//      flake — empty `text:''` from the POST body overwriting the user's
+//      typed body when the server response landed).
+//   2. `onMakeEditFromComment` now synthesises a SelectedElement from
+//      the comment's `pin` + frame for pin-only markdown (and app) frames
+//      so the EditPanel mounts even when the comment has no code `target`
+//      or doc `anchor`. The new branch lives directly below the existing
+//      `c.anchor && f.kind === 'markdown'` branch.
 
 import { expect, test } from '@playwright/test';
 import { createUser, loginAs } from '../helpers/factory';
@@ -38,7 +32,8 @@ const DEMO_BOARD_ID = 'board-acme-landing';
 // the 5.3 / 5.6 specs).
 const SEED_MD_FRAME = 'f-cta-prd';
 
-test.describe.skip('comments: make edit from comment', () => {
+// FOLLOW-UP (A+ W3 #70): same root cause as full-thread above. PR #28 added pin-only fallback paths for markdown + app frames in useCommentHandlers; CI still times out before they fire. W3 to add stable waits.
+test.describe.skip("comments: make edit from comment", () => {
   test('pin → comment → make-edit opens EditPanel with intent pre-filled', async ({
     page,
   }) => {

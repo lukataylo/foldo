@@ -3,11 +3,11 @@
 // registry, renders a vertical tab strip + the active tab's body, and
 // hides itself if no plugin contributes a tab.
 //
-// The active tab is local React state — no global tab-id selector yet.
-// Once Layer Navigator + DOM Editor land, route deep-links (`?layer=…`)
-// will lift this into a query-param hook.
+// Active tab is route-backed via `?leftTab=…` / `?rightTab=…` query params
+// so a tab selection survives reload + is deep-linkable. Falls back to the
+// first tab when the param is absent or names an unknown tab.
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { usePluginSurfaces } from '../registry';
 
 type Side = 'left' | 'right';
@@ -85,10 +85,62 @@ const collapsedToggleBase: CSSProperties = {
   boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06)',
 };
 
+/**
+ * Tiny `?leftTab=` / `?rightTab=` hook. We don't extend Router (it's path-
+ * shaped, not query-shaped) — the panel substrate is the only thing that
+ * needs query state today, so a local helper is the lighter-weight option.
+ *
+ * Writes use `history.replaceState` (a tab switch shouldn't pile a back-
+ * stack entry per click) and dispatch a custom `foldo:tabchange` event so
+ * sibling panels (LeftPanel + RightPanel coexist) reconcile without each
+ * polling location.search.
+ */
+function useTabRouteParam(paramName: string): {
+  value: string | null;
+  set: (v: string | null) => void;
+} {
+  const read = useCallback((): string | null => {
+    if (typeof location === 'undefined') return null;
+    const sp = new URLSearchParams(location.search);
+    return sp.get(paramName);
+  }, [paramName]);
+  const [value, setValue] = useState<string | null>(read);
+
+  useEffect(() => {
+    const sync = (): void => setValue(read());
+    window.addEventListener('popstate', sync);
+    window.addEventListener('foldo:tabchange', sync as EventListener);
+    return () => {
+      window.removeEventListener('popstate', sync);
+      window.removeEventListener('foldo:tabchange', sync as EventListener);
+    };
+  }, [read]);
+
+  const set = useCallback(
+    (v: string | null): void => {
+      if (typeof location === 'undefined') return;
+      const sp = new URLSearchParams(location.search);
+      if (v === null) sp.delete(paramName);
+      else sp.set(paramName, v);
+      const qs = sp.toString();
+      const next = location.pathname + (qs ? `?${qs}` : '') + location.hash;
+      history.replaceState({}, '', next);
+      setValue(v);
+      // Tell the sibling panel + other listeners.
+      window.dispatchEvent(new Event('foldo:tabchange'));
+    },
+    [paramName],
+  );
+
+  return { value, set };
+}
+
 function SidePanel({ side }: { side: Side }): JSX.Element | null {
   const surfaces = usePluginSurfaces(side === 'left' ? 'leftPanel' : 'rightPanel');
-  const tabs = surfaces.map((s) => s.tab);
-  const [activeId, setActiveId] = useState<string | null>(tabs[0]?.id ?? null);
+  const tabs = useMemo(() => surfaces.map((s) => s.tab), [surfaces]);
+  const { value: routeTab, set: setRouteTab } = useTabRouteParam(
+    side === 'left' ? 'leftTab' : 'rightTab',
+  );
 
   /* A+W1 touch: track viewport width to compute panel width + collapse mode. */
   const [vw, setVw] = useState<number>(
@@ -109,7 +161,13 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
   }, [collapseByDefault]);
 
   if (tabs.length === 0) return null;
-  const active = tabs.find((t) => t.id === activeId) ?? tabs[0]!;
+  // Resolve active tab: route param if it names a real tab, else first tab.
+  const active = tabs.find((t) => t.id === routeTab) ?? tabs[0]!;
+  const onSelectTab = (id: string): void => {
+    // Writing the first tab as the route value lets a deep-link force the
+    // first tab even after a future plugin install reshuffles ordering.
+    setRouteTab(id);
+  };
 
   const positional: CSSProperties =
     side === 'left' ? { left: 0 } : { right: 0 };
@@ -146,7 +204,7 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
               type="button"
               role="tab"
               aria-selected={isActive}
-              onClick={() => setActiveId(t.id)}
+              onClick={() => onSelectTab(t.id)}
               style={isActive ? tabBtnActive : tabBtn}
               data-testid={`foldo-plugin-${side}-tab-${t.id}`}
             >

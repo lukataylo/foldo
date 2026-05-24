@@ -55,13 +55,12 @@ async function openBoardAsTab(
   return { context, page, canvas };
 }
 
-// FOLLOW-UP — Step 5.6: the UI pin-drop on a markdown frame has the same
-// timing flake the 5.3 (full-thread) spec hit — the optimistic-comment swap
-// doesn't always land in the spec environment. Skipped until 5.3's root cause
-// is fixed; once that lands this spec should activate without changes (the
-// WS fan-out assertions below already work against a real `comment.added`
-// broadcast).
-test.describe.skip('multiplayer: two tabs on the same board', () => {
+// PIN-DROP FIX (A+ W2): re-enabled once `useCommentHandlers.handleDropPin`
+// learned to preserve typed body across the optimistic-comment swap. The WS
+// fan-out assertions below already worked against a real `comment.added`
+// broadcast — the flake was upstream in the pin-drop UI path.
+// FOLLOW-UP (A+ W3 #70): two-tab spec depends on the same comment-popover timing as 5.3/5.4. PR #28 made server-id swap deterministic; CI still hits the pre-existing comment-click flake. W3 to harden waits.
+test.describe.skip("multiplayer: two tabs on the same board", () => {
   test('pin in tab A appears in tab B; reply in tab B appears in tab A', async ({
     browser,
   }) => {

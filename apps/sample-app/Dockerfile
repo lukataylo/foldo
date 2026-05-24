@@ -42,19 +42,17 @@ ENV PORT=5174
 
 WORKDIR /app
 
-COPY --from=builder /app/package.json /app/package-lock.json ./
-COPY --from=builder /app/apps/sample-app/package.json ./apps/sample-app/
-COPY --from=builder /app/apps/sample-app/dist ./apps/sample-app/dist
-COPY --from=builder /app/apps/sample-app/serve.json ./apps/sample-app/dist/serve.json
-# Hoisted to root /app/node_modules by npm workspaces — `serve` CLI shim
-# lives at /app/node_modules/.bin/serve.
-COPY --from=builder /app/node_modules ./node_modules
+# IMPORTANT: do NOT COPY the full workspace node_modules — see apps/web/Dockerfile
+# for the full story. Install `serve` directly so the runtime image stays
+# small enough to start on Railway's hobby tier without getting OOM-killed.
+RUN npm install --global --no-audit --no-fund --omit=optional serve@14.2.4
 
-ENV PATH="/app/node_modules/.bin:${PATH}"
+COPY --from=builder /app/apps/sample-app/dist ./dist
+COPY --from=builder /app/apps/sample-app/serve.json ./dist/serve.json
 
 EXPOSE 5174
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://localhost:'+(process.env.PORT||5174)+'/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
-CMD ["sh", "-c", "serve apps/sample-app/dist --listen tcp://0.0.0.0:${PORT:-5174} --single --no-clipboard --no-port-switching"]
+CMD ["sh", "-c", "serve dist --listen tcp://0.0.0.0:${PORT:-5174} --single --no-clipboard --no-port-switching"]

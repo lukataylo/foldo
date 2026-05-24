@@ -48,16 +48,18 @@ ENV PORT=5173
 
 WORKDIR /app
 
-COPY --from=builder /app/package.json /app/package-lock.json ./
-COPY --from=builder /app/apps/web/package.json ./apps/web/
-COPY --from=builder /app/apps/web/dist ./apps/web/dist
-COPY --from=builder /app/apps/web/serve.json ./apps/web/dist/serve.json
-# npm workspaces hoist deps to root /app/node_modules — `serve` lives there
-# because it's listed as a devDependency of @foldo/web and hoisted up. The
-# CLI shim is at /app/node_modules/.bin/serve, which we put on PATH below.
-COPY --from=builder /app/node_modules ./node_modules
+# IMPORTANT: do NOT COPY the full /app/node_modules (~260 MB on a workspace
+# repo) into the runtime image. That was the silent killer on Railway's
+# hobby tier — new images would build successfully but get OOM-killed on
+# container start, and Railway would silently fall back to the last
+# healthy revision, making it look like deploys had "succeeded" while the
+# old vite-preview-based image kept serving traffic. We only need `serve`
+# at runtime (8 MB on disk vs the full workspace deps), so install it
+# directly with a clean root-level install + ignore-scripts.
+RUN npm install --global --no-audit --no-fund --omit=optional serve@14.2.4
 
-ENV PATH="/app/node_modules/.bin:${PATH}"
+COPY --from=builder /app/apps/web/dist ./dist
+COPY --from=builder /app/apps/web/serve.json ./dist/serve.json
 
 EXPOSE 5173
 
@@ -68,4 +70,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 # `serve`'s "copied to clipboard" log noise in container stdout. `--no-port-switching`
 # makes a port collision a hard failure (we'd rather Railway restart and
 # re-roll than silently bind a different port).
-CMD ["sh", "-c", "serve apps/web/dist --listen tcp://0.0.0.0:${PORT:-5173} --single --no-clipboard --no-port-switching"]
+CMD ["sh", "-c", "serve dist --listen tcp://0.0.0.0:${PORT:-5173} --single --no-clipboard --no-port-switching"]

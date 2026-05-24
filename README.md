@@ -33,6 +33,10 @@
 
 ---
 
+> 📖 **New here?** Read [CLAUDE.md](CLAUDE.md) first — covers architecture, conventions, and where to look for what.
+
+---
+
 ## 🪡 Why Foldo
 
 The bottleneck in software development has shifted. With Claude Code and similar agents, **writing variants is cheap and fast** — but **reviewing them**, comparing them, commenting on them, deciding which to ship, and getting changes made is still stuck in text-first tools designed for an era when humans wrote every line.

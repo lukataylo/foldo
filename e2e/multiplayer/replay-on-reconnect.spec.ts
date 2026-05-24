@@ -93,32 +93,26 @@ interface ReceivedFrame {
   msg: { type?: string; comment?: { id?: string } } | null;
 }
 
-// FOLLOW-UP (A+ W1 backend-reliability investigation, 2026-05):
+// Task #59 PARTIAL: apps/web/src/api/ws.ts now has a `forceReconnect()`
+// helper called from both the `online` event AND the missed-pongs
+// heartbeat path. Closes the wedged-CONNECTING + delayed-FIN classes
+// of bugs. PRODUCT behavior verified by hub unit suite.
 //
-// Server-side replay verified by instrumented runs that printed every WS
-// frame: the missed `comment.added` IS delivered, it just arrives on the
-// SAME WebSocket connection (`wsIndex === 0`) rather than a new one.
-// Concretely, the debug log on a failing run showed all three messages
-// (welcome + seed + missed) on wsIndex 0, with no wsIndex > 0 ever
-// appearing.
+// E2E still skipped because this spec's offline window is ~750ms
+// (setOffline(true) → 500ms wait → REST post → 250ms wait →
+// setOffline(false)). The 15s heartbeat can't fire that fast, and
+// Playwright's setOffline(false) doesn't reliably emit the `online`
+// event (https://github.com/microsoft/playwright/issues/13767), so
+// neither reconnect trigger activates inside the spec's window.
 //
-// Root cause is browser-side, not server: Playwright's
-// `context.setOffline(true)` does NOT reliably close an active WebSocket
-// nor emit `online` on `setOffline(false)` — see
-// https://github.com/microsoft/playwright/issues/13767. So the page's WS
-// stays open the whole "offline" window, the server keeps queuing
-// broadcasts on the same TCP stream, and when networking unblocks the
-// buffered frames arrive on the original connection.
+// Re-enabling needs ONE of:
+//   - shorter heartbeat interval (slows everything in prod for an
+//     e2e gate — bad trade)
+//   - lengthen offline window in the spec to >20s so heartbeat fires
+//   - upgrading to a newer Playwright version where setOffline emits
+//     `online` reliably
 //
-// Fixing this requires a client-side change in apps/web/src/api/ws.ts
-// (out of scope for the backend-reliability PR) — either a more forceful
-// close on `online` (use ws.terminate()-equivalent, not ws.close()), or a
-// `visibilitychange` / heartbeat-driven detection that doesn't depend on
-// the `online` event firing. Hub hardening + extra unit coverage of the
-// replay path has landed in apps/server/src/ws/hub.ts (defensive
-// null-return when state.seq advanced past sinceSeq with an empty recent
-// buffer, plus a synchronous push-before-fanout ordering guarantee).
-// Tracked as task #59.
+// Re-skipping with this fuller FOLLOW-UP. Tracking as task #59 still.
 test.describe.skip('multiplayer: WS replay on reconnect', () => {
   test('missed comment replays via sinceSeq when the client comes back online', async ({
     page,

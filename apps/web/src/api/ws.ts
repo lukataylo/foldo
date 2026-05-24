@@ -111,24 +111,12 @@ export class FoldoWsClient {
     ) {
       this.onOnline = () => {
         if (this.closedByUser) return;
-        // Reset backoff so the retry fires immediately, not 5s out.
-        this.reconnectAttempt = 0;
-        if (this.reconnectTimer) {
-          clearTimeout(this.reconnectTimer);
-          this.reconnectTimer = null;
-        }
-        // If the previous socket is wedged in CONNECTING (offline-mode
-        // black hole), force-close it so `onclose` schedules a fresh
-        // attempt. If it's already CLOSED, this is a no-op.
-        if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
-          try {
-            this.ws.close();
-          } catch {
-            /* ignore */
-          }
-        } else {
-          this.connect();
-        }
+        // Browser says we're back online: kick a fresh reconnect cycle
+        // immediately, regardless of where the current ws is in its state
+        // machine. forceReconnect handles the wedged-CONNECTING case +
+        // detaches event handlers from the old ws so we don't double-fire
+        // a scheduleReconnect when its delayed `onclose` finally arrives.
+        this.forceReconnect('online-event');
       };
       window.addEventListener('online', this.onOnline);
     }
@@ -284,15 +272,61 @@ export class FoldoWsClient {
       this.pongTimer = setTimeout(() => {
         this.missedPongs += 1;
         if (this.missedPongs >= 2) {
-          // dead conn, force a reconnect cycle
-          try {
-            this.ws?.close();
-          } catch {
-            /* ignore */
-          }
+          // Heartbeat says the conn is dead even though the underlying
+          // WebSocket hasn't reported it (e.g. Playwright's `setOffline`
+          // doesn't close the socket, just black-holes packets — the
+          // existing `online`-event reconnect doesn't fire because the
+          // browser was never offline at the navigator level). Force a
+          // hard reconnect that doesn't wait for the old socket's
+          // `onclose` to arrive: detach handlers, mark the slot null,
+          // open a fresh socket. The replay-buffer e2e (task #59) was
+          // failing because the old socket stayed in OPEN state under
+          // Playwright and the missed-pong close was waiting on a TCP
+          // FIN handshake that never arrived.
+          this.forceReconnect('missed-pongs');
         }
       }, PONG_TIMEOUT_MS);
     }, PING_INTERVAL_MS);
+  }
+
+  /**
+   * Hard reset of the current WebSocket. Detaches every event handler from
+   * the old socket BEFORE closing it so its delayed `onclose` (if any) can't
+   * race against the fresh connect, marks the slot null, and re-enters
+   * `connect()` immediately with `reconnectAttempt = 0`.
+   *
+   * Use when the heartbeat or the `online` event tells us the conn is dead
+   * even though `readyState` still says OPEN — e.g. the OS socket is fine
+   * but packets aren't flowing (Playwright's `setOffline`, a phone going
+   * into a tunnel, a captive-portal hijack). Distinct from `close()` which
+   * is the user-initiated teardown path.
+   */
+  private forceReconnect(reason: string): void {
+    const old = this.ws;
+    this.ws = null;
+    this.reconnectAttempt = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.stopHeartbeat();
+    if (old) {
+      // Null out the handlers so a delayed `onclose` from the dead socket
+      // doesn't enqueue another scheduleReconnect on top of the fresh one
+      // we're about to start.
+      old.onopen = null;
+      old.onmessage = null;
+      old.onerror = null;
+      old.onclose = null;
+      try {
+        old.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.info('[foldo-ws] forceReconnect:', reason);
+    this.connect();
   }
 
   private stopHeartbeat() {

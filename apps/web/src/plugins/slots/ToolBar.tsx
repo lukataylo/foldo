@@ -6,9 +6,16 @@
 //
 // Visual style mirrors LeftRail.tsx — same pill background + button
 // shape — so contributions look at-home alongside the legacy rail.
+//
+// /* A+W4 features */ — buttons now respect ToolSpec.group: a 1px vertical
+// hairline divider sits between adjacent tools that disagree on `group`.
+// Mirrors the LeftRail vertical pill so the two views read as the same
+// taxonomy. Buttons also gain a11y attributes (aria-label,
+// aria-keyshortcuts, aria-pressed) so screen readers announce both the
+// label and the bound shortcut, plus the active state.
 
-import type { CSSProperties } from 'react';
-import { usePluginSurfaces } from '../registry';
+import { Fragment, type CSSProperties } from 'react';
+import { usePluginSurfaces, getCurrentTool } from '../registry';
 
 const wrap: CSSProperties = {
   position: 'fixed',
@@ -16,6 +23,7 @@ const wrap: CSSProperties = {
   left: '50%',
   transform: 'translateX(-50%)',
   display: 'flex',
+  alignItems: 'center',
   gap: 4,
   padding: 6,
   background: 'rgba(20, 20, 22, 0.85)',
@@ -43,10 +51,27 @@ const btn: CSSProperties = {
   cursor: 'pointer',
 };
 
+const btnActive: CSSProperties = {
+  ...btn,
+  background: 'rgba(255,255,255,0.10)',
+  color: '#ffffff',
+};
+
+const divider: CSSProperties = {
+  width: 1,
+  alignSelf: 'stretch',
+  margin: '4px 2px',
+  background: 'rgba(255,255,255,0.10)',
+};
+
 export function ToolBar(): JSX.Element | null {
   const surfaces = usePluginSurfaces('toolbar');
   const tools = surfaces.flatMap((s) => s.tools);
   if (tools.length === 0) return null;
+  // Live tool id (or null pre-mount). Read once per render — the pill is
+  // cheap enough that we don't bother subscribing to App's state.
+  const activeToolId = getCurrentTool();
+
   return (
     <div
       data-testid="foldo-plugin-toolbar"
@@ -54,19 +79,36 @@ export function ToolBar(): JSX.Element | null {
       aria-label="Plugin tools"
       style={wrap}
     >
-      {tools.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          title={t.shortcut ? `${t.label} (${t.shortcut.toUpperCase()})` : t.label}
-          onClick={t.activate}
-          style={btn}
-          data-testid={`foldo-plugin-toolbar-tool-${t.id}`}
-        >
-          {t.icon}
-          <span>{t.label}</span>
-        </button>
-      ))}
+      {tools.map((t, i) => {
+        const prev = i > 0 ? tools[i - 1] : undefined;
+        const groupChanged =
+          !!prev && (prev.group ?? '') !== (t.group ?? '');
+        const isActive = activeToolId === t.id;
+        return (
+          <Fragment key={t.id}>
+            {groupChanged ? (
+              <div
+                aria-hidden="true"
+                data-testid="foldo-plugin-toolbar-divider"
+                style={divider}
+              />
+            ) : null}
+            <button
+              type="button"
+              title={t.shortcut ? `${t.label} (${t.shortcut.toUpperCase()})` : t.label}
+              aria-label={t.label}
+              aria-keyshortcuts={t.shortcut ?? undefined}
+              aria-pressed={isActive}
+              onClick={t.activate}
+              style={isActive ? btnActive : btn}
+              data-testid={`foldo-plugin-toolbar-tool-${t.id}`}
+            >
+              {t.icon}
+              <span>{t.label}</span>
+            </button>
+          </Fragment>
+        );
+      })}
     </div>
   );
 }

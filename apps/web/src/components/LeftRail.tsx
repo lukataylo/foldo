@@ -34,7 +34,12 @@ export function LeftRail({ tool }: Props) {
       data-testid="foldo-canvas-leftrail"
       className="pointer-events-none absolute left-3 top-1/2 z-40 -translate-y-1/2"
     >
-      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-hairlineSoft bg-panel p-1 shadow-panel">
+      <div
+        role="toolbar"
+        aria-label="Canvas tools"
+        aria-orientation="vertical"
+        className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-hairlineSoft bg-panel p-1 shadow-panel"
+      >
         {tools.map((t, i) => {
           const prev = i > 0 ? tools[i - 1] : undefined;
           const groupChanged = prev && (prev.group ?? '') !== (t.group ?? '');
@@ -48,6 +53,7 @@ export function LeftRail({ tool }: Props) {
                 label={
                   t.shortcut ? `${t.label} (${t.shortcut.toUpperCase()})` : t.label
                 }
+                ariaLabel={t.label}
                 active={tool === t.id}
                 onClick={t.activate}
                 shortcut={t.shortcut}
@@ -65,6 +71,7 @@ export function LeftRail({ tool }: Props) {
 function RailButton({
   toolId,
   label,
+  ariaLabel,
   active,
   onClick,
   shortcut,
@@ -72,6 +79,7 @@ function RailButton({
 }: {
   toolId: string;
   label: string;
+  ariaLabel?: string;
   active?: boolean;
   onClick: () => void;
   shortcut?: string;
@@ -81,6 +89,9 @@ function RailButton({
     <button
       data-testid={`foldo-rail-tool-${toolId}`}
       title={label}
+      aria-label={ariaLabel ?? label}
+      aria-keyshortcuts={shortcut ?? undefined}
+      aria-pressed={!!active}
       onClick={onClick}
       /* A+W1 touch: 44x44 (h-11 w-11) for iPad finger-friendliness; was 36x36. */
       className={

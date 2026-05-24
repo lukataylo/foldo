@@ -85,13 +85,40 @@ export interface WsHandlerSpec {
   handler: (msg: unknown) => void;
 }
 
+/**
+ * A keyboard-shortcut contribution. The shortcuts plugin (apps/web's
+ * useKeyboardShortcuts hook) iterates every `hotkey` surface and installs a
+ * single window-level keydown listener that dispatches to the matching handler.
+ *
+ * Format for `keys` entries: a single canonical string per binding. Plain
+ * letters/numbers are case-insensitive (`'v'` matches both `v` and `V`).
+ * Modifiers prefix the key with `Meta+`, `Ctrl+`, `Alt+`, or `Shift+` and
+ * stack with `+` (e.g. `'Meta+k'`, `'Meta+Shift+P'`). Named keys mirror
+ * KeyboardEvent.key (`'Escape'`, `'Enter'`, `'='`, `'-'`, `'0'`).
+ *
+ * Multiple bindings are allowed per hotkey — useful when an action wants both
+ * `Meta+k` and `Ctrl+k` to fire (the cross-platform palette pattern).
+ */
+export interface HotkeySpec {
+  id: string;
+  /** One or more canonical key bindings. See doc-comment for format. */
+  keys: string[];
+  /** Invoked when the matching keydown fires outside an input/textarea. */
+  handler: () => void;
+  /** Human-readable label for a future "Keyboard shortcuts" cheatsheet. */
+  label?: string;
+  /** Grouping for the cheatsheet UI ('tools', 'view', 'navigation', …). */
+  category?: string;
+}
+
 export type PluginSurface =
   | { kind: 'toolbar'; tools: ToolSpec[] }
   | { kind: 'leftPanel'; tab: PanelTab }
   | { kind: 'rightPanel'; tab: PanelTab }
   | { kind: 'topBarRight'; item: TopBarItem }
   | { kind: 'frameContextMenu'; items: FrameContextMenuItem[] }
-  | { kind: 'wsHandler'; spec: WsHandlerSpec };
+  | { kind: 'wsHandler'; spec: WsHandlerSpec }
+  | { kind: 'hotkey'; spec: HotkeySpec };
 
 // ---------- Plugin lifecycle ----------
 

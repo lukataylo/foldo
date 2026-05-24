@@ -11,7 +11,10 @@ import { deleteEmail, extractLink, waitForEmail } from '../helpers/email-outbox'
 
 test.describe('auth: email verification', () => {
   test('signup → link → verify → unblocks publishing a test', async ({ page, request }) => {
-    const user = await createUser();
+    // Explicitly opt OUT of auto-verification — this spec exercises the
+    // signup → verify-link → verify flow itself, so the user MUST start
+    // unverified.
+    const user = await createUser({ verified: false });
 
     // 1. Signup should have minted + sent a verification email.
     const verifyEmail = await waitForEmail({

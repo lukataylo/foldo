@@ -169,11 +169,30 @@ export class Hub {
    * Messages with `seq > sinceSeq` that we still hold in the replay buffer.
    * Returns null if the requested seq is older than our oldest cached
    * message — caller should treat that as "history lost, do a fresh fetch".
+   *
+   * Semantics:
+   *   - Board never seen / `recent` empty AND seq counter still at 0
+   *     → return [] (nothing was missed, nothing to replay).
+   *   - Board has `seq > sinceSeq` but `recent` is empty
+   *     → return null (we know something happened but can't replay it —
+   *       client must refetch). This was previously returning [] which
+   *       silently swallowed events, the root cause of task #59.
+   *   - `sinceSeq < oldestBufferedSeq - 1`
+   *     → return null (history gap, caller refetches).
+   *   - Otherwise → return every buffered message with `seq > sinceSeq`.
+   *     Filtering by the stamped `seq` (not array index) is what makes the
+   *     ring buffer's eviction transparent to callers.
    */
   getMissedSince(boardId: BoardId, sinceSeq: number): ServerMessage[] | null {
     const s = this.boards.get(boardId);
     if (!s) return [];
-    if (s.recent.length === 0) return [];
+    if (s.recent.length === 0) {
+      // No buffered messages. If the board's seq counter has never moved past
+      // what the client says it last saw, there's genuinely nothing to
+      // replay. Otherwise we lost history (e.g. server restart) — signal a
+      // gap so the client refetches via REST.
+      return s.seq > sinceSeq ? null : [];
+    }
     const oldestSeq = s.recent[0]?.seq ?? 0;
     if (sinceSeq < oldestSeq - 1) return null; // history gap, caller refetches
     return s.recent.filter((m) => (m.seq ?? 0) > sinceSeq);
@@ -184,16 +203,29 @@ export class Hub {
    * a user. Stamps every outbound message with `PROTOCOL_VERSION` + a monotonic
    * per-board `seq`, and pushes a copy into the replay buffer so a client that
    * reconnects can ask for everything since its last-seen seq.
+   *
+   * Atomicity contract: the seq-increment + recent.push + fanout all happen
+   * inside one synchronous call. Node.js's event loop guarantees no other
+   * handler runs between these steps, so a concurrent `hello { sinceSeq }`
+   * on a different socket can't observe a half-applied broadcast (e.g. the
+   * counter incremented but the message not yet in the buffer).
    */
   broadcast(boardId: BoardId, message: ServerMessage, exceptUserId?: UserId): void {
     const state = this.getBoardState(boardId);
     const now = Date.now();
     state.lastTouchedAt = now;
-    state.seq += 1;
+    // Stamp + buffer atomically with the seq increment. The buffered copy is
+    // what `getMissedSince` returns to a reconnecting client, so it MUST be
+    // in the buffer before any other request handler can read it. The
+    // single-threaded event loop guarantees that — no `await` lives between
+    // these lines. We compute `seq` first, push into the buffer, THEN write
+    // `state.seq` so a concurrent `hello { sinceSeq }` reading `state.seq`
+    // can never see a higher seq than what's actually in `state.recent`.
+    const seq = state.seq + 1;
     const stamped: ServerMessage = {
       ...message,
       version: PROTOCOL_VERSION,
-      seq: state.seq,
+      seq,
     };
     const payload = JSON.stringify(stamped);
     state.recent.push(stamped);
@@ -202,6 +234,7 @@ export class Hub {
       // First entry — its push-time IS the oldest-recent age baseline.
       state.oldestRecentPushedAt = now;
     }
+    state.seq = seq;
     if (state.recent.length > REPLAY_BUFFER_SIZE) {
       const dropCount = state.recent.length - REPLAY_BUFFER_SIZE;
       const dropped = state.recent.splice(0, dropCount);

@@ -242,3 +242,54 @@ export async function reassignCommentsAuthor(
     [fromUserId, toUserId],
   );
 }
+
+/**
+ * The companion to `reassignCommentsAuthor` for the THREADED replies stored
+ * inline on each comment row. `comments.replies_json` is a JSONB array of
+ * `{ authorUserId, authorName, authorInitial, authorColor, ... }`; the
+ * top-level reassignment only touches `author_user_id`, so without this
+ * sweep every reply the user left to other people's comments still carries
+ * their original name / colour / id.
+ *
+ * The UPDATE walks the array with `jsonb_array_elements` and only touches
+ * rows that actually contain a reply by `fromUserId` — keeps the write set
+ * tiny on big boards. Returns the number of comment ROWS changed (a single
+ * row may have had multiple matching replies).
+ */
+export async function anonymiseRepliesByAuthor(
+  fromUserId: string,
+  to: {
+    userId: string;
+    name: string;
+    initial: string;
+    color: string;
+  },
+): Promise<number> {
+  // jsonb_set is per-key, so we rebuild the array by aggregating each
+  // element after mapping the matching ones. The CASE replaces only the
+  // identity fields; text / createdAt / id stay untouched so the thread
+  // still reads as a real exchange. WHERE filter uses the `@?` jsonpath
+  // existence operator (PG12+) which is index-friendly and avoids a full
+  // scan on big boards.
+  return exec(
+    `UPDATE comments
+        SET replies_json = (
+          SELECT COALESCE(jsonb_agg(
+            CASE
+              WHEN (elem->>'authorUserId') = $1 THEN
+                elem
+                  || jsonb_build_object(
+                       'authorUserId',  $2::text,
+                       'authorName',    $3::text,
+                       'authorInitial', $4::text,
+                       'authorColor',   $5::text
+                     )
+              ELSE elem
+            END
+          ), '[]'::jsonb)
+            FROM jsonb_array_elements(replies_json) elem
+        )
+      WHERE replies_json @? ('$[*] ? (@.authorUserId == "' || $1 || '")')::jsonpath`,
+    [fromUserId, to.userId, to.name, to.initial, to.color],
+  );
+}

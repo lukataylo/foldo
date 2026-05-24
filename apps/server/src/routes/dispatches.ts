@@ -13,6 +13,7 @@ import { canEditBoard, isMember } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { simulateDispatch } from '../sim/dispatch.ts';
 import { isMcpConnected, routeDispatchToMcp } from '../ws/mcp.ts';
+import { runDispatchWithRetry } from '../jobs/dispatchJob.ts';
 import { newId } from '../util.ts';
 
 export async function registerDispatchRoutes(app: FastifyInstance): Promise<void> {
@@ -45,10 +46,24 @@ export async function registerDispatchRoutes(app: FastifyInstance): Promise<void
 
     hub.broadcast(dispatch.boardId, { type: 'dispatch.created', dispatch });
 
+    // Fire the dispatch executor under the retry/DLQ harness. The runner
+    // returns a promise so retries are observable; on final failure
+    // `runDispatchWithRetry` flips the dispatch row to `error` with a
+    // message and broadcasts a `dispatch.status`. We still don't await it —
+    // the HTTP response goes out immediately — but a thrown executor no
+    // longer silently strands the row.
     if (isMcpConnected(dispatch.boardId)) {
-      routeDispatchToMcp(dispatch);
+      void runDispatchWithRetry(dispatch, async (d) => {
+        // routeDispatchToMcp returns false if the MCP socket vanished
+        // between isMcpConnected() and the actual send — that's the kind
+        // of transient blip we want to retry.
+        const sent = routeDispatchToMcp(d);
+        if (!sent) {
+          throw new Error('MCP socket unavailable when routing dispatch');
+        }
+      });
     } else {
-      void simulateDispatch(dispatch);
+      void runDispatchWithRetry(dispatch, (d) => simulateDispatch(d));
     }
 
     return reply.send(dispatch);

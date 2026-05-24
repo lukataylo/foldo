@@ -136,6 +136,27 @@ describe('Hub', () => {
     expect(hub.getMissedSince(BOARD, 250)?.length).toBe(50);
   });
 
+  it('returns [] for an unknown board (nothing was missed)', () => {
+    expect(hub.getMissedSince('b-never' as BoardId, 0)).toEqual([]);
+    expect(hub.getMissedSince('b-never' as BoardId, 5)).toEqual([]);
+  });
+
+  it('signals a gap when seq moved past sinceSeq but recent is empty (defensive)', () => {
+    const { conn } = fakeConn(USER_A);
+    hub.subscribe(conn);
+    hub.broadcast(BOARD, frameAdded());
+    hub.broadcast(BOARD, frameAdded());
+    // Simulate a pathological state: seq counter still says 2 but the buffer
+    // was wiped. A client claiming sinceSeq=1 must be told to refetch — the
+    // pre-fix code returned [] here, silently dropping events.
+    // @ts-expect-error: poke private state for the simulation.
+    hub.boards.get(BOARD).recent = [];
+    expect(hub.getMissedSince(BOARD, 1)).toBeNull();
+    // Same buffer-empty state, but client already at seq 2 → genuinely
+    // nothing to replay.
+    expect(hub.getMissedSince(BOARD, 2)).toEqual([]);
+  });
+
   it('keeps board state alive after the last conn leaves so replay still works', () => {
     const { conn } = fakeConn(USER_A);
     hub.subscribe(conn);

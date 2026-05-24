@@ -33,6 +33,15 @@ export interface TestUser {
 export async function createUser(opts?: {
   password?: string;
   name?: string;
+  /**
+   * Auto-verify the user's email by consuming the verification token from
+   * the stub email outbox. Defaults to `true` because most specs don't
+   * care about verification gating and email-gated routes (share mint,
+   * test publish) reject unverified users with a 403. Set `false` only
+   * in specs that exercise the verification flow itself
+   * (e2e/auth/email-verification.spec.ts).
+   */
+  verified?: boolean;
 }): Promise<TestUser> {
   const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const email = `e2e-${stamp}@foldo.test`;
@@ -50,7 +59,48 @@ export async function createUser(opts?: {
     token: string;
     user: { id: string };
   };
-  return { id: json.user.id, email, password, name, token: json.token };
+  const user: TestUser = {
+    id: json.user.id,
+    email,
+    password,
+    name,
+    token: json.token,
+  };
+  if (opts?.verified !== false) {
+    await autoVerifyEmail(email);
+  }
+  return user;
+}
+
+/**
+ * Consume the most recent email-verification token for the given address
+ * from the stub email outbox + POST it to /api/auth/verify-email. Used by
+ * createUser() when `verified: true` (the default) so downstream specs
+ * can mint share links / publish tests without tripping the email gate.
+ */
+async function autoVerifyEmail(email: string): Promise<void> {
+  // Lazy-import so the outbox helper isn't pulled into specs that don't
+  // need it (and so a missing outbox in some test environments doesn't
+  // crash factory load).
+  const { waitForEmail, extractLink, deleteEmail } = await import('./email-outbox');
+  const msg = await waitForEmail(
+    { kind: 'email-verification', to: email },
+    { timeoutMs: 5_000 },
+  );
+  const link = extractLink(msg, '/verify?');
+  // The link includes the SPA's origin; we want to call the API directly.
+  const tokenMatch = /[?&]token=([^&]+)/.exec(link);
+  if (!tokenMatch) throw new Error(`No token query param in verify link: ${link}`);
+  const token = decodeURIComponent(tokenMatch[1]!);
+  const res = await fetch(`${API}/api/auth/verify-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) {
+    throw new Error(`autoVerifyEmail ${res.status}: ${await res.text()}`);
+  }
+  await deleteEmail(msg);
 }
 
 /**

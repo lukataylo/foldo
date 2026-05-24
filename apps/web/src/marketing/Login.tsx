@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { FoldoMark, GitHubIcon, INK, MarketingStyles, useMarketingTheme, PAPER, PILLOW } from './shared';
+import { FoldoMark, GitHubIcon, INK, MarketingPicture, MarketingStyles, useMarketingTheme, PAPER, PILLOW } from './shared';
 import { apiLogin, storeAuth } from './auth';
 
 export default function Login() {
@@ -253,7 +253,7 @@ export default function Login() {
               designers, and the agent that just shipped commit #12.
             </p>
           </div>
-          <img
+          <MarketingPicture
             src="/marketing/pillow.png"
             alt="Foldo on a pillow"
             style={{

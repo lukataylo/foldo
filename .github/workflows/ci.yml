@@ -39,6 +39,24 @@ jobs:
       # "no tests" because vitest has no --passWithNoTests issue at root level.
       - run: npm test --if-present
 
+  bundle-size:
+    # Build the marketing+app SPA and assert the JS bundle stays under the
+    # raw+gzip budgets in scripts/check-bundle-size.mjs. Today's totals are
+    # well under the (intentionally generous) budget — the gate exists so
+    # a future "oops we shipped 4 MB of unused d3" change shows up in PR
+    # CI instead of in production tab-times. See docs/PERF-BUDGETS.md.
+    name: bundle-size (web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      - run: npm run build --workspace @foldo/web
+      - run: node scripts/check-bundle-size.mjs
+
   audit:
     # Runs `npm audit` against prod deps only (so dev-only CVEs in vite et al
     # don't block PRs). Currently gated at `critical` — bump to `high` once

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { CheckCircle, FoldoMark, GitHubIcon, INK, MarketingStyles, PAPER, useMarketingTheme } from './shared';
+import { CheckCircle, FoldoMark, GitHubIcon, INK, MarketingPicture, MarketingStyles, PAPER, useMarketingTheme } from './shared';
 import { apiSignup, storeAuth } from './auth';
 
 const PERKS = [
@@ -262,7 +262,7 @@ export default function Signup() {
 
         {/* Perks */}
         <div style={{ paddingTop: 12 }}>
-          <img
+          <MarketingPicture
             src="/marketing/step-3-edit.png"
             alt="Foldo in a yellow bandana"
             style={{ width: 280, height: 'auto', display: 'block', marginBottom: 16 }}

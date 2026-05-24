@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { User } from '@foldo/protocol';
 import { getUserById } from './repo/users.ts';
 import { getUserIdForToken } from './repo/sessions.ts';
+import { authGate } from './plugins/authGate.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -72,6 +73,10 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
       req.log = req.log.child({ userId: user.id });
     }
   });
+  // Centralised board-membership gates exposed as `app.requireEditor` /
+  // `app.requireMember`. Replaces the per-route copies in comments.ts,
+  // frames.ts, dispatches.ts, tests.ts, shares.ts, etc.
+  await app.register(authGate);
 }
 
 /** Throw a 401 unless the request has an authenticated user. */

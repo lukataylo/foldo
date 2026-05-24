@@ -46,7 +46,14 @@ import {
   registerSelectFrameHook,
   /* A+W1 features — layer-nav delete/rename/reorder window hooks. */
   registerLayerActionHooks,
+  /* A+W4 features — let plugins/tests read the current tool without
+     reaching into App's React state. */
+  registerCurrentToolAccessor,
 } from './plugins/registry';
+/* A+W4 features — read the previously-persisted tool on boot so a reload
+   restores the user's last tool instead of always landing on 'select'.
+   LAST_TOOL_KEY is the canonical localStorage key both sides agree on. */
+import { getInitialTool, LAST_TOOL_KEY } from './plugins/core-tools/index';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useFrameTools, ArrowDraftPreview } from './hooks/useFrameTools';
 import { useDispatchFlow } from './hooks/useDispatchFlow';
@@ -150,7 +157,27 @@ export default function App() {
     demoUserId: DEMO_USER_ID,
     demoToken: DEMO_TOKEN,
   });
-  const [tool, setTool] = useState<Tool>('select');
+  /* A+W4 features — seed from localStorage so the canvas reopens on the
+     user's last tool. getInitialTool() falls back to 'select' for first
+     paint / unsupported storage. */
+  const [tool, setToolRaw] = useState<Tool>(() => getInitialTool());
+  /* A+W4 features — wrap setTool so every tool change (plugin activate,
+     comment "make this an edit" flow, frame-tools sticky/image/arrow
+     completion handlers, …) persists to localStorage. Without this wrap
+     only plugin-driven changes round-trip across reload — direct callers
+     (useCommentHandlers, useFrameTools) would silently drop the persistence.
+     useCallback keeps the identity stable so the hooks that take setTool
+     in their deps array don't see a fresh function every render. */
+  const setTool = useCallback((next: Tool): void => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(LAST_TOOL_KEY, next);
+      }
+    } catch {
+      /* ignore (Safari private mode) */
+    }
+    setToolRaw(next);
+  }, []);
   const [selectedElement, setSelectedElementRaw] =
     useState<SelectedElement | null>(null);
   // activeDispatchId lives in useDispatchFlow now.
@@ -181,6 +208,15 @@ export default function App() {
   // ToolSpec.activate() calls window.__foldoSetTool, which routes here.
   // useState's setter is stable across renders so this only fires once.
   useEffect(() => registerSetToolHook(setTool as (t: string) => void), []);
+  /* A+W4 features — register a getter for the live tool so the plugin layer
+     can read it without importing App. The accessor closes over the latest
+     `tool` value via a ref-style refresh on every render (cheap). */
+  const toolRef = useRef<Tool>(tool);
+  toolRef.current = tool;
+  useEffect(() => {
+    registerCurrentToolAccessor(() => toolRef.current);
+    return () => registerCurrentToolAccessor(null);
+  }, []);
   const topBar = useTopBarHandlers({ wsRef });
   const {
     followingUserId,

@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import {
+  type HotkeySpec,
   type Plugin,
   type PluginContext,
   type PluginSurface,
@@ -12,7 +13,60 @@ import {
 import { boardStore, type BoardSnapshot } from '../state/BoardStore';
 
 export { registry };
-export type { Plugin, PluginSurface };
+export type { HotkeySpec, Plugin, PluginSurface };
+
+/**
+ * Module-level cache of hotkey contributions. Populated lazily on first
+ * access (after `bootPlugins()` has run) and frozen for the lifetime of the
+ * page — the registry is install-once. useKeyboardShortcuts reads this so
+ * it can compute its dependency-stable handler list at hook mount without
+ * paying the surface() filter cost on every keystroke.
+ */
+let hotkeyCache: HotkeySpec[] | null = null;
+function readHotkeyCache(): HotkeySpec[] {
+  if (hotkeyCache) return hotkeyCache;
+  hotkeyCache = registry.surfaces('hotkey').map((s) => s.spec);
+  return hotkeyCache;
+}
+
+/**
+ * Live list of every plugin-contributed hotkey. Used by
+ * useKeyboardShortcuts to dispatch a keydown to the right handler.
+ * Returns a frozen-after-boot snapshot — mutating the array won't
+ * surface back into the registry.
+ */
+export function getHotkeys(): readonly HotkeySpec[] {
+  return readHotkeyCache();
+}
+
+/**
+ * Test-only: clear the cached hotkey list so a fresh install/activate
+ * cycle takes effect. Production code never calls this — the registry is
+ * frozen after boot.
+ */
+export function __resetHotkeyCacheForTests(): void {
+  hotkeyCache = null;
+}
+
+/**
+ * Module-level accessor for the canvas's currently-active tool. App.tsx
+ * pipes its tool state through `registerCurrentToolAccessor(...)` on every
+ * render; the plugin layer (and any future plugin that needs to read the
+ * tool without importing App.tsx) calls `getCurrentTool()`.
+ *
+ * Reads return `null` when App hasn't mounted yet (e.g. SSR / a unit test
+ * that imports the registry without rendering the app); callers should
+ * treat that as "no tool yet" rather than a default.
+ */
+let currentToolAccessor: (() => string | null) | null = null;
+export function registerCurrentToolAccessor(
+  fn: (() => string | null) | null,
+): void {
+  currentToolAccessor = fn;
+}
+export function getCurrentTool(): string | null {
+  return currentToolAccessor ? currentToolAccessor() : null;
+}
 
 /**
  * Default plugin context. v1 reaches the canvas's toast helper via a

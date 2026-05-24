@@ -12,8 +12,15 @@
 // registry. The legacy LeftRail also reads from the same registry so its
 // vertical pill stays in sync (keeping its existing `foldo-rail-tool-*`
 // testids alive for the e2e specs).
+//
+// /* A+W4 features */ — the plugin now also contributes one `hotkey` surface
+// per tool with a `shortcut` letter. This is the source of truth for the
+// V/H/C/E/S/A/I tool keybinds; useKeyboardShortcuts.ts iterates the registry
+// rather than hardcoding the map. The activate() callback also persists the
+// selected tool to localStorage so the canvas restores its tool on reload —
+// `getInitialTool()` reads the value at boot.
 
-import type { Plugin, ToolSpec } from '@foldo/plugin';
+import type { HotkeySpec, Plugin, PluginSurface, ToolSpec } from '@foldo/plugin';
 import type { Tool } from '../../types';
 
 declare global {
@@ -22,8 +29,64 @@ declare global {
   }
 }
 
-/** Best-effort dispatch into App's tool state via the window escape hatch. */
+/** localStorage key for the last-selected tool. Bumped if we ever change shape. */
+export const LAST_TOOL_KEY = 'foldo:lastTool';
+
+/** Every tool id the canvas recognises. Mirrors the `Tool` union in types.ts. */
+const TOOL_IDS: readonly Tool[] = [
+  'select',
+  'hand',
+  'comment',
+  'edit',
+  'sticky',
+  'arrow',
+  'image',
+];
+
+function isTool(v: unknown): v is Tool {
+  return typeof v === 'string' && (TOOL_IDS as readonly string[]).includes(v);
+}
+
+/**
+ * Persist the tool selection to localStorage. Wrapped in try/catch because
+ * Safari private-mode + some SSR shims throw on `setItem`. A failure here is
+ * a soft regression (no restore) but must never crash the activate path.
+ */
+function persistTool(tool: Tool): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(LAST_TOOL_KEY, tool);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Read the previously-persisted tool from localStorage. Falls back to
+ * `'select'` when nothing is persisted, the value is unrecognised, or the
+ * read throws (Safari private mode). Called by App.tsx during initial
+ * useState() so the canvas reopens on the user's last tool.
+ */
+export function getInitialTool(): Tool {
+  try {
+    if (typeof localStorage === 'undefined') return 'select';
+    const raw = localStorage.getItem(LAST_TOOL_KEY);
+    if (raw && isTool(raw)) return raw;
+  } catch {
+    /* ignore */
+  }
+  return 'select';
+}
+
+/**
+ * Best-effort dispatch into App's tool state via the window escape hatch.
+ * Also persists to localStorage so a reload comes back on the same tool —
+ * the persistence sits here (rather than in App.tsx's useEffect) so it
+ * fires even when the tool is changed via a hotkey or plugin extension.
+ */
 function setTool(tool: Tool): void {
+  persistTool(tool);
   const fn = typeof window !== 'undefined' ? window.__foldoSetTool : undefined;
   if (fn) fn(tool);
 }
@@ -193,11 +256,39 @@ export const CORE_TOOLS: readonly ToolSpec[] = [
 ];
 
 /**
- * Built-in tools plugin. Contributes a `toolbar` surface with every canvas
- * tool. App.tsx still mounts the legacy LeftRail for the left-edge vertical
- * pill (it reads from the same registry under the hood) and the bottom
+ * Build a `hotkey` surface for each ToolSpec that declares a `shortcut`.
+ * The shortcut letter becomes a canonical lowercase keybind (the registry-
+ * reading shortcut hook case-folds the live keydown, so `v` matches both
+ * `v` and `V`). Tool hotkeys are uppercased in the cheatsheet category so
+ * they sort next to each other.
+ */
+function toolHotkeys(tools: readonly ToolSpec[]): PluginSurface[] {
+  const out: PluginSurface[] = [];
+  for (const t of tools) {
+    if (!t.shortcut) continue;
+    const spec: HotkeySpec = {
+      id: `core/tools.${t.id}`,
+      keys: [t.shortcut.toLowerCase()],
+      label: t.label,
+      category: 'tools',
+      handler: t.activate,
+    };
+    out.push({ kind: 'hotkey', spec });
+  }
+  return out;
+}
+
+/**
+ * Built-in tools plugin. Contributes:
+ *
+ *   - one `toolbar` surface with every canvas tool, and
+ *   - one `hotkey` surface per tool whose ToolSpec declares a `shortcut`.
+ *
+ * App.tsx still mounts the legacy LeftRail for the left-edge vertical pill
+ * (it reads from the same registry under the hood) and the bottom
  * PluginToolBar shows the same tools horizontally — both views stay in sync
- * because they both pull from this single source.
+ * because they both pull from this single source. useKeyboardShortcuts.ts
+ * iterates the `hotkey` surfaces for tool keybinds (no more hardcoded map).
  */
 export const coreToolsPlugin: Plugin = {
   manifest: {
@@ -206,6 +297,9 @@ export const coreToolsPlugin: Plugin = {
     version: '1.0.0',
     description:
       'The built-in select / hand / comment / edit / sticky / arrow / image tools.',
-    surfaces: [{ kind: 'toolbar', tools: [...CORE_TOOLS] }],
+    surfaces: [
+      { kind: 'toolbar', tools: [...CORE_TOOLS] },
+      ...toolHotkeys(CORE_TOOLS),
+    ],
   },
 };

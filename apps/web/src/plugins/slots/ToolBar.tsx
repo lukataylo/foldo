@@ -17,7 +17,7 @@
 // (CanvasPage.clickTool, share-link visibility checks) keep working
 // after the vertical LeftRail was retired.
 
-import { Fragment, type CSSProperties } from 'react';
+import { Fragment, useEffect, type CSSProperties } from 'react';
 import { usePluginSurfaces, getCurrentTool } from '../registry';
 
 const wrap: CSSProperties = {
@@ -32,7 +32,11 @@ const wrap: CSSProperties = {
   background: '#2c2c2c',
   border: '1px solid #323232',
   borderRadius: 10,
-  boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+  /* Softer shadow: previous 0 12px 32px 0.45 produced a visible halo
+     above the dock on Retina at certain zooms that read as a "ghost
+     toolbar" behind the real one. Pull the offset + blur in so the
+     toolbar reads as one floating card. */
+  boxShadow: '0 6px 18px rgba(0,0,0,0.35)',
   // Chrome z-index — see SidePanel.tsx for the rationale.
   zIndex: 110,
 };
@@ -68,6 +72,26 @@ const divider: CSSProperties = {
 export function ToolBar(): JSX.Element | null {
   const surfaces = usePluginSurfaces('toolbar');
   const tools = surfaces.flatMap((s) => s.tools);
+
+  // Dev-only duplicate-render canary. The substrate is idempotent by
+  // manifest.id and there's only one <PluginToolBar/> in App.tsx, so
+  // exactly one toolbar should ever be on the page. If another shows up
+  // (HMR misfire, accidental second mount), surface it loudly so the
+  // root cause can be tracked down rather than papering over it.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (!import.meta.env.DEV) return;
+    const count = document.querySelectorAll(
+      '[data-testid="foldo-canvas-leftrail"]',
+    ).length;
+    if (count > 1) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[foldo] PluginToolBar mounted ${count} times — duplicate render. Reload to recover.`,
+      );
+    }
+  });
+
   if (tools.length === 0) return null;
   const activeToolId = getCurrentTool();
 

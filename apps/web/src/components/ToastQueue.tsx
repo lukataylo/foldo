@@ -64,7 +64,7 @@ export function useToastQueue(ttlMs: number = DEFAULT_TTL_MS): ToastQueueApi {
 export function ToastStack({ toasts }: { toasts: ToastItem[] }) {
   if (toasts.length === 0) return null;
   return (
-    <div className="pointer-events-none absolute bottom-16 left-1/2 z-50 flex -translate-x-1/2 flex-col-reverse items-center gap-1.5">
+    <div className="pointer-events-none absolute bottom-16 left-1/2 z-[140] flex -translate-x-1/2 flex-col-reverse items-center gap-1.5">
       {toasts.map((t) => (
         <div
           key={t.id}

@@ -57,10 +57,28 @@ export function AppFrame({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
 
+  // Tracks whether the iframe has finished loading the sample-app document.
+  // Before this flips true the iframe.contentWindow is still on about:blank
+  // (which inherits the parent's origin), and a postMessage with the
+  // expected localhost:5174 targetOrigin throws "Recipient has origin
+  // localhost:5173" — noisy in the console even when the parent has a
+  // try/catch around postMessage. Gate every postToFrame on this ref so
+  // we only post once the iframe is on its real origin; `foldo.sample.ready`
+  // covers the "iframe already loaded by the time we mounted" case.
+  const iframeLoadedRef = useRef<boolean>(false);
+
   const iframeUrl = useMemo(() => buildIframeUrl(content, frame.commitSha), [
     content,
     frame.commitSha,
   ]);
+
+  // Reset the loaded-ref whenever the iframe is about to navigate (URL
+  // change) or remount (inViewport flips). The new document hasn't
+  // attached its postMessage listener yet, so any premature postToFrame
+  // would hit the about:blank race again.
+  useEffect(() => {
+    iframeLoadedRef.current = false;
+  }, [iframeUrl, inViewport]);
 
   const reviewMode = !testMode;
 
@@ -68,14 +86,14 @@ export function AppFrame({
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe || !inViewport) return;
-    const send = () => postToFrame(iframe, { type: 'foldo.sample.setReviewMode', enabled: reviewMode });
-    // try once; sample app emits "ready" once mounted and we also push on load
-    send();
+    if (!iframeLoadedRef.current) return; // wait for onLoad / ready
+    postToFrame(iframe, { type: 'foldo.sample.setReviewMode', enabled: reviewMode });
   }, [reviewMode, inViewport]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe || !inViewport) return;
+    if (!iframeLoadedRef.current) return; // wait for onLoad / ready
     if (!content.overrides) return;
     postToFrame(iframe, {
       type: 'foldo.sample.setOverrides',
@@ -103,6 +121,10 @@ export function AppFrame({
       const msg = ev.data as SampleAppOutbound;
       switch (msg.type) {
         case 'foldo.sample.ready':
+          // Sample-app has loaded its document at the real origin.
+          // Flip the ready ref so subsequent reviewMode / overrides
+          // effects can postMessage without hitting the about:blank race.
+          iframeLoadedRef.current = true;
           // Push the current review mode + overrides.
           postToFrame(iframe, {
             type: 'foldo.sample.setReviewMode',
@@ -234,6 +256,31 @@ export function AppFrame({
             // Permit our origin parent to talk to it
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             loading="lazy"
+            onLoad={() => {
+              // Backstop for the rare case where 'foldo.sample.ready'
+              // never fires (older sample-app build, error in its init).
+              // The native iframe load event means contentWindow is on
+              // the real origin, so postMessage is safe.
+              iframeLoadedRef.current = true;
+              const iframe = iframeRef.current;
+              if (!iframe) return;
+              postToFrame(iframe, {
+                type: 'foldo.sample.setReviewMode',
+                enabled: reviewMode,
+              });
+              if (content.overrides) {
+                postToFrame(iframe, {
+                  type: 'foldo.sample.setOverrides',
+                  overrides: content.overrides as unknown as Record<
+                    string,
+                    string | boolean
+                  >,
+                });
+              }
+            }}
+            onError={() => {
+              iframeLoadedRef.current = false;
+            }}
           />
         ) : (
           <FramePlaceholder content={content} />

@@ -319,6 +319,24 @@ export default function App() {
     return () => registerFitToHook(null);
   }, []);
 
+  // Defensive: localStorage may carry a soloBranchId from an earlier session
+  // that points at a branch the current board doesn't have (e.g. switching
+  // boards, after a seed reset). Without this cleanup, FrameLayer's Solo
+  // filter would hide every frame on the canvas — and a user landing on the
+  // board would see an empty canvas with no obvious way to recover.
+  useEffect(() => {
+    if (!snap.hydrated) return;
+    if (!soloBranchId) return;
+    if (!snap.branches.has(soloBranchId)) {
+      // Lazy import to avoid pulling selectionStore into the App.tsx
+      // top-level closure chain.
+      import('./state/selectionStore').then(({ selectionStore }) => {
+        selectionStore.setSoloBranch(null);
+        selectionStore.setSelectedBranch(null);
+      });
+    }
+  }, [snap.hydrated, snap.branches, soloBranchId]);
+
   /* A+W1 features — layer-nav action hooks. The Layer Navigator's
      toolbar (touch agent's surface) calls window.__foldoDeleteFrame /
      __foldoRenameFrame / __foldoReorderFrame; we own the implementations

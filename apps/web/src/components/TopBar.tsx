@@ -88,7 +88,7 @@ export function TopBar({
     }
   };
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-[100] flex items-start justify-between px-3 pt-3">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-[120] flex items-start justify-between px-3 pt-3">
       {/* left: logo + repo selector — width matches the LeftPanel below so
           the two stacked floating cards align on the canvas's left edge. */}
       <div className="pointer-events-auto relative flex w-[280px] items-center gap-2 rounded-[10px] border border-hairlineSoft bg-panel px-2 py-1.5 shadow-panel">
@@ -142,12 +142,14 @@ export function TopBar({
               aria-expanded={userPickerOpen}
               onClick={() => setUserPickerOpen((o) => !o)}
               title="Switch demo user (refresh required)"
-              /* appearance-none strips Safari's default button chrome (which
-                 paints a light system colour on :focus, "removing" our
-                 bg-panel). focus:bg-panel + active:bg-panel pin the
-                 background across every interaction state so the chip
-                 stays the same colour as Capture/Tests/Share next to it. */
-              className="flex appearance-none items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink outline-none hover:bg-white/5 focus:bg-panel focus-visible:bg-panel active:bg-panel"
+              /* Chip background is pinned across every interaction state.
+                 - `appearance-none` strips Safari's default button chrome.
+                 - bg-panel on idle, hover, focus, focus-visible, active.
+                 - On hover we only nudge the border to signal interactivity,
+                   so the dark fill stays readable behind the white label.
+                 - `outline-none` removes Safari's default focus ring; the
+                   border-colour hover is the affordance. */
+              className="flex appearance-none items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink outline-none transition-colors hover:border-white/20 hover:bg-panel focus:bg-panel focus-visible:bg-panel active:bg-panel"
             >
               <span
                 className="flex h-4 w-4 items-center justify-center rounded-full text-[9.5px] font-semibold text-white"
@@ -159,7 +161,7 @@ export function TopBar({
               <Chevron />
             </button>
             {userPickerOpen && (
-              <div className="absolute right-0 top-9 z-50 w-60 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
+              <div className="absolute right-0 top-9 z-[130] w-60 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
                 <div className="px-2 py-1 text-[10.5px] uppercase tracking-[0.1em] text-inkFaint">
                   Demo as
                 </div>

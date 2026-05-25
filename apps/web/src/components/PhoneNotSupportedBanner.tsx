@@ -1,5 +1,5 @@
 // A+W1 touch: gentle landing page that replaces the canvas at <600px viewport.
-// The canvas is built for tablets+laptops — on phone the LeftRail, EditPanel,
+// The canvas is built for tablets+laptops — on phone the tool dock, EditPanel,
 // ZoomControl and FrameMeta kebabs all collide. Better to redirect users to a
 // place that *does* work on phone (the home grid + share viewer) than to ship
 // a degraded canvas.

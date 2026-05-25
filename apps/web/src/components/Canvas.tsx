@@ -184,11 +184,22 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     [setZoomAtAnchor, viewport, zoomToFit, fitTo, panTo, screenToWorld],
   );
 
+  // Latest viewport.zoom in a ref so the wheel listener can read it without
+  // re-binding on every zoom event. The previous implementation listed
+  // viewport.zoom in the effect deps, which meant the listener was
+  // removed + re-added on every wheel tick. Under a fast trackpad pinch
+  // that produces 60+ events/sec, the brief teardown window could drop
+  // preventDefault on an event, letting the browser native page-zoom
+  // through and pushing the toolbars out of the layout viewport.
+  const zoomRef = useRef(viewport.zoom);
+  zoomRef.current = viewport.zoom;
+
   // Wheel handler: ctrl/meta = zoom (anchored at the cursor), plain = pan.
   // Bound to `window`, not just the canvas element — otherwise ctrl/meta+wheel
-  // while the cursor is over a toolbar overlay (the left rail, top bar, zoom
-  // control) is never preventDefault'd and falls through to the browser's
-  // native page-zoom, which leaves the whole app looking zoomed/shifted.
+  // while the cursor is over a toolbar overlay (the side panel, top bar,
+  // zoom control) is never preventDefault'd and falls through to the
+  // browser's native page-zoom, which leaves the whole app looking
+  // zoomed/shifted.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -198,7 +209,10 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         // wherever the cursor happens to be.
         e.preventDefault();
         const factor = Math.exp(-e.deltaY * 0.01);
-        setZoomAtAnchor(viewport.zoom * factor, { x: e.clientX, y: e.clientY });
+        setZoomAtAnchor(zoomRef.current * factor, {
+          x: e.clientX,
+          y: e.clientY,
+        });
         return;
       }
       // Plain wheel = pan, but only when the cursor is actually over the
@@ -226,8 +240,58 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       }
     };
     window.addEventListener('wheel', onWheel, { passive: false });
-    return () => window.removeEventListener('wheel', onWheel);
-  }, [viewport.zoom, setZoomAtAnchor]);
+
+    // Safari proprietary gesture API. During a trackpad pinch, Safari
+    // fires gesturestart/change/end and SUPPRESSES the wheel-with-ctrlKey
+    // events that Chrome uses — so we can't just preventDefault these and
+    // rely on the wheel branch. Instead, drive zoom directly from the
+    // gesture's `scale` property:
+    //
+    //   gesturestart   — snapshot the current zoom + anchor.
+    //   gesturechange  — apply `startZoom * e.scale` anchored at the snap.
+    //   gestureend     — clear the snapshot.
+    //
+    // preventDefault is called on every gesture event to block Safari's
+    // visual-viewport zoom (which would push the position:fixed chrome
+    // out of the visible viewport — the original "lost toolbar" bug).
+    //
+    // GestureEvent isn't in TypeScript's lib (Safari-only proprietary
+    // API), so we type the event minimally inline.
+    type GestureEventLike = Event & {
+      scale: number;
+      clientX: number;
+      clientY: number;
+    };
+    let gestureStartZoom = 0;
+    let gestureStartAnchor = { x: 0, y: 0 };
+    const onGestureStart = (e: Event): void => {
+      e.preventDefault();
+      const ge = e as GestureEventLike;
+      gestureStartZoom = zoomRef.current;
+      gestureStartAnchor = { x: ge.clientX, y: ge.clientY };
+    };
+    const onGestureChange = (e: Event): void => {
+      e.preventDefault();
+      const ge = e as GestureEventLike;
+      if (gestureStartZoom === 0 || !Number.isFinite(ge.scale)) return;
+      setZoomAtAnchor(gestureStartZoom * ge.scale, gestureStartAnchor);
+    };
+    const onGestureEnd = (e: Event): void => {
+      e.preventDefault();
+      gestureStartZoom = 0;
+    };
+    window.addEventListener('gesturestart', onGestureStart, { passive: false });
+    window.addEventListener('gesturechange', onGestureChange, { passive: false });
+    window.addEventListener('gestureend', onGestureEnd, { passive: false });
+
+    return () => {
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('gesturestart', onGestureStart);
+      window.removeEventListener('gesturechange', onGestureChange);
+      window.removeEventListener('gestureend', onGestureEnd);
+    };
+    // setZoomAtAnchor is stable across renders (useCallback in this file).
+  }, [setZoomAtAnchor]);
 
   // Pan dragging
   const handMode = tool === 'hand' || spaceDown;

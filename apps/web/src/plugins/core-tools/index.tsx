@@ -8,10 +8,9 @@
 // (`window.__foldoSetTool`) on mount; each ToolSpec's `activate()` looks
 // it up and calls it. Same escape-hatch pattern as `registerToastHook`.
 //
-// The bottom-center PluginToolBar slot renders these contributions via the
-// registry. The legacy LeftRail also reads from the same registry so its
-// vertical pill stays in sync (keeping its existing `foldo-rail-tool-*`
-// testids alive for the e2e specs).
+// The bottom-center PluginToolBar slot renders these contributions via
+// the registry. Buttons keep the canonical `foldo-rail-tool-*` testids
+// alive for the e2e specs.
 //
 // /* A+W4 features */ — the plugin now also contributes one `hotkey` surface
 // per tool with a `shortcut` letter. This is the source of truth for the
@@ -91,8 +90,7 @@ function setTool(tool: Tool): void {
   if (fn) fn(tool);
 }
 
-// ----- Icons (lifted verbatim from the old LeftRail JSX so the visual stays
-// identical inside both PluginToolBar and the LeftRail pill). -----
+// ----- Icons. SVG glyphs sized to fit the 32px PluginToolBar buttons. -----
 
 function ArrowIcon() {
   return (
@@ -189,12 +187,11 @@ function ImageIcon() {
   );
 }
 
-// ----- Tool specs. The `id` field matches the canvas `Tool` union so the
-// LeftRail can map a spec back to the active-tool state with `tool === t.id`.
-// `group` drives the divider hairline in LeftRail; the PluginToolBar ignores
-// it for now. Shortcut letters match the bindings in useKeyboardShortcuts
-// (this list is documentation, not the source of truth for the keydown
-// handler). -----
+// ----- Tool specs. The `id` field matches the canvas `Tool` union so a
+// consumer can map a spec back to the active-tool state with `tool === t.id`.
+// `group` drives the divider hairline between adjacent tools. Shortcut
+// letters match the bindings in useKeyboardShortcuts (this list is
+// documentation, not the source of truth for the keydown handler). -----
 
 export const CORE_TOOLS: readonly ToolSpec[] = [
   {
@@ -284,11 +281,9 @@ function toolHotkeys(tools: readonly ToolSpec[]): PluginSurface[] {
  *   - one `toolbar` surface with every canvas tool, and
  *   - one `hotkey` surface per tool whose ToolSpec declares a `shortcut`.
  *
- * App.tsx still mounts the legacy LeftRail for the left-edge vertical pill
- * (it reads from the same registry under the hood) and the bottom
- * PluginToolBar shows the same tools horizontally — both views stay in sync
- * because they both pull from this single source. useKeyboardShortcuts.ts
- * iterates the `hotkey` surfaces for tool keybinds (no more hardcoded map).
+ * The bottom PluginToolBar slot is the only renderer of the toolbar
+ * contributions today. useKeyboardShortcuts.ts iterates the `hotkey`
+ * surfaces for tool keybinds (no more hardcoded map).
  */
 export const coreToolsPlugin: Plugin = {
   manifest: {

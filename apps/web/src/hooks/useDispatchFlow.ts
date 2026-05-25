@@ -19,6 +19,8 @@ import type {
 } from '@foldo/protocol';
 import { createDispatch as apiCreateDispatch } from '../api/dispatches';
 import { boardStore } from '../state/useBoardStore';
+import { selectionStore } from '../state/selectionStore';
+import { findStubWorktree } from '../plugins/core-worktrees/WorktreesPanel';
 import type { Route } from '../routing/Router';
 import type { SelectedElement } from '../types';
 
@@ -112,6 +114,11 @@ export function useDispatchFlow({
         return;
       }
       try {
+        // Read the active worktree from the selection store at dispatch
+        // time (not at hook mount) so the most-recent panel selection
+        // wins. The MCP bridge treats this as a hint — see CreateDispatchRequest.
+        const activeWtId = selectionStore.getSnapshot().activeWorktreeId;
+        const activeWt = findStubWorktree(activeWtId);
         const body: CreateDispatchRequest = {
           boardId: board.id,
           frameId: frame.id,
@@ -119,6 +126,7 @@ export function useDispatchFlow({
           baseCommitSha: frame.commitSha,
           intent,
           target,
+          ...(activeWt ? { worktreeHint: activeWt.path } : {}),
         };
         const d = await apiCreateDispatch(body);
         boardStore.upsertDispatch(d);

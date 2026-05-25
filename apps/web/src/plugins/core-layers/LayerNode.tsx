@@ -21,16 +21,15 @@ const row: CSSProperties = {
   alignItems: 'center',
   gap: 6,
   width: '100%',
-  /* A+W1 touch: 4x6 → 8x10 padding + 12px font so each row is ~32-36px tall;
-     comfortable for iPad fingertips without losing the dense-list feel. */
-  padding: '8px 10px',
+  padding: '4px 8px',
+  minHeight: 24,
   border: 'none',
   background: 'transparent',
   color: '#e8e8ea',
-  fontSize: 13,
+  fontSize: 11,
   textAlign: 'left',
   cursor: 'pointer',
-  borderRadius: 4,
+  borderRadius: 3,
   lineHeight: 1.3,
   position: 'relative',
 };

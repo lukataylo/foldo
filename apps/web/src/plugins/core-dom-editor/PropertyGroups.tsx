@@ -62,7 +62,7 @@ const groupHeader: CSSProperties = {
   letterSpacing: 0.8,
   textTransform: 'uppercase',
   color: COLORS.sectionLabel,
-  padding: '10px 0 6px 0',
+  padding: '6px 0 4px 0',
   marginBottom: 0,
   background: 'transparent',
   border: 'none',
@@ -75,7 +75,7 @@ const groupHeader: CSSProperties = {
 const groupBody: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 6,
+  gap: 4,
 };
 
 // Two-column grid is the workhorse — most property rows fit this shape.
@@ -125,7 +125,7 @@ function Cell({
     display: 'flex',
     alignItems: 'center',
     gap: 4,
-    height: 28,
+    height: 24,
     padding: '0 6px',
     background: COLORS.inputBg,
     border: `1px solid ${
@@ -217,7 +217,7 @@ function SelectCell({
         display: 'flex',
         alignItems: 'center',
         gap: 4,
-        height: 28,
+        height: 24,
         padding: '0 6px',
         background: COLORS.inputBg,
         border: `1px solid ${focused ? COLORS.inputBorderFocus : COLORS.inputBorder}`,
@@ -308,7 +308,7 @@ function ColorCell({
         display: 'flex',
         alignItems: 'center',
         gap: 4,
-        height: 28,
+        height: 24,
         padding: '0 4px 0 4px',
         background: COLORS.inputBg,
         border: `1px solid ${
@@ -413,7 +413,7 @@ function SliderCell({
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        height: 28,
+        height: 24,
         padding: '0 6px',
         background: COLORS.inputBg,
         border: `1px solid ${COLORS.inputBorder}`,
@@ -543,7 +543,7 @@ function SpacingBox({
           background: 'rgba(253,179,6,0.08)',
           border: '1px dashed rgba(253,179,6,0.3)',
           borderRadius: 3,
-          height: 28,
+          height: 24,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',

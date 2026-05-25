@@ -27,7 +27,6 @@ import type {
 } from '@foldo/protocol';
 import { Canvas, type CanvasHandle, type ViewportState } from './components/Canvas';
 import { TopBar } from './components/TopBar';
-import { LeftRail } from './components/LeftRail';
 /* A+W1 touch */ import { PhoneNotSupportedBanner } from './components/PhoneNotSupportedBanner';
 /* A+W1 touch */ import { useMediaQuery } from './hooks/useMediaQuery';
 import { ToastStack, useToastQueue } from './components/ToastQueue';
@@ -44,6 +43,7 @@ import {
   registerToastHook,
   registerSetToolHook,
   registerSelectFrameHook,
+  registerFitToHook,
   /* A+W1 features — layer-nav delete/rename/reorder window hooks. */
   registerLayerActionHooks,
   /* A+W4 features — let plugins/tests read the current tool without
@@ -64,6 +64,8 @@ import { useFrameViewport } from './hooks/useFrameViewport';
 import { useTopBarHandlers } from './hooks/useTopBarHandlers';
 import { makeOfflineDispatchSim } from './hooks/useOfflineDispatchSim';
 import { FrameLayer } from './components/FrameLayer';
+import { SoloBanner } from './components/SoloBanner';
+import { useSelectionSlice } from './state/selectionStore';
 import { ZoomControl } from './components/ZoomControl';
 import {
   BootLoadingOverlay,
@@ -180,6 +182,10 @@ export default function App() {
   }, []);
   const [selectedElement, setSelectedElementRaw] =
     useState<SelectedElement | null>(null);
+  // Solo branch id (from the client-side selection store). FrameLayer
+  // skips non-matching branches when this is non-null; SoloBanner shows
+  // the exit affordance.
+  const soloBranchId = useSelectionSlice((s) => s.soloBranchId);
   // activeDispatchId lives in useDispatchFlow now.
   const [viewport, setViewport] = useState<ViewportState>({
     x: 0,
@@ -302,6 +308,16 @@ export default function App() {
       fitToFrame(f);
     });
   }, [snap.board, navigate, fitToFrame]);
+
+  // Fit-to-rect hook for the Branches plugin. Same pattern as
+  // registerSelectFrameHook above — the plugin computes the world rect
+  // covering the selected branch's frames and asks the canvas to fit it.
+  useEffect(() => {
+    registerFitToHook((rect) => {
+      canvasRef.current?.fitTo(rect);
+    });
+    return () => registerFitToHook(null);
+  }, []);
 
   /* A+W1 features — layer-nav action hooks. The Layer Navigator's
      toolbar (touch agent's surface) calls window.__foldoDeleteFrame /
@@ -688,6 +704,7 @@ export default function App() {
           zoom={viewport.zoom}
           commentsByFrame={commentsByFrame}
           inViewportSet={inViewportSet}
+          soloBranchId={soloBranchId}
           onSelectElement={onSelectElement}
           onDropPin={handleDropPin}
           onCommentClick={handleCommentClick}
@@ -708,19 +725,11 @@ export default function App() {
         wsStatus={snap.wsStatus}
         offline={boot.kind === 'offline'}
       />
-      {/* A+W1 features — `onChange` was a dead prop; the plugin tools
-          route through window.__foldoSetTool. */}
-      <LeftRail tool={tool} />
-      {/*
-        Plugin substrate slots (Step 9). LeftPanel / RightPanel / PluginToolBar
-        render nothing if no plugin contributes to them, so today they're
-        invisible — Step 10's Layer Navigator + Step 11's DOM Editor light them
-        up. Mounted alongside the existing LeftRail / EditPanel / TestsPanel
-        rather than replacing them so the substrate ships with zero UX change.
-      */}
+      {/* Plugin substrate slots. PluginToolBar is the canonical tool dock. */}
       <LeftPanel />
       <RightPanel />
       <PluginToolBar />
+      <SoloBanner />
       <input
         ref={frameTools.imageInputRef}
         type="file"

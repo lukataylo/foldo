@@ -19,13 +19,20 @@ export function CommentPin({ comment, frameSize, onClick }: Props) {
         onClick();
       }}
       /* A+W1 touch: 44x44 (h-11 w-11) hit area; visual pin stays 24x24 inside.
-         Was h-7 w-7 (~28x28) which is below Apple's 44pt minimum. */
+         Was h-7 w-7 (~28x28) which is below Apple's 44pt minimum.
+         filter:drop-shadow on the hit-area wrapper traces the teardrop's
+         actual outline (rounded-bl-none) instead of a rectangular box-
+         shadow halo, which read as off on the light markdown background. */
       className="absolute z-30 flex h-11 w-11 -translate-x-1/2 -translate-y-full items-center justify-center"
-      style={{ left: cx, top: cy }}
+      style={{
+        left: cx,
+        top: cy,
+        filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.25))',
+      }}
       aria-label={`Comment by ${comment.authorName}`}
     >
       <span
-        className="relative flex h-6 w-6 items-center justify-center rounded-full rounded-bl-none text-[11px] font-semibold text-white shadow-pin"
+        className="relative flex h-6 w-6 items-center justify-center rounded-full rounded-bl-none text-[11px] font-semibold text-white"
         style={{ background: comment.authorColor }}
       >
         {comment.authorInitial}

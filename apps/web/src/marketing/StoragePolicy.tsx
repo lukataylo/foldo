@@ -1,6 +1,6 @@
 import SimplePage from './SimplePage';
 
-export default function CookiePolicy() {
+export default function StoragePolicy() {
   return (
     <SimplePage
       title="Cookies"

@@ -92,6 +92,13 @@ async function main(): Promise<void> {
               },
             });
           };
+          // Surface the canvas-side worktree selection (if any) into the
+          // dispatch log so a user inspecting a run can see where it ran.
+          // The runApplyEdit pipeline doesn't yet honour the hint as cwd —
+          // that's a follow-up; logging it is the first step.
+          if (d.worktreeHint && d.worktreeHint.trim()) {
+            emitProgress(`worktree hint: ${d.worktreeHint.trim()}`);
+          }
           try {
             const result = await runApplyEdit(
               {

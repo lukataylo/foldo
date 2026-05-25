@@ -321,14 +321,14 @@ function DocHeader({
           </span>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-shrink-0 items-center gap-2">
         {!editing && (
           <button
             type="button"
             data-no-edit
             onClick={onToggleTints}
             className={
-              'rounded-md border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.06em] ' +
+              'whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.06em] ' +
               (showTints
                 ? 'border-accent/40 bg-accent/10 text-accent'
                 : 'border-black/15 bg-white/60 text-[#857a68] hover:bg-white')

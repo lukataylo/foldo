@@ -25,11 +25,18 @@
 import type { Plugin } from '@foldo/plugin';
 import { coreToolsPlugin } from './core-tools/index';
 import { coreLayersPlugin } from './core-layers/index';
+import { coreBranchesPlugin } from './core-branches/index';
+import { coreWorktreesPlugin } from './core-worktrees/index';
 import { domEditorPlugin } from './core-dom-editor/index';
 
+// Order within BUILTIN_PLUGINS = tab order in the side panels. Layers
+// stays first (it's where users start), then Branches + Worktrees as
+// siblings of the same "where work lives" mental model.
 export const BUILTIN_PLUGINS: Plugin[] = [
   coreToolsPlugin,
   coreLayersPlugin,
+  coreBranchesPlugin,
+  coreWorktreesPlugin,
   domEditorPlugin,
 ];
 

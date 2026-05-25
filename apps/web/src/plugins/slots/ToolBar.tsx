@@ -1,82 +1,81 @@
-// Bottom-center tool dock. Pulls every `toolbar` surface contribution
-// from the registry and lays them out as a single horizontal pill. Hides
-// itself if no plugin contributes tools — the existing LeftRail keeps
-// rendering its hardcoded buttons until they're collapsed into a plugin
-// in a Step 9 fast-follow.
+// Bottom-center tool dock — the canvas's canonical tool surface. Pulls
+// every `toolbar` surface contribution from the registry and lays them
+// out as a horizontal icon-only rail. Hides itself if no plugin
+// contributes tools.
 //
-// Visual style mirrors LeftRail.tsx — same pill background + button
-// shape — so contributions look at-home alongside the legacy rail.
+// Visual: small icon-only square buttons on the dark `bg-panel` token —
+// same style language as the side panels so the canvas reads as one
+// design system rather than two competing rails.
 //
-// /* A+W4 features */ — buttons now respect ToolSpec.group: a 1px vertical
-// hairline divider sits between adjacent tools that disagree on `group`.
-// Mirrors the LeftRail vertical pill so the two views read as the same
-// taxonomy. Buttons also gain a11y attributes (aria-label,
-// aria-keyshortcuts, aria-pressed) so screen readers announce both the
-// label and the bound shortcut, plus the active state.
+// Buttons respect ToolSpec.group: a 1px vertical hairline divider sits
+// between adjacent tools that disagree on `group`. a11y attributes
+// (aria-label, aria-keyshortcuts, aria-pressed) announce label, bound
+// shortcut, and active state to screen readers.
+//
+// The container carries the historical `foldo-canvas-leftrail` testid +
+// per-button `foldo-rail-tool-<id>` testids so the existing e2e helpers
+// (CanvasPage.clickTool, share-link visibility checks) keep working
+// after the vertical LeftRail was retired.
 
 import { Fragment, type CSSProperties } from 'react';
 import { usePluginSurfaces, getCurrentTool } from '../registry';
 
 const wrap: CSSProperties = {
   position: 'fixed',
-  bottom: 20,
+  bottom: 16,
   left: '50%',
   transform: 'translateX(-50%)',
   display: 'flex',
   alignItems: 'center',
-  gap: 4,
-  padding: 6,
-  background: 'rgba(20, 20, 22, 0.85)',
-  backdropFilter: 'blur(12px)',
-  borderRadius: 999,
-  boxShadow: '0 8px 32px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.06)',
-  zIndex: 50,
+  gap: 2,
+  padding: 4,
+  background: '#2c2c2c',
+  border: '1px solid #323232',
+  borderRadius: 10,
+  boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+  // Chrome z-index — see SidePanel.tsx for the rationale.
+  zIndex: 110,
 };
 
 const btn: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 6,
-  /* A+W1 touch: padding bumped 6px10px → 10px14px so the pill button reads
-     ~40px tall — fingertip-friendly on iPad. minHeight is the safety net for
-     buttons whose label is short. */
-  padding: '10px 14px',
-  minHeight: 40,
-  borderRadius: 999,
+  justifyContent: 'center',
+  width: 32,
+  height: 32,
+  padding: 0,
+  borderRadius: 6,
   border: 'none',
   background: 'transparent',
-  color: '#e8e8ea',
-  fontSize: 13,
-  fontWeight: 500,
+  color: '#9a9a9a',
   cursor: 'pointer',
+  transition: 'background 80ms, color 80ms',
 };
 
 const btnActive: CSSProperties = {
   ...btn,
-  background: 'rgba(255,255,255,0.10)',
-  color: '#ffffff',
+  background: 'rgba(253,179,6,0.16)',
+  color: '#FDB306',
 };
 
 const divider: CSSProperties = {
   width: 1,
   alignSelf: 'stretch',
   margin: '4px 2px',
-  background: 'rgba(255,255,255,0.10)',
+  background: '#323232',
 };
 
 export function ToolBar(): JSX.Element | null {
   const surfaces = usePluginSurfaces('toolbar');
   const tools = surfaces.flatMap((s) => s.tools);
   if (tools.length === 0) return null;
-  // Live tool id (or null pre-mount). Read once per render — the pill is
-  // cheap enough that we don't bother subscribing to App's state.
   const activeToolId = getCurrentTool();
 
   return (
     <div
-      data-testid="foldo-plugin-toolbar"
+      data-testid="foldo-canvas-leftrail"
       role="toolbar"
-      aria-label="Plugin tools"
+      aria-label="Canvas tools"
       style={wrap}
     >
       {tools.map((t, i) => {
@@ -101,10 +100,9 @@ export function ToolBar(): JSX.Element | null {
               aria-pressed={isActive}
               onClick={t.activate}
               style={isActive ? btnActive : btn}
-              data-testid={`foldo-plugin-toolbar-tool-${t.id}`}
+              data-testid={`foldo-rail-tool-${t.id}`}
             >
               {t.icon}
-              <span>{t.label}</span>
             </button>
           </Fragment>
         );

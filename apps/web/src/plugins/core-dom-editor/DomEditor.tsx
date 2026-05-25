@@ -37,6 +37,8 @@ import {
 } from 'react';
 import { createDispatch as apiCreateDispatch } from '../../api/dispatches';
 import { boardStore } from '../../state/useBoardStore';
+import { selectionStore } from '../../state/selectionStore';
+import { findStubWorktree } from '../core-worktrees/WorktreesPanel';
 import type { CreateDispatchRequest } from '@foldo/protocol';
 import {
   broadcastToFrames,
@@ -56,14 +58,14 @@ import { AllPropertyGroups } from './PropertyGroups';
 
 // ---------- Styles (dark, 12px — matches SidePanel's tab strip) ----------
 
-const stack: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12 };
+const stack: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8 };
 
 const buttonBase: CSSProperties = {
-  fontSize: 13,
-  padding: '10px 14px',
-  minHeight: 40,
-  borderRadius: 6,
-  border: '1px solid rgba(255,255,255,0.1)',
+  fontSize: 12,
+  padding: '6px 10px',
+  minHeight: 28,
+  borderRadius: 4,
+  border: '1px solid #323232',
   background: 'rgba(255,255,255,0.04)',
   color: '#e8e8ea',
   cursor: 'pointer',
@@ -87,9 +89,9 @@ const saveButton: CSSProperties = {
 
 const ghostButton: CSSProperties = {
   ...buttonBase,
-  padding: '6px 10px',
-  minHeight: 32,
-  fontSize: 12,
+  padding: '4px 8px',
+  minHeight: 24,
+  fontSize: 11,
 };
 
 const emptyState: CSSProperties = {
@@ -475,6 +477,8 @@ export function DomEditor(): JSX.Element {
     setDispatchInFlight(true);
     setDispatchError(null);
     try {
+      const activeWtId = selectionStore.getSnapshot().activeWorktreeId;
+      const activeWt = findStubWorktree(activeWtId);
       const body: CreateDispatchRequest = {
         boardId: board.id,
         frameId: frame.id,
@@ -486,6 +490,7 @@ export function DomEditor(): JSX.Element {
           elementFile: 'unknown',
           elementLine: 0,
         },
+        ...(activeWt ? { worktreeHint: activeWt.path } : {}),
       };
       const d = await apiCreateDispatch(body);
       boardStore.upsertDispatch(d);

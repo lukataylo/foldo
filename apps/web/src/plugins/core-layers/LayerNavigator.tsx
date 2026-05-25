@@ -67,7 +67,7 @@ import { LayerContextMenu } from './LayerContextMenu';
 const containerStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
+  gap: 6,
   height: '100%',
   position: 'relative', // anchor the absolute-positioned context menu
 };
@@ -75,21 +75,21 @@ const containerStyle: CSSProperties = {
 const toolbarStyle: CSSProperties = {
   display: 'flex',
   gap: 4,
-  paddingBottom: 8,
-  borderBottom: '1px solid rgba(255,255,255,0.06)',
+  paddingBottom: 6,
+  borderBottom: '1px solid #323232',
 };
 
 const toolbarBtn: CSSProperties = {
   flex: 1,
-  // A+W1 touch: 4x6 → 10x10 padding so the row is ≥40px tall on iPad.
-  padding: '10px 10px',
-  minHeight: 40,
-  background: 'rgba(255,255,255,0.04)',
+  padding: '4px 6px',
+  height: 24,
+  background: 'rgba(255,255,255,0.03)',
   color: '#e8e8ea',
-  border: '1px solid rgba(255,255,255,0.08)',
-  borderRadius: 4,
+  border: '1px solid #323232',
+  borderRadius: 3,
   cursor: 'pointer',
-  fontSize: 12,
+  fontSize: 11,
+  fontWeight: 500,
 };
 
 const toolbarBtnDisabled: CSSProperties = {
@@ -99,9 +99,9 @@ const toolbarBtnDisabled: CSSProperties = {
 };
 
 const emptyStyle: CSSProperties = {
-  color: '#9a9aa0',
-  fontSize: 12,
-  padding: '16px 8px',
+  color: '#9a9a9a',
+  fontSize: 11,
+  padding: '14px 8px',
   textAlign: 'center',
   lineHeight: 1.4,
 };

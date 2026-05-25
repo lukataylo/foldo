@@ -137,9 +137,17 @@ export function TopBar({
         {me && switchable.length > 1 && (
           <div className="relative">
             <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={userPickerOpen}
               onClick={() => setUserPickerOpen((o) => !o)}
               title="Switch demo user (refresh required)"
-              className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink hover:bg-white/5"
+              /* appearance-none strips Safari's default button chrome (which
+                 paints a light system colour on :focus, "removing" our
+                 bg-panel). focus:bg-panel + active:bg-panel pin the
+                 background across every interaction state so the chip
+                 stays the same colour as Capture/Tests/Share next to it. */
+              className="flex appearance-none items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink outline-none hover:bg-white/5 focus:bg-panel focus-visible:bg-panel active:bg-panel"
             >
               <span
                 className="flex h-4 w-4 items-center justify-center rounded-full text-[9.5px] font-semibold text-white"

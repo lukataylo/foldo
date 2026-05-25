@@ -40,10 +40,12 @@ body {
   padding-left: env(safe-area-inset-left);
 }
 
-/* A+W1 touch: kill the 300ms tap delay and iOS overscroll bounce on the canvas
-   root so two-finger pan + pinch feel native. The Canvas container also sets
-   touchAction: 'none' inline, but the universal selector here covers ancillary
-   surfaces (panels, overlays). */
+/* A+W1 touch: kill the 300ms tap delay and iOS overscroll bounce on the
+   canvas root so two-finger pan + pinch feel native. The Canvas
+   container also sets touchAction: 'none' inline, and the wheel
+   handler preventDefault's ctrl/meta+wheel for trackpad pinch — the
+   combination lets the canvas own its zoom without the document
+   blocking pinch gestures inside frames or modals. */
 html,
 body {
   touch-action: manipulation;

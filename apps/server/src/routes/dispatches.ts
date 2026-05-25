@@ -33,7 +33,7 @@ export async function registerDispatchRoutes(app: FastifyInstance): Promise<void
       return reply.code(403).send({ error: 'Not a member of this board', code: 'FORBIDDEN' });
     }
 
-    const dispatch = await insertDispatch({
+    const persisted = await insertDispatch({
       id: newId('d'),
       boardId: body.boardId,
       frameId: body.frameId,
@@ -43,6 +43,14 @@ export async function registerDispatchRoutes(app: FastifyInstance): Promise<void
       baseCommitSha: body.baseCommitSha,
       intent: body.intent,
     });
+    // Attach the worktreeHint in-flight only. The dispatches table doesn't
+    // have a column for it yet — a future schema migration will move this
+    // to persistence so DLQ retries after a process restart can still
+    // honour the hint. The MCP bridge tolerates a missing hint gracefully.
+    const dispatch =
+      body.worktreeHint && body.worktreeHint.trim()
+        ? { ...persisted, worktreeHint: body.worktreeHint.trim() }
+        : persisted;
 
     hub.broadcast(dispatch.boardId, { type: 'dispatch.created', dispatch });
 

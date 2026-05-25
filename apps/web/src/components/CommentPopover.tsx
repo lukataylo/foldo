@@ -88,7 +88,7 @@ export function CommentPopover({
     <div
       data-testid="foldo-comment-popover"
       data-foldo-comment-id={comment.id}
-      className="fade-in pointer-events-auto absolute z-[60] rounded-xl border border-hairline bg-panel shadow-panel"
+      className="fade-in pointer-events-auto absolute z-[140] rounded-xl border border-hairline bg-panel shadow-panel"
       /* A+W1 touch: width follows the W computed above so narrow viewports get
          a fitted popover instead of clipping off-screen. */
       style={{ left, top, width: W }}

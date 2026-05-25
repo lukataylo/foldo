@@ -58,7 +58,7 @@ export function EditPanel({
     <div
       data-testid="foldo-edit-panel"
       data-foldo-dispatch-status={dispatchStatus}
-      className="fade-in pointer-events-auto absolute right-3 top-16 bottom-16 z-50 flex w-[420px] flex-col rounded-xl border border-hairline bg-panel shadow-panel"
+      className="fade-in pointer-events-auto absolute right-3 top-16 bottom-16 z-[140] flex w-[420px] flex-col rounded-xl border border-hairline bg-panel shadow-panel"
     >
       <Header
         branch={branch}

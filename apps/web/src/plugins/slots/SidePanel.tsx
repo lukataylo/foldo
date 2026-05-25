@@ -6,73 +6,123 @@
 // Active tab is route-backed via `?leftTab=…` / `?rightTab=…` query params
 // so a tab selection survives reload + is deep-linkable. Falls back to the
 // first tab when the param is absent or names an unknown tab.
+//
+// Collapsed state: the user can collapse either panel into a vertical
+// icon pill at the screen edge. Each pill icon corresponds to one tab;
+// clicking expands the panel + switches to that tab. The collapsed flag
+// is persisted to localStorage so it survives reloads.
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { usePluginSurfaces } from '../registry';
 
 type Side = 'left' | 'right';
 
-/* A+W1 touch: responsive sizing. On viewports <900px we narrow the panel from
-   280px → 220px so it stops eating half the canvas on iPad portrait. On
-   viewports <700px (rare — the phone banner usually kicks in first) the panel
-   collapses to a small "Tabs" toggle button. */
+/* Responsive width: on viewports <900px we narrow the panel from 280→220px
+   so it stops eating half the canvas on iPad portrait. */
 function pickWidth(vw: number): number {
   if (vw < 900) return 220;
   return 280;
 }
 
-// Floating Figma-style panel: insets from the screen edges (so the
-// TopBar above and PluginToolBar below stay fully visible and the panel
-// reads as a "card" floating on the canvas), rounded corners, soft
-// outer shadow + crisp inner hairline. zIndex sits BELOW the TopBar
-// (z=50) so a stray full-bleed panel can never paint over it.
+// Expanded floating card — dark panel token, soft outer shadow + crisp
+// inner hairline. zIndex sits BELOW the TopBar (z=50) so a stray full-
+// bleed panel can never paint over it.
 const containerBase: CSSProperties = {
   position: 'fixed',
-  top: 64, // below TopBar (~56px) + 8px gap
-  bottom: 80, // above PluginToolBar (~60px) + 20px gap
+  top: 64,
+  bottom: 72,
   display: 'flex',
   flexDirection: 'column',
-  background: 'rgba(20, 20, 22, 0.96)',
-  backdropFilter: 'blur(14px)',
-  WebkitBackdropFilter: 'blur(14px)',
-  borderRadius: 12,
-  border: '1px solid rgba(255,255,255,0.06)',
-  boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
-  zIndex: 35,
+  background: '#2c2c2c',
+  borderRadius: 10,
+  border: '1px solid #323232',
+  boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+  /* Chrome z-index lives in the 100-range so canvas-side overlays
+     (popovers, iframe portals, comment pins) can never paint over it
+     regardless of zoom level. */
+  zIndex: 100,
   color: '#e8e8ea',
-  overflow: 'hidden', // round body corners with the parent
+  overflow: 'hidden',
 };
 
-// Tab strip header: subtle, compact. When there's only ONE tab we
-// shrink-wrap the label so the strip reads as a "panel title" rather
-// than a giant button (the previous full-width treatment looked like a
-// CTA dominating the top of the panel).
+// Pill container: same vertical rhythm as the expanded card, ~36px wide,
+// vertical stack of icon buttons.
+const pillBase: CSSProperties = {
+  position: 'fixed',
+  top: 64,
+  width: 36,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: 2,
+  padding: 4,
+  background: '#2c2c2c',
+  borderRadius: 10,
+  border: '1px solid #323232',
+  boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+  zIndex: 100,
+  color: '#e8e8ea',
+};
+
+const pillBtnBase: CSSProperties = {
+  width: 28,
+  height: 28,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: 'transparent',
+  color: '#9a9a9a',
+  border: 'none',
+  borderRadius: 6,
+  cursor: 'pointer',
+  fontSize: 13,
+  transition: 'background 80ms, color 80ms',
+};
+
+const pillBtnActive: CSSProperties = {
+  ...pillBtnBase,
+  background: 'rgba(253,179,6,0.16)',
+  color: '#FDB306',
+};
+
+const pillDivider: CSSProperties = {
+  width: '70%',
+  height: 1,
+  background: '#323232',
+  margin: '2px 0',
+};
+
 const tabStrip: CSSProperties = {
   display: 'flex',
   gap: 2,
-  padding: '8px 10px',
-  borderBottom: '1px solid rgba(255,255,255,0.06)',
+  padding: '6px 6px',
+  borderBottom: '1px solid #323232',
   flexShrink: 0,
+  alignItems: 'center',
 };
 
 const tabBtn: CSSProperties = {
-  // Default tab button: equal-width when multiple tabs, content-width
-  // when single. The flex value is overridden inline below based on
-  // tabs.length so a 1-tab panel reads as a title not a button.
-  padding: '6px 10px',
-  minHeight: 28,
+  padding: '5px 8px',
+  minHeight: 26,
   border: 'none',
   background: 'transparent',
-  color: '#9a9aa0',
-  borderRadius: 6,
-  fontSize: 12,
+  color: '#9a9a9a',
+  borderRadius: 5,
+  fontSize: 11,
   fontWeight: 500,
   letterSpacing: 0.2,
   cursor: 'pointer',
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  gap: 6,
+  gap: 5,
   transition: 'background 80ms, color 80ms',
 };
 
@@ -82,40 +132,32 @@ const tabBtnActive: CSSProperties = {
   color: '#e8e8ea',
 };
 
+const collapseHandle: CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  color: '#9a9a9a',
+  width: 22,
+  height: 22,
+  padding: 0,
+  cursor: 'pointer',
+  fontSize: 14,
+  borderRadius: 4,
+  marginLeft: 'auto',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+
 const body: CSSProperties = {
   flex: 1,
   overflow: 'auto',
-  padding: '8px 12px 12px 12px',
-};
-
-/* A+W1 touch: small floating "Tabs" toggle for very narrow viewports — sits
-   along the panel's edge so the user has a way to bring the collapsed panel
-   back without needing the keyboard. */
-const collapsedToggleBase: CSSProperties = {
-  position: 'fixed',
-  top: '50%',
-  transform: 'translateY(-50%)',
-  background: 'rgba(20,20,22,0.92)',
-  color: '#e8e8ea',
-  border: 'none',
-  padding: '10px 8px',
-  fontSize: 11,
-  cursor: 'pointer',
-  borderRadius: 0,
-  writingMode: 'vertical-rl',
-  zIndex: 40,
-  boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06)',
+  padding: '8px 10px 10px 10px',
 };
 
 /**
  * Tiny `?leftTab=` / `?rightTab=` hook. We don't extend Router (it's path-
  * shaped, not query-shaped) — the panel substrate is the only thing that
  * needs query state today, so a local helper is the lighter-weight option.
- *
- * Writes use `history.replaceState` (a tab switch shouldn't pile a back-
- * stack entry per click) and dispatch a custom `foldo:tabchange` event so
- * sibling panels (LeftPanel + RightPanel coexist) reconcile without each
- * polling location.search.
  */
 function useTabRouteParam(paramName: string): {
   value: string | null;
@@ -148,13 +190,37 @@ function useTabRouteParam(paramName: string): {
       const next = location.pathname + (qs ? `?${qs}` : '') + location.hash;
       history.replaceState({}, '', next);
       setValue(v);
-      // Tell the sibling panel + other listeners.
       window.dispatchEvent(new Event('foldo:tabchange'));
     },
     [paramName],
   );
 
   return { value, set };
+}
+
+/** Persist the collapsed flag per-side so reloads remember the user's choice. */
+function useCollapsedFlag(side: Side, defaultCollapsed: boolean): {
+  collapsed: boolean;
+  setCollapsed: (v: boolean) => void;
+} {
+  const key = `foldo:sidepanel:${side}:collapsed`;
+  const read = (): boolean => {
+    if (typeof localStorage === 'undefined') return defaultCollapsed;
+    const raw = localStorage.getItem(key);
+    if (raw === null) return defaultCollapsed;
+    return raw === '1';
+  };
+  const [collapsed, setCollapsedState] = useState<boolean>(read);
+  const setCollapsed = useCallback(
+    (v: boolean): void => {
+      setCollapsedState(v);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(key, v ? '1' : '0');
+      }
+    },
+    [key],
+  );
+  return { collapsed, setCollapsed };
 }
 
 function SidePanel({ side }: { side: Side }): JSX.Element | null {
@@ -164,7 +230,6 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
     side === 'left' ? 'leftTab' : 'rightTab',
   );
 
-  /* A+W1 touch: track viewport width to compute panel width + collapse mode. */
   const [vw, setVw] = useState<number>(
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   );
@@ -174,44 +239,65 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  const collapseByDefault = vw < 700;
-  const [userCollapsed, setUserCollapsed] = useState<boolean>(collapseByDefault);
-  // Re-sync when the viewport crosses the breakpoint so a portrait → landscape
-  // rotation re-expands automatically.
-  useEffect(() => {
-    setUserCollapsed(collapseByDefault);
-  }, [collapseByDefault]);
+
+  // Default-collapse on phone-sized viewports so the pill, not the full
+  // card, is what shows up first. The localStorage flag overrides if the
+  // user has explicitly toggled it.
+  const { collapsed, setCollapsed } = useCollapsedFlag(side, vw < 700);
 
   if (tabs.length === 0) return null;
-  // Resolve active tab: route param if it names a real tab, else first tab.
-  const active = tabs.find((t) => t.id === routeTab) ?? tabs[0]!;
-  const onSelectTab = (id: string): void => {
-    // Writing the first tab as the route value lets a deep-link force the
-    // first tab even after a future plugin install reshuffles ordering.
-    setRouteTab(id);
-  };
 
-  // Inset from the screen edge so the panel reads as a floating card
-  // rather than a full-bleed sidebar. 12px on desktop, 8px on narrow.
+  const active = tabs.find((t) => t.id === routeTab) ?? tabs[0]!;
+  const onSelectTab = (id: string): void => setRouteTab(id);
+
+  // Pill + expanded panel both inset from the screen edge by 12px (8px on
+  // narrow). The bottom edge tracks the canvas tool dock.
   const edgeInset = vw < 900 ? 8 : 12;
   const positional: CSSProperties =
     side === 'left' ? { left: edgeInset } : { right: edgeInset };
 
-  // Collapsed state: render only a small toggle button along the screen edge.
-  if (userCollapsed) {
+  if (collapsed) {
     return (
-      <button
-        type="button"
-        data-testid={`foldo-plugin-${side}-panel-toggle`}
+      <aside
+        data-testid={`foldo-plugin-${side}-panel-pill`}
+        aria-label={`${side === 'left' ? 'Left' : 'Right'} panel (collapsed)`}
         style={{
-          ...collapsedToggleBase,
-          ...(side === 'left' ? { left: 0 } : { right: 0 }),
+          ...pillBase,
+          ...positional,
+          bottom: vw < 700 ? 72 : undefined,
         }}
-        onClick={() => setUserCollapsed(false)}
-        aria-label={`Open ${side} panel`}
       >
-        Tabs
-      </button>
+        {tabs.map((t, i) => {
+          const isActive = t.id === active.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => {
+                setRouteTab(t.id);
+                setCollapsed(false);
+              }}
+              style={isActive ? pillBtnActive : pillBtnBase}
+              title={`${t.label} — expand panel`}
+              aria-label={`${t.label} — expand panel`}
+              data-testid={`foldo-plugin-${side}-pill-${t.id}`}
+            >
+              {renderPillIcon(t.icon, t.label)}
+            </button>
+          );
+        })}
+        <div aria-hidden style={pillDivider} />
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          style={pillBtnBase}
+          title="Expand panel"
+          aria-label={`Expand ${side} panel`}
+          data-testid={`foldo-plugin-${side}-pill-expand`}
+        >
+          {side === 'left' ? '›' : '‹'}
+        </button>
+      </aside>
     );
   }
 
@@ -223,12 +309,6 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
       <div style={tabStrip} role="tablist">
         {tabs.map((t) => {
           const isActive = t.id === active.id;
-          // Single-tab panel: render as left-aligned title, no flex
-          // expansion. Multi-tab: equal-width segmented control.
-          const widthStyle: CSSProperties =
-            tabs.length === 1
-              ? { flex: 'initial', justifyContent: 'flex-start', paddingLeft: 4 }
-              : { flex: 1 };
           return (
             <button
               key={t.id}
@@ -240,20 +320,7 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
               onClick={() => onSelectTab(t.id)}
               style={{
                 ...(isActive ? tabBtnActive : tabBtn),
-                ...widthStyle,
-                // Single-tab acts as a panel title — no hover/active
-                // background since there's nothing to switch to.
-                ...(tabs.length === 1
-                  ? {
-                      background: 'transparent',
-                      color: '#9a9aa0',
-                      cursor: 'default',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      letterSpacing: 0.6,
-                      textTransform: 'uppercase',
-                    }
-                  : {}),
+                flex: tabs.length === 1 ? 'initial' : 1,
               }}
               data-testid={`foldo-plugin-${side}-tab-${t.id}`}
             >
@@ -263,27 +330,16 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
             </button>
           );
         })}
-        {/* A+W1 touch: collapse handle is always visible on narrow tablets so
-            the user can reclaim canvas space without keyboard. */}
-        {vw < 900 && (
-          <button
-            type="button"
-            onClick={() => setUserCollapsed(true)}
-            aria-label={`Collapse ${side} panel`}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#9a9aa0',
-              padding: '10px 8px',
-              minHeight: 40,
-              cursor: 'pointer',
-              fontSize: 14,
-            }}
-            data-testid={`foldo-plugin-${side}-panel-collapse`}
-          >
-            {side === 'left' ? '‹' : '›'}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => setCollapsed(true)}
+          style={collapseHandle}
+          aria-label={`Collapse ${side} panel`}
+          title="Collapse to icon pill"
+          data-testid={`foldo-plugin-${side}-panel-collapse`}
+        >
+          {side === 'left' ? '‹' : '›'}
+        </button>
       </div>
       <div
         style={body}
@@ -296,6 +352,16 @@ function SidePanel({ side }: { side: Side }): JSX.Element | null {
       </div>
     </aside>
   );
+}
+
+/**
+ * Tab icons in the expanded strip live next to a label; in the collapsed
+ * pill they're the only affordance for distinguishing tabs. If a plugin
+ * didn't ship an icon we fall back to the first letter of its label.
+ */
+function renderPillIcon(icon: ReactNode | undefined, label: string): ReactNode {
+  if (icon !== undefined && icon !== null && icon !== '') return icon;
+  return label.charAt(0).toUpperCase();
 }
 
 export function LeftPanel(): JSX.Element | null {

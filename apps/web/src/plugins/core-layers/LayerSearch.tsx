@@ -27,32 +27,32 @@ const wrapperStyle: CSSProperties = {
   width: '100%',
 };
 
-// 16px font so iOS Safari doesn't auto-zoom on focus.
 const inputStyle: CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
-  background: 'rgba(0,0,0,0.3)',
+  background: 'rgba(0,0,0,0.25)',
   color: '#e8e8ea',
-  border: '1px solid rgba(255,255,255,0.08)',
+  border: '1px solid #323232',
   borderRadius: 4,
-  padding: '8px 28px 8px 10px',
-  fontSize: 16,
+  padding: '5px 22px 5px 8px',
+  height: 26,
+  fontSize: 12,
   fontFamily: 'inherit',
   outline: 'none',
 };
 
 const clearBtn: CSSProperties = {
   position: 'absolute',
-  right: 4,
+  right: 2,
   top: '50%',
   transform: 'translateY(-50%)',
-  width: 22,
-  height: 22,
+  width: 20,
+  height: 20,
   border: 'none',
   background: 'transparent',
-  color: '#9a9aa0',
+  color: '#9a9a9a',
   cursor: 'pointer',
-  fontSize: 14,
+  fontSize: 13,
   lineHeight: 1,
   padding: 0,
   borderRadius: 3,

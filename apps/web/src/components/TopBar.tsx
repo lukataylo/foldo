@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { Board, UserId, User } from '@foldo/protocol';
 import { PresenceAvatars } from '../multiplayer/PresenceAvatars';
 import { useBoardSelector } from '../state/useBoardStore';
+import { useSelectionSlice } from '../state/selectionStore';
+import { findStubWorktree } from '../plugins/core-worktrees/WorktreesPanel';
 import { ShareManagementModal } from './ShareManagementModal';
 
 const HOME_URL = '/home';
@@ -86,27 +88,32 @@ export function TopBar({
     }
   };
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between px-4 pt-3">
-      {/* left: logo + repo selector */}
-      {/* A+W1 touch: bumped py-1.5 → py-2 so the chrome reads ~40px tall on iPad. */}
-      <div className="pointer-events-auto relative flex items-center gap-3 rounded-xl border border-hairlineSoft bg-panel px-2 py-2 shadow-panel">
-        <a href={HOME_URL} title="Back to home">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-[120] flex items-start justify-between px-3 pt-3">
+      {/* left: logo + repo selector — width matches the LeftPanel below so
+          the two stacked floating cards align on the canvas's left edge. */}
+      <div className="pointer-events-auto relative flex w-[280px] items-center gap-2 rounded-[10px] border border-hairlineSoft bg-panel px-2 py-1.5 shadow-panel">
+        <a href={HOME_URL} title="Back to home" className="flex-shrink-0">
           <Logo />
         </a>
-        <div className="h-4 w-px bg-hairline" />
+        <div className="h-4 w-px flex-shrink-0 bg-hairline" />
         <button
           onClick={() => setOpen((o) => !o)}
-          /* A+W1 touch: py-1 → py-2 for fingertip targets. */
-          className="flex items-center gap-1.5 rounded-md px-2 py-2 text-[12.5px] font-medium text-ink hover:bg-white/5"
+          className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-[12px] font-medium text-ink hover:bg-white/5"
         >
           <RepoIcon />
-          <span data-testid="foldo-canvas-topbar-boardname">{repoName}</span>
+          <span
+            data-testid="foldo-canvas-topbar-boardname"
+            className="truncate"
+          >
+            {repoName}
+          </span>
           <Chevron />
         </button>
         <ConnectionDot status={wsStatus} offline={offline} />
         <McpChip connected={mcpConnected} />
+        <WorktreeChip />
         {open && (
-          <div className="absolute left-2 top-12 w-60 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
+          <div className="absolute left-2 top-11 w-60 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
             <a
               href={HOME_URL}
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-ink hover:bg-white/5"
@@ -130,9 +137,19 @@ export function TopBar({
         {me && switchable.length > 1 && (
           <div className="relative">
             <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={userPickerOpen}
               onClick={() => setUserPickerOpen((o) => !o)}
               title="Switch demo user (refresh required)"
-              className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2 py-1 text-[12px] text-ink hover:bg-white/5"
+              /* Chip background is pinned across every interaction state.
+                 - `appearance-none` strips Safari's default button chrome.
+                 - bg-panel on idle, hover, focus, focus-visible, active.
+                 - On hover we only nudge the border to signal interactivity,
+                   so the dark fill stays readable behind the white label.
+                 - `outline-none` removes Safari's default focus ring; the
+                   border-colour hover is the affordance. */
+              className="flex appearance-none items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink outline-none transition-colors hover:border-white/20 hover:bg-panel focus:bg-panel focus-visible:bg-panel active:bg-panel"
             >
               <span
                 className="flex h-4 w-4 items-center justify-center rounded-full text-[9.5px] font-semibold text-white"
@@ -144,7 +161,7 @@ export function TopBar({
               <Chevron />
             </button>
             {userPickerOpen && (
-              <div className="absolute right-0 top-9 z-50 w-60 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
+              <div className="absolute right-0 top-9 z-[130] w-60 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
                 <div className="px-2 py-1 text-[10.5px] uppercase tracking-[0.1em] text-inkFaint">
                   Demo as
                 </div>
@@ -346,6 +363,30 @@ function McpChip({ connected }: { connected: boolean }) {
         style={{ background: color, boxShadow: `0 0 6px ${color}` }}
       />
       MCP
+    </span>
+  );
+}
+
+/**
+ * "→ ~/path" chip — shows the active worktree (dispatch target) selected
+ * in the Worktrees panel. Hides when no worktree is selected. Click does
+ * nothing; this is a status indicator. The chip is also a hint to the
+ * user that "the next dispatch will land here" — the only point in the
+ * UI where that state is visible.
+ */
+function WorktreeChip(): JSX.Element | null {
+  const activeWorktreeId = useSelectionSlice((s) => s.activeWorktreeId);
+  const wt = findStubWorktree(activeWorktreeId);
+  if (!wt) return null;
+  return (
+    <span
+      title={`Next dispatch will run in ${wt.path} (branch: ${wt.branch})`}
+      className="ml-1 inline-flex max-w-[180px] items-center gap-1 truncate rounded-md border border-hairlineSoft px-1.5 py-0.5 font-mono text-[10.5px] text-inkMute"
+      data-testid="foldo-topbar-worktree-chip"
+      data-worktree-id={wt.id}
+    >
+      <span aria-hidden style={{ color: '#FDB306' }}>→</span>
+      <span className="truncate">{wt.path}</span>
     </span>
   );
 }

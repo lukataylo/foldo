@@ -315,6 +315,16 @@ export interface Dispatch {
   startedAt?: string;
   finishedAt?: string;
   errorMessage?: string;
+  /**
+   * Hint to the MCP bridge — which local worktree path to run this
+   * dispatch in. Set by the canvas UI (Worktrees panel) and forwarded
+   * through `/ws/mcp`. Not persisted in the DB today (the schema
+   * doesn't have a column for it yet); attached in-flight on the
+   * dispatch.execute WS message. The bridge MAY ignore it — see the
+   * CreateDispatchRequest doc for why this is a hint rather than a
+   * contract.
+   */
+  worktreeHint?: string;
 }
 
 // ---------- Presence (multiplayer) ----------

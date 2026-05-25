@@ -33,10 +33,13 @@ const SettingsApp = lazy(() => import('./settings/SettingsApp'));
 const ShareViewer = lazy(() => import('./share/ShareViewer'));
 const CaptureViewer = lazy(() => import('./capture/CaptureViewer'));
 const TestRunner = lazy(() => import('./test/TestRunner'));
-// The CookieBanner is tiny but renders on every non-tester page, so keep it
-// lazy too — saves an extra request on the tester route.
-const CookieBanner = lazy(() =>
-  import('./marketing/CookieBanner').then((m) => ({ default: m.CookieBanner })),
+// ConsentNotice is tiny but renders on every non-tester page, so keep it
+// lazy too — saves an extra request on the tester route. Named
+// ConsentNotice (not CookieBanner) because the latter is a path
+// heuristic many ad/content blockers reject by name pattern, breaking
+// the module import in Chrome (uBlock) and Safari content blockers.
+const ConsentNotice = lazy(() =>
+  import('./marketing/ConsentNotice').then((m) => ({ default: m.ConsentNotice })),
 );
 
 const path = typeof location !== 'undefined' ? location.pathname : '/';
@@ -73,7 +76,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </ErrorBoundary>
     {!isTesterPage && (
       <Suspense fallback={null}>
-        <CookieBanner />
+        <ConsentNotice />
       </Suspense>
     )}
   </React.StrictMode>,

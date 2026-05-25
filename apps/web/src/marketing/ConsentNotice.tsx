@@ -31,7 +31,7 @@ function isLikelyEuOrUk(): boolean {
   }
 }
 
-export function CookieBanner() {
+export function ConsentNotice() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {

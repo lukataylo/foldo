@@ -70,7 +70,7 @@ export function FirstRunHint({ count }: { count: number }): JSX.Element | null {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
   return (
-    <div className="pointer-events-auto absolute bottom-4 right-4 z-40 w-[300px] rounded-xl border border-hairline bg-panel p-3.5 shadow-panel fade-in">
+    <div className="pointer-events-auto absolute bottom-4 right-4 z-[95] w-[300px] rounded-xl border border-hairline bg-panel p-3.5 shadow-panel fade-in">
       <div className="mb-1 flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-accent">
           <Sparkle /> Try this

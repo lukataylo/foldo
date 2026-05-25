@@ -136,6 +136,18 @@ export interface CreateDispatchRequest {
   baseCommitSha: string;
   intent: string;
   target: CommentTarget;
+  /**
+   * Optional hint to the MCP bridge about which local worktree the
+   * dispatch should run in. Set by the canvas UI (Worktrees panel
+   * selection) and forwarded by the server to /ws/mcp. The MCP bridge
+   * uses it as `cwd` when invoking Claude Code; if absent, the bridge
+   * runs from the process working directory it was launched in.
+   *
+   * Hint, not contract — the bridge MAY ignore it if the path doesn't
+   * exist or isn't a known worktree. Failure to honor the hint should
+   * never block the dispatch.
+   */
+  worktreeHint?: string;
 }
 
 export interface ListDispatchesResponse {

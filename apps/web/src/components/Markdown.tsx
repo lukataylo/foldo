@@ -226,13 +226,18 @@ export function MarkdownView({
   nameForUser,
 }: RenderProps) {
   const lines = parseMarkdown(body);
-  const lineWrap = (ln: MarkdownLine, children: ReactNode) => {
+  // When the line has a known author tint we wrap the rendered element in
+  // a `<div>` to host the gutter border. The wrapper element is what the
+  // map callback returns, so the key must live on it (not just the inner
+  // element) or React warns "child in list should have a unique key".
+  const lineWrap = (ln: MarkdownLine, idx: number, children: ReactNode) => {
     const entry = lineAuthors?.[String(ln.bodyLineIndex)];
     if (!entry || !colorForUser) return children;
     const color = colorForUser(entry.authorUserId);
     const name = nameForUser?.(entry.authorUserId) ?? 'someone';
     return (
       <div
+        key={idx}
         title={`Edited by ${name}`}
         style={{
           borderLeft: `3px solid ${color}`,
@@ -257,7 +262,7 @@ export function MarkdownView({
           ? 'relative -mx-2 rounded-md bg-[#fff5e3] px-2 transition-colors'
           : 'transition-colors hover:bg-black/[0.025]';
         const onClick = (e: React.MouseEvent) => onLineClick?.(ln, e);
-        const wrap = (node: ReactNode) => lineWrap(ln, node);
+        const wrap = (node: ReactNode) => lineWrap(ln, idx, node);
         switch (ln.block.kind) {
           case 'h1':
             return wrap(

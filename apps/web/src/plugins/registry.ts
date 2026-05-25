@@ -159,9 +159,13 @@ export function usePluginSurfaces<K extends PluginSurface['kind']>(
  * anything renders.
  */
 export function bootPlugins(plugins: Plugin[]): void {
-  // Reset the surface cache so a hot-reload during dev (which re-imports
-  // this module) doesn't serve a stale array.
+  // Reset on every boot so a Vite HMR re-run doesn't accumulate duplicate
+  // plugin contributions (which would render N copies of the toolbar / N
+  // copies of every side-panel tab). In production the function runs once
+  // at startup, so the reset is a no-op there.
+  registry.reset();
   surfaceCache.clear();
+  hotkeyCache = null;
   registry.installAll(plugins);
   registry.activate(defaultContext());
 }
@@ -203,6 +207,27 @@ export function getSelectFrameHook(): ((frameId: string) => void) | null {
   return (
     (window as unknown as { __foldoSelectFrame?: (id: string) => void })
       .__foldoSelectFrame ?? null
+  );
+}
+
+/**
+ * Pan + zoom the canvas to fit a world-space rect. Used by the Branches
+ * plugin to focus the canvas on a branch's frames when its row is
+ * clicked. The receiver in App.tsx forwards to `canvasRef.fitTo(rect)`.
+ */
+export interface WorldRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+export function registerFitToHook(fn: ((rect: WorldRect) => void) | null): void {
+  (window as unknown as { __foldoFitTo?: (r: WorldRect) => void }).__foldoFitTo =
+    fn ?? undefined;
+}
+export function getFitToHook(): ((rect: WorldRect) => void) | null {
+  return (
+    (window as unknown as { __foldoFitTo?: (r: WorldRect) => void }).__foldoFitTo ?? null
   );
 }
 

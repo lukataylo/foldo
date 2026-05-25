@@ -43,6 +43,12 @@ interface Props {
   commentsByFrame: Map<string, Comment[]>;
   /** Frame ids currently in (or near) the viewport. */
   inViewportSet: ReadonlySet<string>;
+  /**
+   * Solo mode — when non-null, only frames whose branchId matches are
+   * rendered. The selectionStore owns this state; App.tsx reads + passes
+   * through so FrameLayer's memoization can short-circuit re-renders.
+   */
+  soloBranchId: string | null;
   onSelectElement: (sel: SelectedElement | null) => void;
   onDropPin: (frameId: string, x: number, y: number) => void;
   onCommentClick: (frameId: string, comment: Comment) => void;
@@ -65,6 +71,7 @@ export const FrameLayer = memo(function FrameLayer({
   zoom,
   commentsByFrame,
   inViewportSet,
+  soloBranchId,
   onSelectElement,
   onDropPin,
   onCommentClick,
@@ -92,6 +99,9 @@ export const FrameLayer = memo(function FrameLayer({
       style={{ display: 'contents' }}
     >
       {frames.map((f) => {
+        // Solo mode: skip frames not on the soloed branch. Done before the
+        // branch lookup so we don't pay the Map.get for hidden frames.
+        if (soloBranchId !== null && f.branchId !== soloBranchId) return null;
         const branch = branchesMap.get(f.branchId);
         if (!branch) return null;
         const comments = commentsByFrame.get(f.id) ?? [];

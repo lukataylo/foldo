@@ -164,11 +164,27 @@ export class PluginRegistry {
   private readonly plugins: Plugin[] = [];
 
   install(plugin: Plugin): void {
-    this.plugins.push(plugin);
+    // Idempotent by manifest.id so a dev-mode HMR re-boot doesn't duplicate
+    // contributions. A second install of the same id replaces the prior
+    // entry in place to keep install order stable.
+    const i = this.plugins.findIndex((p) => p.manifest.id === plugin.manifest.id);
+    if (i >= 0) this.plugins[i] = plugin;
+    else this.plugins.push(plugin);
   }
 
   installAll(plugins: Plugin[]): void {
     for (const p of plugins) this.install(p);
+  }
+
+  /**
+   * Drop every installed plugin + reset activation state. Used by `bootPlugins`
+   * in apps/web to make HMR re-boots non-duplicating; tests also call it
+   * between cases when they need a clean registry.
+   */
+  reset(): void {
+    this.plugins.length = 0;
+    this.teardowns.length = 0;
+    this.activated = false;
   }
 
   /** Activate every installed plugin. Idempotent on re-call (does nothing). */

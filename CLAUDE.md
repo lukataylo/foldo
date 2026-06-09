@@ -388,17 +388,23 @@ When a search doesn't turn anything up: the wiring is usually in
 The full deployment runbook is [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md);
 the Railway readiness audit is [docs/RAILWAY_READINESS.md](docs/RAILWAY_READINESS.md).
 
-Production = **Railway**. Two services:
+Production = **Railway**. Three deployed services (plus an optional
+fourth):
 
-- `web` — Vite `build` → `vite preview` on `$PORT`, behind a Railway
-  domain. Static SPA + nothing else.
+- `web` — Vite `build` → static `dist/` served by the `serve` package
+  on `$PORT` (`apps/web/Dockerfile`), behind a Railway domain.
 - `server` — `apps/server/Dockerfile` (Node 20 slim), Fastify on
   `$PORT`. Mounted Postgres add-on for the DB. S3-compatible object
   storage add-on for recordings/uploads.
+- `sample-app` — same static-`serve` shape as `web`
+  (`apps/sample-app/Dockerfile`).
+- `shotter` — optional headless-Chromium screenshot service
+  (`apps/shotter/Dockerfile`); not deployed today.
 
-`railway.json` at the repo root encodes the build + start commands per
-service. The `apps/server/Dockerfile` is the only Dockerfile in the
-tree — `apps/web` ships as a Vite preview server, not a container.
+Railway config-as-code is service-scoped (one file per service), so
+each app carries its own `apps/<app>/railway.json`; point each Railway
+service's "Config file path" setting at its file. See
+docs/DEPLOYMENT.md §9.
 
 The MCP server (`apps/mcp`) **does not deploy**. It runs on the user's
 laptop (spawned by Claude Code, or via `npm run dev:mcp`). It opens a

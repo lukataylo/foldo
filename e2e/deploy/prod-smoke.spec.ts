@@ -18,7 +18,10 @@
 import { expect, test } from '@playwright/test';
 
 const SHOULD_RUN = process.env.RUN_PROD_SMOKE === '1';
-const BASE = (process.env.FOLDO_PROD_BASE ?? 'https://api.foldo.dev').replace(/\/+$/, '');
+// `||` not `??`: the post-deploy workflow exports FOLDO_PROD_BASE='' when the
+// dispatch payload carries no base_url, and an empty string must still fall
+// back to the default (an empty BASE makes every request an invalid URL).
+const BASE = (process.env.FOLDO_PROD_BASE || 'https://api.foldo.dev').replace(/\/+$/, '');
 const TOKEN = process.env.FOLDO_PROD_SMOKE_TOKEN ?? '';
 
 // `test.describe.skip` when the gate is off — the spec still appears in

@@ -36,24 +36,38 @@ function verifyGithubSignature(
 }
 
 export async function registerWebhookRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: GithubPushPayload }>(
-    '/api/webhooks/github',
-    {
-      config: { rawBody: true },
-    },
-    async (req, reply) => {
-      const secret = process.env.FOLDO_GITHUB_WEBHOOK_SECRET;
-      // We need raw body for HMAC; Fastify parses JSON before our handler runs,
-      // so reconstitute by re-stringifying. This isn't byte-identical with
-      // exotic encodings but matches GitHub's payload for all practical cases.
-      // For strict verification, register a raw-body content-type-parser.
-      const raw =
-        (req as unknown as { rawBody?: string }).rawBody ?? JSON.stringify(req.body ?? {});
-      if (!verifyGithubSignature(req, raw, secret)) {
-        return reply
-          .code(401)
-          .send({ error: 'Invalid webhook signature', code: 'UNAUTHORIZED' });
-      }
+  // The webhook lives in its own encapsulated scope so we can override the
+  // JSON content-type parser for this route only: GitHub's HMAC is computed
+  // over the exact bytes it sent, so we must keep the verbatim body around —
+  // re-stringifying the parsed object is not byte-identical (key order,
+  // unicode escaping) and makes signature verification fail for real
+  // payloads whenever a secret is configured.
+  await app.register(async (scope) => {
+    scope.addContentTypeParser(
+      'application/json',
+      { parseAs: 'string' },
+      (req, body, done) => {
+        (req as unknown as { rawBody?: string }).rawBody = body as string;
+        try {
+          done(null, JSON.parse(body as string));
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          (e as { statusCode?: number }).statusCode = 400;
+          done(e, undefined);
+        }
+      },
+    );
+
+    scope.post<{ Body: GithubPushPayload }>(
+      '/api/webhooks/github',
+      async (req, reply) => {
+        const secret = process.env.FOLDO_GITHUB_WEBHOOK_SECRET;
+        const raw = (req as unknown as { rawBody?: string }).rawBody;
+        if (!verifyGithubSignature(req, raw ?? '', secret)) {
+          return reply
+            .code(401)
+            .send({ error: 'Invalid webhook signature', code: 'UNAUTHORIZED' });
+        }
 
       const body = req.body;
       if (!body?.ref || !body?.after || !body?.repository?.full_name) {
@@ -142,8 +156,9 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
       hub.broadcast(board.id, { type: 'frame.added', frame });
 
       return reply.send({ ok: true });
-    },
-  );
+      },
+    );
+  });
 
   // Suppress unused-type warning for the helper signature on older Fastify type
   // exports, we don't actually need RawServerDefault but the import keeps the

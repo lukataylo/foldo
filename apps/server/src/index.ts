@@ -105,10 +105,21 @@ async function main(): Promise<void> {
   // Extra origins from env (comma-separated). Lets production deploys add
   // their canvas/web hostnames without a code change. Localhost is always
   // allowed so `npm run dev` keeps working.
+  // A browser Origin header is always scheme://host[:port] — no path, no
+  // trailing slash. Normalise configured entries so an operator writing
+  // `https://foldo.dev/` (easy mistake) doesn't silently CORS-block the
+  // entire canvas.
   const extraOrigins = (process.env.FOLDO_WEB_ORIGIN ?? '')
     .split(',')
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((s) => {
+      try {
+        return new URL(s).origin;
+      } catch {
+        return s.replace(/\/+$/, '');
+      }
+    });
 
   // Locking down the chrome-extension allowlist: before, ANY chrome-extension
   // origin could call the API (lets a malicious extension on a tester's box

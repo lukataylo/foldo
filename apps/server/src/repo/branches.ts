@@ -113,13 +113,15 @@ function rowToCommit(r: CommitRow): Commit {
 }
 
 export async function upsertCommit(c: Commit): Promise<Commit> {
+  // sha is the global PK but the same commit can legitimately arrive on
+  // multiple branch refs (merges, pushing an existing commit to a new
+  // branch). branch_id is deliberately not updated on conflict, so updating
+  // the other columns would clobber the first branch's metadata while
+  // keeping its attribution — keep the first authoritative write intact.
   await exec(
     `INSERT INTO commits (sha, branch_id, message, author_user_id, parent_sha, created_at)
      VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT(sha) DO UPDATE SET
-       message = EXCLUDED.message,
-       author_user_id = EXCLUDED.author_user_id,
-       parent_sha = EXCLUDED.parent_sha`,
+     ON CONFLICT(sha) DO NOTHING`,
     [c.sha, c.branchId, c.message, c.authorUserId, c.parentSha ?? null, c.createdAt],
   );
   return c;

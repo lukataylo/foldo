@@ -6,6 +6,7 @@ import type {
   Board,
   Branch,
   Comment,
+  CommentReply,
   Dispatch,
   Frame,
   PresenceUser,
@@ -123,6 +124,20 @@ class BoardStoreImpl {
     const comments = new Map(this.snap.comments);
     comments.set(c.id, c);
     this.patch({ comments });
+  }
+
+  /**
+   * Append a reply to a comment, idempotently by reply id. A reply can reach
+   * the store twice — once from the REST response and once from the WS
+   * broadcast (the server doesn't except the sender) — and array appends
+   * aren't idempotent like Map.set, so the dedupe lives here rather than as
+   * a convention every caller must remember.
+   */
+  addReply(commentId: string, reply: CommentReply) {
+    const c = this.snap.comments.get(commentId);
+    if (!c) return;
+    if (c.replies.some((r) => r.id === reply.id)) return;
+    this.upsertComment({ ...c, replies: [...c.replies, reply] });
   }
 
   removeComment(commentId: string) {

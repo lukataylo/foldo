@@ -166,6 +166,17 @@ export function useCommentHandlers({
             commentId: c.id,
             composing: stillCompose ? true : undefined,
           });
+        } else if (!typedText) {
+          // The popover was closed (or moved elsewhere) while the create was
+          // in flight AND no text was ever typed — the pin was abandoned.
+          // Delete the just-created empty comment instead of leaving a ghost
+          // pin (App.tsx's close handler can't do it: at close time the
+          // comment still had its local id).
+          boardStore.removeComment(c.id);
+          void apiDeleteComment(c.id).catch(() => {
+            /* already gone or unreachable — nothing to roll back to */
+          });
+          return;
         }
         // Fire-and-forget the PATCH if we rescued typed text. We don't
         // await because the optimistic swap above already shows the right
@@ -363,9 +374,7 @@ export function useCommentHandlers({
   const onReplyToComment = useCallback(
     async (commentId: string, text: string): Promise<void> => {
       if (offline) {
-        const c = comments.get(commentId);
-        if (!c) return;
-        const reply = {
+        boardStore.addReply(commentId, {
           id: `r-local-${Date.now()}`,
           authorUserId: demoUserId,
           authorName: 'You',
@@ -373,27 +382,19 @@ export function useCommentHandlers({
           authorColor: '#7fd49a',
           text,
           createdAt: new Date().toISOString(),
-        };
-        boardStore.upsertComment({
-          ...c,
-          replies: [...c.replies, reply],
         });
         return;
       }
       try {
         const r = await apiReplyToComment(commentId, { text });
-        const c = boardStore.getSnapshot().comments.get(commentId);
-        // The WS broadcast may have already appended this reply — dedupe so
-        // the author doesn't see it twice.
-        if (c && !c.replies.some((existing) => existing.id === r.id)) {
-          boardStore.upsertComment({ ...c, replies: [...c.replies, r] });
-        }
+        // Idempotent — the WS broadcast may have already appended this reply.
+        boardStore.addReply(commentId, r);
       } catch (e) {
         // eslint-disable-next-line no-console
         console.warn('[foldo] reply failed', e);
       }
     },
-    [offline, comments, demoUserId],
+    [offline, demoUserId],
   );
 
   const onResolveComment = useCallback(

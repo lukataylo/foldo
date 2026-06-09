@@ -166,8 +166,16 @@ export class PluginRegistry {
   install(plugin: Plugin): void {
     // Idempotent by manifest id: a second bootPlugins(...) (dev HMR
     // re-evaluating apps/web while this module instance survives) must not
-    // double every surface contribution.
-    if (this.plugins.some((p) => p.manifest.id === plugin.manifest.id)) return;
+    // double every surface contribution. REPLACE rather than skip so the
+    // re-evaluated module's fresh render/activate closures win — keeping the
+    // old instance would pin surfaces to disposed module state under HMR.
+    const existing = this.plugins.findIndex(
+      (p) => p.manifest.id === plugin.manifest.id,
+    );
+    if (existing >= 0) {
+      this.plugins[existing] = plugin;
+      return;
+    }
     this.plugins.push(plugin);
   }
 

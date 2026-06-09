@@ -157,14 +157,21 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
           .map((c) => c.presence);
 
         // The protocol guarantees replayed messages arrive immediately AFTER
-        // the welcome, so the two hub reads must be sequenced — on RedisHub
-        // they are independent round-trips and would otherwise race.
+        // the welcome, so the SENDS must be ordered — on RedisHub the two hub
+        // reads are independent round-trips that would otherwise race. The
+        // reads themselves are safe to issue in parallel; only the send
+        // order matters.
         const sinceSeq =
           typeof msg.sinceSeq === 'number' && msg.sinceSeq > 0
             ? msg.sinceSeq
             : null;
-        void Promise.resolve(hub.latestSeq(board.id))
-          .then((latestSeq) => {
+        void Promise.all([
+          Promise.resolve(hub.latestSeq(board.id)),
+          sinceSeq === null
+            ? Promise.resolve(undefined)
+            : Promise.resolve(hub.getMissedSince(board.id, sinceSeq)),
+        ])
+          .then(([latestSeq, missed]) => {
             sendSafe(socket, {
               type: 'welcome',
               boardId: board.id,
@@ -175,24 +182,20 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
             });
             // Replay any broadcasts the client missed while it was
             // disconnected. If sinceSeq is older than our oldest buffered
-            // message we return null and the client falls back to a fresh
-            // REST refetch.
+            // message getMissedSince returns null and the client falls back
+            // to a fresh REST refetch.
             if (sinceSeq === null) return;
-            return Promise.resolve(hub.getMissedSince(board.id, sinceSeq)).then(
-              (missed) => {
-                if (missed === null) {
-                  wsReplayGaps.inc({ boardId: board.id });
-                  sendSafe(socket, {
-                    type: 'error',
-                    code: 'REPLAY_GAP',
-                    message:
-                      'replay buffer no longer contains requested seq; please refetch',
-                  });
-                } else {
-                  for (const m of missed) sendSafe(socket, m);
-                }
-              },
-            );
+            if (missed === null) {
+              wsReplayGaps.inc({ boardId: board.id });
+              sendSafe(socket, {
+                type: 'error',
+                code: 'REPLAY_GAP',
+                message:
+                  'replay buffer no longer contains requested seq; please refetch',
+              });
+            } else if (missed) {
+              for (const m of missed) sendSafe(socket, m);
+            }
           })
           .catch((err) => {
             wsLog.warn(

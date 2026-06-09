@@ -16,14 +16,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  Branch,
-  Comment,
-  Frame,
+  Dispatch,
+  GetBoardResponse,
   ServerMessage,
 } from '@foldo/protocol';
 import { boardStore } from '../state/useBoardStore';
 import { applyServerMessage } from '../state/reducers';
 import { listBoards, getBoard } from '../api/boards';
+import { listDispatches } from '../api/dispatches';
 import { FoldoWsClient, type WsStatus } from '../api/ws';
 import {
   mockBoardSnapshot,
@@ -101,8 +101,13 @@ export function useCanvasBoot({
             // any frames/comments created while we were offline land in the store.
             if (s === 'open') {
               if (wasOpenOnce) {
-                void getBoard(boardId!)
-                  .then((fresh) => rehydrateStoreFromRest(fresh))
+                void Promise.all([
+                  getBoard(boardId!),
+                  listDispatches(boardId!),
+                ])
+                  .then(([fresh, d]) =>
+                    rehydrateStoreFromRest(fresh, d.dispatches),
+                  )
                   .catch(() => {
                     /* ignore, WS will keep us live */
                   });
@@ -167,23 +172,22 @@ export function useCanvasBoot({
 // Identical bodies to the inlines App.tsx used to carry; live here so the
 // boot hook is self-contained.
 
-function hydrateStoreFromRest(
-  snapshot: {
-    board: import('@foldo/protocol').Board;
-    branches: Branch[];
-    frames: Frame[];
-    comments: Comment[];
-    users: import('@foldo/protocol').User[];
-    mcpConnected: boolean;
-  },
-  meUserId: string,
-): void {
-  const frameMap = new Map(snapshot.frames.map((f) => [f.id, f]));
-  const commentMap = new Map(snapshot.comments.map((c) => [c.id, c]));
-  const branchMap = new Map(snapshot.branches.map((b) => [b.id, b]));
-  const userMap = new Map(snapshot.users.map((u) => [u.id, u]));
+/** Build the Map-shaped slices shared by boot- and reconnect-hydration. */
+function snapshotSlices(snapshot: GetBoardResponse) {
+  return {
+    board: snapshot.board,
+    frames: new Map(snapshot.frames.map((f) => [f.id, f])),
+    comments: new Map(snapshot.comments.map((c) => [c.id, c])),
+    branches: new Map(snapshot.branches.map((b) => [b.id, b])),
+    users: new Map(snapshot.users.map((u) => [u.id, u])),
+    mcpConnected: snapshot.mcpConnected,
+  };
+}
+
+function hydrateStoreFromRest(snapshot: GetBoardResponse, meUserId: string): void {
+  const slices = snapshotSlices(snapshot);
   // Presence will be supplied by the WS welcome; seed a basic record for ourselves.
-  const me = userMap.get(meUserId);
+  const me = slices.users.get(meUserId);
   const presence = new Map<string, import('@foldo/protocol').PresenceUser>();
   if (me) {
     presence.set(meUserId, {
@@ -200,14 +204,9 @@ function hydrateStoreFromRest(
     offline: false,
     wsStatus: 'connecting',
     meUserId,
-    board: snapshot.board,
-    frames: frameMap,
-    comments: commentMap,
-    branches: branchMap,
-    users: userMap,
+    ...slices,
     presence,
     dispatches: new Map(),
-    mcpConnected: snapshot.mcpConnected,
     activeTestSessions: new Set(),
     testsRevision: 0,
   });
@@ -218,27 +217,27 @@ function hydrateStoreFromRest(
  * this must NOT reset the slices the WS connection owns: the `welcome` that
  * just arrived seeded the full presence list (a wholesale `set` would wipe
  * remote peers, and the presence reducers drop updates for unknown users),
- * `dispatches` may hold an in-flight run whose progress UI would go blank,
  * and `wsStatus` was just set to 'open' by the status callback.
+ *
+ * Slices the REST board payload doesn't carry get refreshed explicitly:
+ * `dispatches` from the freshly-fetched list (so in-flight progress UI stays
+ * accurate instead of stale or blank), `activeTestSessions` cleared (it's a
+ * transient signal — a `test.session.completed` missed past the replay
+ * buffer would otherwise stick the "testing now" badge forever), and
+ * `testsRevision` bumped so an open TestsPanel refetches anything it missed.
  */
-function rehydrateStoreFromRest(snapshot: {
-  board: import('@foldo/protocol').Board;
-  branches: Branch[];
-  frames: Frame[];
-  comments: Comment[];
-  users: import('@foldo/protocol').User[];
-  mcpConnected: boolean;
-}): void {
+function rehydrateStoreFromRest(
+  snapshot: GetBoardResponse,
+  dispatches: Dispatch[],
+): void {
   boardStore.patch({
     hydrated: true,
     offline: false,
-    board: snapshot.board,
-    frames: new Map(snapshot.frames.map((f) => [f.id, f])),
-    comments: new Map(snapshot.comments.map((c) => [c.id, c])),
-    branches: new Map(snapshot.branches.map((b) => [b.id, b])),
-    users: new Map(snapshot.users.map((u) => [u.id, u])),
-    mcpConnected: snapshot.mcpConnected,
+    ...snapshotSlices(snapshot),
+    dispatches: new Map(dispatches.map((d) => [d.id, d])),
+    activeTestSessions: new Set(),
   });
+  boardStore.markTestsChanged();
 }
 
 function hydrateStoreFromMock(): void {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type {
   IssueSeverity,
   RecordingMode,
@@ -21,7 +21,7 @@ import {
   replaceTestTasks,
   updateTest,
 } from '../api/tests';
-import { API_BASE } from '../api/client';
+import { resolveApiUrl } from '../api/client';
 import { useBoardSelector } from '../state/useBoardStore';
 import { WaveformPlayer } from '../test/WaveformPlayer';
 
@@ -146,20 +146,16 @@ export function TestsPanel({ open, boardId, onClose }: Props) {
     if (!open) return;
     setView('list');
     setSaveError(null);
-    void refresh();
-  }, [open, refresh]);
+  }, [open]);
 
-  // Collaborator edits broadcast test.created/updated/deleted, which bump
-  // testsRevision — refetch so an open panel stays live. The ref skips the
-  // mount/open run (the effect above already fetched).
+  // Fetch on open, and refetch whenever a test.created/updated/deleted
+  // broadcast bumps testsRevision — so an open panel stays live with
+  // collaborator edits.
   const testsRevision = useBoardSelector((s) => s.testsRevision);
-  const seenTestsRevision = useRef(testsRevision);
   useEffect(() => {
-    if (seenTestsRevision.current === testsRevision) return;
-    seenTestsRevision.current = testsRevision;
     if (!open) return;
     void refresh();
-  }, [testsRevision, open, refresh]);
+  }, [open, testsRevision, refresh]);
 
   if (!open) return null;
 
@@ -946,7 +942,7 @@ function SessionCard({
   const taskTitle = (taskId: string, idx: number) =>
     tasks.find((t) => t.id === taskId)?.title ?? `Task ${idx + 1}`;
   const recordingSrc = session.recordingUrl
-    ? `${API_BASE}${session.recordingUrl}`
+    ? resolveApiUrl(session.recordingUrl)
     : null;
   const started = new Date(session.startedAt);
 

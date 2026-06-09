@@ -346,11 +346,16 @@ export async function registerTestRoutes(app: FastifyInstance): Promise<void> {
           url && (mode === 'auto' || mode === 'iframe')
             ? await probeFrameable(url)
             : null;
-      } else if (patch.targetMode !== undefined) {
-        // Mode flipped without a new URL (e.g. dom_snapshot → iframe). The
-        // cached probe result may be stale or never computed, so re-probe
-        // against the existing target — otherwise resolveDeliveryMode keeps
-        // serving the wrong delivery mode off a stale `frameable`.
+      } else if (
+        patch.targetMode !== undefined &&
+        patch.targetMode !== test.targetMode
+      ) {
+        // Mode actually flipped without a new URL (e.g. dom_snapshot →
+        // iframe). The cached probe result may be stale or never computed,
+        // so re-probe against the existing target — otherwise
+        // resolveDeliveryMode keeps serving the wrong delivery mode off a
+        // stale `frameable`. (No-op PATCHes that re-send the current mode
+        // skip the probe; it's a blocking external GET.)
         const mode = patch.targetMode;
         patch.frameable =
           test.targetUrl && (mode === 'auto' || mode === 'iframe')

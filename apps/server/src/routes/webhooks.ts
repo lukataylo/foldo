@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { FastifyInstance, FastifyRequest, RawServerDefault } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Frame, GithubPushPayload, MarkdownFrameContent } from '@foldo/protocol';
 import { getBoardByRepoSlug } from '../repo/boards.ts';
 import {
@@ -43,18 +43,16 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
   // unicode escaping) and makes signature verification fail for real
   // payloads whenever a secret is configured.
   await app.register(async (scope) => {
+    // Delegate the actual parse to Fastify's default JSON parser so this
+    // route keeps the secure-json-parse prototype-poisoning protection and
+    // the standard malformed-JSON error shape every other route gets.
+    const defaultJsonParser = scope.getDefaultJsonParser('error', 'error');
     scope.addContentTypeParser(
       'application/json',
       { parseAs: 'string' },
       (req, body, done) => {
         (req as unknown as { rawBody?: string }).rawBody = body as string;
-        try {
-          done(null, JSON.parse(body as string));
-        } catch (err) {
-          const e = err instanceof Error ? err : new Error(String(err));
-          (e as { statusCode?: number }).statusCode = 400;
-          done(e, undefined);
-        }
+        defaultJsonParser(req, body as string, done);
       },
     );
 
@@ -159,9 +157,4 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
       },
     );
   });
-
-  // Suppress unused-type warning for the helper signature on older Fastify type
-  // exports, we don't actually need RawServerDefault but the import keeps the
-  // type imports honest. Side-effect free.
-  void (null as unknown as RawServerDefault);
 }

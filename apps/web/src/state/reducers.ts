@@ -70,20 +70,11 @@ export function applyServerMessage(msg: ServerMessage) {
     case 'comment.updated':
       boardStore.upsertComment(msg.comment);
       return;
-    case 'comment.reply.added': {
-      const snap = boardStore.getSnapshot();
-      const c = snap.comments.get(msg.commentId);
-      if (!c) return;
-      // The author gets the reply twice: once from the REST response and
-      // once from this broadcast (the server doesn't except the sender).
-      // Array appends aren't idempotent like Map.set, so dedupe by id.
-      if (c.replies.some((r) => r.id === msg.reply.id)) return;
-      boardStore.upsertComment({
-        ...c,
-        replies: [...c.replies, msg.reply],
-      });
+    case 'comment.reply.added':
+      // Idempotent by reply id — the author also receives this broadcast
+      // after already appending the REST response.
+      boardStore.addReply(msg.commentId, msg.reply);
       return;
-    }
     case 'comment.deleted':
       boardStore.removeComment(msg.commentId);
       return;

@@ -106,19 +106,26 @@ async function main(): Promise<void> {
   // their canvas/web hostnames without a code change. Localhost is always
   // allowed so `npm run dev` keeps working.
   // A browser Origin header is always scheme://host[:port] — no path, no
-  // trailing slash. Normalise configured entries so an operator writing
-  // `https://foldo.dev/` (easy mistake) doesn't silently CORS-block the
-  // entire canvas.
+  // trailing slash. Normalise configured http(s) entries so an operator
+  // writing `https://foldo.dev/` (easy mistake) doesn't silently CORS-block
+  // the entire canvas. Non-http(s) schemes (chrome-extension://,
+  // moz-extension://, capacitor://, …) are passed through verbatim:
+  // `new URL(...).origin` is the literal string 'null' for them, which would
+  // both break the entry AND allowlist the dangerous `Origin: null` that
+  // sandboxed iframes / file:// pages send.
   const extraOrigins = (process.env.FOLDO_WEB_ORIGIN ?? '')
     .split(',')
     .map((s) => s.trim())
-    .filter(Boolean)
+    .filter((s) => Boolean(s) && s !== 'null')
     .map((s) => {
-      try {
-        return new URL(s).origin;
-      } catch {
-        return s.replace(/\/+$/, '');
+      if (/^https?:\/\//i.test(s)) {
+        try {
+          return new URL(s).origin;
+        } catch {
+          /* fall through to the generic trim */
+        }
       }
+      return s.replace(/\/+$/, '');
     });
 
   // Locking down the chrome-extension allowlist: before, ANY chrome-extension

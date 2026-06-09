@@ -39,7 +39,10 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
     async (req, reply) => {
       const user = requireUser(req);
       const body = req.body;
-      if (!body?.boardId || !body?.frameId || !body?.text) {
+      // text may legitimately be '' — the pin-drop flow POSTs an empty body
+      // so the pin appears instantly and the user types into the popover
+      // afterwards. Reject only a missing/non-string text.
+      if (!body?.boardId || !body?.frameId || typeof body.text !== 'string') {
         return reply.code(400).send({ error: 'Invalid comment body', code: 'BAD_REQUEST' });
       }
       // Comments require membership; even viewers can leave them in this MVP.

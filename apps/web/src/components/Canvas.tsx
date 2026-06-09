@@ -322,6 +322,14 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     const w = screenToWorld(c.x, c.y);
     onCursorMove(w.x, w.y);
   }, [onCursorMove, screenToWorld]);
+  // Cancel a pending cursor flush on unmount — once containerRef is gone,
+  // screenToWorld degrades to {0,0} and we'd broadcast a bogus origin cursor.
+  useEffect(
+    () => () => {
+      if (cursorRafRef.current != null) cancelAnimationFrame(cursorRafRef.current);
+    },
+    [],
+  );
 
   const onPointerMove = (e: React.PointerEvent) => {
     /* A+W1 touch: keep the per-pointer position in sync so pinch math sees

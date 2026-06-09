@@ -102,7 +102,7 @@ export function useCanvasBoot({
             if (s === 'open') {
               if (wasOpenOnce) {
                 void getBoard(boardId!)
-                  .then((fresh) => hydrateStoreFromRest(fresh, demoUserId))
+                  .then((fresh) => rehydrateStoreFromRest(fresh))
                   .catch(() => {
                     /* ignore, WS will keep us live */
                   });
@@ -209,6 +209,35 @@ function hydrateStoreFromRest(
     dispatches: new Map(),
     mcpConnected: snapshot.mcpConnected,
     activeTestSessions: new Set(),
+    testsRevision: 0,
+  });
+}
+
+/**
+ * Reconnect-time rehydrate. Unlike the boot-time {@link hydrateStoreFromRest}
+ * this must NOT reset the slices the WS connection owns: the `welcome` that
+ * just arrived seeded the full presence list (a wholesale `set` would wipe
+ * remote peers, and the presence reducers drop updates for unknown users),
+ * `dispatches` may hold an in-flight run whose progress UI would go blank,
+ * and `wsStatus` was just set to 'open' by the status callback.
+ */
+function rehydrateStoreFromRest(snapshot: {
+  board: import('@foldo/protocol').Board;
+  branches: Branch[];
+  frames: Frame[];
+  comments: Comment[];
+  users: import('@foldo/protocol').User[];
+  mcpConnected: boolean;
+}): void {
+  boardStore.patch({
+    hydrated: true,
+    offline: false,
+    board: snapshot.board,
+    frames: new Map(snapshot.frames.map((f) => [f.id, f])),
+    comments: new Map(snapshot.comments.map((c) => [c.id, c])),
+    branches: new Map(snapshot.branches.map((b) => [b.id, b])),
+    users: new Map(snapshot.users.map((u) => [u.id, u])),
+    mcpConnected: snapshot.mcpConnected,
   });
 }
 
@@ -233,5 +262,6 @@ function hydrateStoreFromMock(): void {
     dispatches: new Map(),
     mcpConnected: false,
     activeTestSessions: new Set(),
+    testsRevision: 0,
   });
 }

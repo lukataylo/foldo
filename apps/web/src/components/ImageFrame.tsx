@@ -1,4 +1,5 @@
 import type { Branch, Comment, Frame, ImageFrameContent } from '@foldo/protocol';
+import { API_BASE } from '../marketing/auth';
 import { FrameMeta } from './FrameMeta';
 import { CommentPin } from './CommentPin';
 import { useFrameDrag } from './useFrameDrag';
@@ -24,7 +25,14 @@ export function ImageFrame({
   onCommentClick,
 }: Props) {
   const c = frame.content as ImageFrameContent;
-  const src = c.url ?? c.dataUrl ?? '';
+  // The server returns upload URLs relative to the API origin
+  // (`/api/uploads/…`); the web app is served from a different origin, so a
+  // bare relative src would 404 against the web host.
+  const src = c.url
+    ? c.url.startsWith('/')
+      ? `${API_BASE}${c.url}`
+      : c.url
+    : (c.dataUrl ?? '');
   const { handlers: dragHandlers } = useFrameDrag({ frame, zoom });
   return (
     <div

@@ -761,6 +761,7 @@ export default function App() {
           screenPosition={popoverScreenPos}
           composing={commentPopover.composing}
           onUpdateText={async (text) => {
+            const previous = popoverComment;
             const optimistic = { ...popoverComment, text, updatedAt: new Date().toISOString() };
             boardStore.upsertComment(optimistic);
             if (boot.kind === 'offline') return;
@@ -778,6 +779,9 @@ export default function App() {
               boardStore.upsertComment(updated);
             } catch (err) {
               console.warn('[foldo] update comment failed', err);
+              // Roll back the optimistic patch — otherwise the store keeps
+              // unsaved text that silently vanishes on the next reload.
+              boardStore.upsertComment(previous);
               showToast(setToast, 'Failed to save comment');
             }
           }}

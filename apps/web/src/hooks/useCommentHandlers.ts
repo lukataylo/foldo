@@ -383,7 +383,11 @@ export function useCommentHandlers({
       try {
         const r = await apiReplyToComment(commentId, { text });
         const c = boardStore.getSnapshot().comments.get(commentId);
-        if (c) boardStore.upsertComment({ ...c, replies: [...c.replies, r] });
+        // The WS broadcast may have already appended this reply — dedupe so
+        // the author doesn't see it twice.
+        if (c && !c.replies.some((existing) => existing.id === r.id)) {
+          boardStore.upsertComment({ ...c, replies: [...c.replies, r] });
+        }
       } catch (e) {
         // eslint-disable-next-line no-console
         console.warn('[foldo] reply failed', e);

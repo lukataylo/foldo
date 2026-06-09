@@ -93,6 +93,7 @@ function seed(patch: Partial<BoardSnapshot>): void {
     dispatches: new Map(),
     mcpConnected: false,
     activeTestSessions: new Set(),
+    testsRevision: 0,
     ...patch,
   });
 }

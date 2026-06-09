@@ -74,6 +74,10 @@ export function applyServerMessage(msg: ServerMessage) {
       const snap = boardStore.getSnapshot();
       const c = snap.comments.get(msg.commentId);
       if (!c) return;
+      // The author gets the reply twice: once from the REST response and
+      // once from this broadcast (the server doesn't except the sender).
+      // Array appends aren't idempotent like Map.set, so dedupe by id.
+      if (c.replies.some((r) => r.id === msg.reply.id)) return;
       boardStore.upsertComment({
         ...c,
         replies: [...c.replies, msg.reply],
@@ -136,10 +140,24 @@ export function applyServerMessage(msg: ServerMessage) {
     case 'test.session.completed':
       boardStore.markTestSessionInactive(msg.testId);
       return;
+    case 'test.created':
+    case 'test.updated':
+    case 'test.deleted':
+      // Tests live in TestsPanel-local state; bump the revision so an open
+      // panel knows to refetch.
+      boardStore.markTestsChanged();
+      return;
     case 'error':
       console.warn('[foldo-ws] server error', msg);
       return;
     case 'pong':
       return;
+    default: {
+      // Exhaustiveness: a new ServerMessage type without a branch here is a
+      // typecheck error, not a silently-dropped broadcast.
+      const _exhaustive: never = msg;
+      void _exhaustive;
+      return;
+    }
   }
 }

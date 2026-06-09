@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   IssueSeverity,
   RecordingMode,
@@ -22,6 +22,7 @@ import {
   updateTest,
 } from '../api/tests';
 import { API_BASE } from '../api/client';
+import { useBoardSelector } from '../state/useBoardStore';
 import { WaveformPlayer } from '../test/WaveformPlayer';
 
 interface Props {
@@ -147,6 +148,18 @@ export function TestsPanel({ open, boardId, onClose }: Props) {
     setSaveError(null);
     void refresh();
   }, [open, refresh]);
+
+  // Collaborator edits broadcast test.created/updated/deleted, which bump
+  // testsRevision — refetch so an open panel stays live. The ref skips the
+  // mount/open run (the effect above already fetched).
+  const testsRevision = useBoardSelector((s) => s.testsRevision);
+  const seenTestsRevision = useRef(testsRevision);
+  useEffect(() => {
+    if (seenTestsRevision.current === testsRevision) return;
+    seenTestsRevision.current = testsRevision;
+    if (!open) return;
+    void refresh();
+  }, [testsRevision, open, refresh]);
 
   if (!open) return null;
 

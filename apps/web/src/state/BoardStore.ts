@@ -40,6 +40,13 @@ export interface BoardSnapshot {
    * normal `frame.added` path.
    */
   activeTestSessions: Set<TestId>;
+  /**
+   * Bumped whenever a `test.created` / `test.updated` / `test.deleted`
+   * broadcast arrives. Tests themselves live in TestsPanel-local state
+   * (fetched via REST); this counter just tells an open panel to refetch
+   * so collaborator edits show up live.
+   */
+  testsRevision: number;
 }
 
 type Listener = () => void;
@@ -58,6 +65,7 @@ const empty = (): BoardSnapshot => ({
   dispatches: new Map(),
   mcpConnected: false,
   activeTestSessions: new Set(),
+  testsRevision: 0,
 });
 
 class BoardStoreImpl {
@@ -163,6 +171,11 @@ class BoardStoreImpl {
     const activeTestSessions = new Set(this.snap.activeTestSessions);
     activeTestSessions.add(testId);
     this.patch({ activeTestSessions });
+  }
+
+  /** Signal that the board's User Tests changed (created/updated/deleted). */
+  markTestsChanged() {
+    this.patch({ testsRevision: this.snap.testsRevision + 1 });
   }
 
   /** Clear the in-progress indicator for a test. */

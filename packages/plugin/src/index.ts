@@ -164,6 +164,10 @@ export class PluginRegistry {
   private readonly plugins: Plugin[] = [];
 
   install(plugin: Plugin): void {
+    // Idempotent by manifest id: a second bootPlugins(...) (dev HMR
+    // re-evaluating apps/web while this module instance survives) must not
+    // double every surface contribution.
+    if (this.plugins.some((p) => p.manifest.id === plugin.manifest.id)) return;
     this.plugins.push(plugin);
   }
 

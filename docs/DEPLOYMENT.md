@@ -17,8 +17,8 @@ The CLI examples assume Railway CLI v4.57+. Install with
 
 Today's production deploy is one Railway project (`foldo`) with three
 HTTP services (`server`, `web`, `sample-app`), a Postgres plugin, and a
-fourth service (`shotter`) defined in `railway.json` but **not deployed
-right now** — see §3.5.
+fourth service (`shotter`) with config in the repo
+(`apps/shotter/railway.json`) but **not deployed right now** — see §3.5.
 
 ```
                             ┌──────────────────────────────────┐
@@ -52,7 +52,7 @@ right now** — see §3.5.
        └──────────────────────────────────────────────────────┘
 
        ┌──────────────────────────────────────────────────────┐
-       │ shotter   (defined in railway.json, NOT deployed)    │
+       │ shotter   (config in repo, NOT deployed)             │
        │ Playwright/Chromium screenshot service               │
        │ Optional fallback for /c/<url> when iframing is      │
        │ blocked by X-Frame-Options. See §3.5.                │
@@ -157,7 +157,7 @@ before `npm run build`).<br>
 
 | Var                  | When | Req | Prod value pattern               | Notes |
 |----------------------|------|-----|----------------------------------|-------|
-| `PORT`               | RT   | yes | injected by Railway              | `serve` binds it via `--listen tcp://0.0.0.0:$PORT` (see `railway.json:32`). |
+| `PORT`               | RT   | yes | injected by Railway              | `serve` binds it via `--listen tcp://0.0.0.0:$PORT` (Dockerfile CMD). |
 | `VITE_API_URL`       | BT   | yes | `https://api.foldo.dev`          | Inlined; baked into the bundle. |
 | `VITE_WS_URL`        | BT   | no  | `wss://api.foldo.dev`            | Defaults from `VITE_API_URL` if unset. |
 | `VITE_SAMPLE_URL`    | BT   | yes | `https://sample.foldo.dev`       | Iframed previews. |
@@ -222,16 +222,16 @@ service in §3.4.
 ### 3.3 Create the three application services
 
 Each service is a separate Railway service that builds from this same
-repo, pointed at a different Dockerfile. The Dockerfile paths live in
-`railway.json`.
+repo, pointed at a different Dockerfile via its own config file
+(Railway config-as-code is service-scoped — see §9).
 
 ```bash
 # Repeat for: server, web, sample-app
 # Dashboard → +New → GitHub Repo → lukataylo/foldo → "Add a service"
-#   For "server":    set Service Name = `server`. Railway picks up
-#                    apps/server/Dockerfile via railway.json.
-#   For "web":       Service Name = `web`. Dockerfile = apps/web/Dockerfile.
-#   For "sample-app":Service Name = `sample-app`. Dockerfile = apps/sample-app/Dockerfile.
+#   For each service, set Settings → Config file path:
+#   "server":     apps/server/railway.json
+#   "web":        apps/web/railway.json
+#   "sample-app": apps/sample-app/railway.json
 ```
 
 Confirm via:
@@ -272,7 +272,8 @@ Apply the full §2 matrix per service. Run `railway variables --service
 
 ### 3.5 (Optional) Deploy the shotter service
 
-The shotter is defined in `railway.json` but **not deployed today**.
+The shotter has config in the repo (`apps/shotter/railway.json`) but is
+**not deployed today**.
 Turn it on only if iframing breaks for a target user (X-Frame-Options
 or CSP `frame-ancestors`). Symptoms: the canvas shows the
 `/c/<url>` fallback UI permanently empty.
@@ -750,34 +751,49 @@ Key dashboards to build:
 
 ## 9. `railway.json` — what's in / what's out
 
-The file at the repo root is the source of truth for service shape.
-A summary of what each block does:
+Railway's config-as-code is **service-scoped**: one config file applies
+to one service, and the schema
+(https://railway.app/railway.schema.json) allows only `build`,
+`deploy`, and `environments` at the root — there is no multi-service
+`services` map. (The repo used to carry a single root `railway.json`
+with a `services` block; Railway silently ignored it, so every service
+actually built with root-level Nixpacks instead of its Dockerfile.)
 
-- `build.builder = NIXPACKS` — project-level default; each service
-  overrides to `DOCKERFILE` because we want the workspace install
-  layer cached precisely.
+The config now lives next to each app, and each Railway service must
+point its **Settings → Config file path** at its own file:
+
+| Railway service | Config file path           |
+| --------------- | -------------------------- |
+| `server`        | `apps/server/railway.json` |
+| `web`           | `apps/web/railway.json`    |
+| `sample-app`    | `apps/sample-app/railway.json` |
+| `shotter`       | `apps/shotter/railway.json` (optional, see §3.5) |
+
+What each file encodes:
+
+- `build.builder = DOCKERFILE` + `build.dockerfilePath` — every
+  service builds from its Dockerfile (build context = repo root) so
+  the workspace install layer is cached precisely.
 - `deploy.restartPolicyType = ON_FAILURE`, `restartPolicyMaxRetries = 10`
-  — Railway restarts a crashed container up to 10× before backing
-  off. Matches the per-service overrides.
-- `services.server.deploy.healthcheckPath = /health`,
-  `healthcheckTimeout = 30` — Railway probes this and only routes
-  traffic to a deployment once `/health` returns 200.
-- `services.web.deploy.startCommand` — explicit because the
-  Dockerfile CMD uses a shell form that needs `$PORT` expansion at
-  container start. As of the A+ W1 ops slice (2026-05), the web and
-  sample-app services serve their `dist/` via the `serve` package
-  (https://www.npmjs.com/package/serve) instead of `vite preview`.
-  Reasons: gzip/brotli on text assets, range requests, and a sane
-  cache-header policy driven by `apps/<app>/serve.json` (long-lived
-  `immutable` for content-hashed JS/CSS, `no-cache` for `index.html`
-  so a new deploy is picked up on the next page load). `--single`
-  enables SPA history-mode fallback. The container's PATH includes
-  `/app/node_modules/.bin` so `serve` resolves to the hoisted CLI shim
-  with no extra global install.
-- `services.shotter` — **defined but not deployed today**. See §3.5
-  for when to turn it on. The block is kept in `railway.json` so the
-  config travels with the repo and the second-engineer onboarding
-  doesn't have to invent it.
+  — Railway restarts a crashed container up to 10× before backing off.
+- `server`/`shotter`: `deploy.healthcheckPath = /health` — Railway
+  probes this and only routes traffic to a deployment once `/health`
+  returns 200.
+- **No `startCommand` anywhere** — the Dockerfile `CMD` is the single
+  source of truth (an earlier `startCommand` override fought the CMD
+  and broke `serve` resolution; see PR #22). As of the A+ W1 ops slice
+  (2026-05), the web and sample-app services serve their `dist/` via
+  the `serve` package (https://www.npmjs.com/package/serve) instead of
+  `vite preview`. Reasons: gzip/brotli on text assets, range requests,
+  and a sane cache-header policy driven by `apps/<app>/serve.json`
+  (long-lived `immutable` for content-hashed `assets/`, short-lived
+  for unhashed static files, `no-cache` for `index.html` so a new
+  deploy is picked up on the next page load). `--single` enables SPA
+  history-mode fallback. `serve` is installed globally in the runtime
+  image.
+- `shotter` — **defined but not deployed today**. See §3.5 for when to
+  turn it on. The config travels with the repo so the second-engineer
+  onboarding doesn't have to invent it.
 
 ---
 

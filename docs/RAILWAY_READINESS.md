@@ -181,7 +181,8 @@ Already documented in `docs/DEPLOYMENT.md` §11.
   traffic.
 - Health endpoint exists at `/health` (`apps/server/src/index.ts:64`)
   and the server Dockerfile uses it for `HEALTHCHECK`. Railway's
-  `healthcheckPath: /health` is wired in `railway.json`.
+  `healthcheckPath: /health` is wired in `apps/server/railway.json`
+  (config-as-code is service-scoped; each service has its own file).
 - The web and sample-app services have no health endpoint per se —
   their Dockerfile healthchecks do a `fetch('/')` against the running
   preview server, which is sufficient.

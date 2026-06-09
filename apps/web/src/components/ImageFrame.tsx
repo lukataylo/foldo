@@ -1,4 +1,5 @@
 import type { Branch, Comment, Frame, ImageFrameContent } from '@foldo/protocol';
+import { resolveApiUrl } from '../api/client';
 import { FrameMeta } from './FrameMeta';
 import { CommentPin } from './CommentPin';
 import { useFrameDrag } from './useFrameDrag';
@@ -24,7 +25,9 @@ export function ImageFrame({
   onCommentClick,
 }: Props) {
   const c = frame.content as ImageFrameContent;
-  const src = c.url ?? c.dataUrl ?? '';
+  // Upload URLs are relative to the API origin (`/api/uploads/…`), not the
+  // web host — resolve them before handing to <img>.
+  const src = c.url ? resolveApiUrl(c.url) : (c.dataUrl ?? '');
   const { handlers: dragHandlers } = useFrameDrag({ frame, zoom });
   return (
     <div

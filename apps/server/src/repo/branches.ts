@@ -113,6 +113,14 @@ function rowToCommit(r: CommitRow): Commit {
 }
 
 export async function upsertCommit(c: Commit): Promise<Commit> {
+  // sha is the global PK; the same commit can arrive on multiple branch refs
+  // (merges, pushing an existing commit to a new branch). Updating
+  // message/author/parent on conflict is safe — in Git those are properties
+  // of the sha itself, so a re-delivery carries identical values — and it
+  // matters: POST /api/boards/:id/branches seeds a STUB row (`branch: <name>`
+  // message, the clicking user as author) that the real webhook delivery
+  // must be able to heal. branch_id is deliberately NOT updated: the first
+  // branch attribution wins.
   await exec(
     `INSERT INTO commits (sha, branch_id, message, author_user_id, parent_sha, created_at)
      VALUES ($1, $2, $3, $4, $5, $6)

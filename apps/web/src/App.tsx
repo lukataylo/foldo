@@ -761,6 +761,7 @@ export default function App() {
           screenPosition={popoverScreenPos}
           composing={commentPopover.composing}
           onUpdateText={async (text) => {
+            const previous = popoverComment;
             const optimistic = { ...popoverComment, text, updatedAt: new Date().toISOString() };
             boardStore.upsertComment(optimistic);
             if (boot.kind === 'offline') return;
@@ -778,10 +779,42 @@ export default function App() {
               boardStore.upsertComment(updated);
             } catch (err) {
               console.warn('[foldo] update comment failed', err);
+              // Roll back the optimistic text — otherwise the store keeps
+              // unsaved text that silently vanishes on the next reload.
+              // Restore onto the CURRENT store entry (not the captured
+              // object) so concurrent WS changes (new replies, a newer
+              // successful save) aren't clobbered, and only if our
+              // optimistic text is still what's showing.
+              const current = boardStore.getSnapshot().comments.get(previous.id);
+              if (current && current.text === text) {
+                boardStore.upsertComment({
+                  ...current,
+                  text: previous.text,
+                  updatedAt: previous.updatedAt,
+                });
+              }
               showToast(setToast, 'Failed to save comment');
             }
           }}
           onClose={() => {
+            // Pin-drop comments are created empty (the server accepts ''
+            // so the pin shows instantly). If the popover closes and the
+            // comment is still empty with no replies, it was abandoned —
+            // delete it so boards don't accumulate ghost pins. Re-read the
+            // store: flushBody may have just written text the captured
+            // popoverComment doesn't have. Local-id comments are skipped;
+            // the in-flight create in useCommentHandlers cleans those up.
+            const current = boardStore
+              .getSnapshot()
+              .comments.get(popoverComment.id);
+            if (
+              current &&
+              !current.id.startsWith('c-local-') &&
+              !current.text.trim() &&
+              current.replies.length === 0
+            ) {
+              void onDeleteComment(current.id);
+            }
             setCommentPopover(null);
             if (snap.board && route.frameId) {
               navigate({ boardId: snap.board.id, frameId: route.frameId });

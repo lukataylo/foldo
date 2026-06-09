@@ -9,6 +9,37 @@ code waiting on these actions.
 
 ---
 
+## P0 — deploy correctness
+
+### 0. Point each Railway service at its per-app railway.json
+
+**Why:** Railway config-as-code is service-scoped — the old root
+`railway.json` used a `services` map the schema doesn't support, so
+Railway was ignoring it entirely (services built with root Nixpacks,
+no `/health` deploy gate). The config now lives at
+`apps/<app>/railway.json`, but Railway only reads those files once each
+service's **Settings → Config-as-code → Config file path** points at
+its own file. Until that's done, services deploy with dashboard
+defaults only.
+
+**How:** in the Railway dashboard, for each service set the config
+file path:
+
+| Service      | Config file path               |
+| ------------ | ------------------------------ |
+| `server`     | `apps/server/railway.json`     |
+| `web`        | `apps/web/railway.json`        |
+| `sample-app` | `apps/sample-app/railway.json` |
+| `shotter`    | `apps/shotter/railway.json` (when/if deployed) |
+
+Then redeploy each service once.
+
+**Done when:** each service's build log shows it using its Dockerfile
+(`apps/<app>/Dockerfile`), and the server's deployment waits on the
+`/health` healthcheck before traffic switches over.
+
+---
+
 ## P0 — security
 
 ### 1. Rotate the Resend API key

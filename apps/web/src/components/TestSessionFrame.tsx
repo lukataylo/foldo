@@ -16,7 +16,7 @@ import type {
   TranscriptStatus,
 } from '@foldo/protocol';
 import { FrameMeta } from './FrameMeta';
-import { API_BASE } from '../api/client';
+import { resolveApiUrl } from '../api/client';
 import { WaveformPlayer } from '../test/WaveformPlayer';
 
 interface Props {
@@ -312,10 +312,7 @@ function IssueRow({
 }
 
 function absoluteUrl(serverRelative: string): string {
-  if (/^https?:\/\//i.test(serverRelative)) return serverRelative;
-  return `${API_BASE}${
-    serverRelative.startsWith('/') ? '' : '/'
-  }${serverRelative}`;
+  return resolveApiUrl(serverRelative);
 }
 
 function recordingModeLabel(mode: TestSessionFrameContent['recordingMode']): string {

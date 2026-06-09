@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1.6
 # Multi-stage build for @foldo/web. Build context = repo root.
 # Build-time env (must be passed via --build-arg or Railway service vars):
-#   VITE_API_URL    — e.g. https://api.foldo.example
-#   VITE_WS_URL     — e.g. wss://api.foldo.example  (optional; defaults from API_URL)
-#   VITE_SAMPLE_URL — e.g. https://sample.foldo.example
+#   VITE_API_URL     — e.g. https://api.foldo.example
+#   VITE_WS_URL      — e.g. wss://api.foldo.example  (optional; defaults from API_URL)
+#   VITE_SAMPLE_URL  — e.g. https://sample.foldo.example
+#   VITE_SHOTTER_URL — e.g. https://shotter.foldo.example (optional; only when
+#                      the shotter service is deployed, docs/DEPLOYMENT.md §3.5)
 
 FROM node:20-slim AS builder
 
@@ -12,9 +14,11 @@ WORKDIR /app
 ARG VITE_API_URL
 ARG VITE_WS_URL
 ARG VITE_SAMPLE_URL
+ARG VITE_SHOTTER_URL
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_WS_URL=$VITE_WS_URL
 ENV VITE_SAMPLE_URL=$VITE_SAMPLE_URL
+ENV VITE_SHOTTER_URL=$VITE_SHOTTER_URL
 
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/server/package.json ./apps/server/
@@ -25,8 +29,8 @@ COPY apps/extension/package.json ./apps/extension/
 COPY packages/protocol/package.json ./packages/protocol/
 COPY packages/plugin/package.json ./packages/plugin/
 
-# Web build doesn't need native modules — skip better-sqlite3 to keep the
-# build fast and small. ignore-scripts prevents the postinstall.
+# Web build doesn't need native modules or postinstall scripts —
+# --ignore-scripts keeps the install fast and hermetic.
 RUN npm ci --workspaces --include-workspace-root --ignore-scripts
 
 COPY packages/protocol ./packages/protocol

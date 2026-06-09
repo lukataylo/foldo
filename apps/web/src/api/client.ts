@@ -9,6 +9,17 @@ export const API_BASE =
   (import.meta.env.VITE_API_URL as string | undefined) ||
   'http://localhost:4000';
 
+/**
+ * Resolve a server-issued URL against the API origin. The server returns
+ * paths relative to ITSELF (`/api/uploads/…`, `/api/recordings/…`); the web
+ * app is served from a different origin, so a bare relative src would 404
+ * against the web host. Absolute http(s)/data/blob URLs pass through.
+ */
+export function resolveApiUrl(url: string): string {
+  if (/^(https?:)?\/\//i.test(url) || /^(data|blob):/i.test(url)) return url;
+  return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 let authToken: string | null = null;
 let authUserId: string | null = null;
 

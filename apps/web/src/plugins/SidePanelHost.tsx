@@ -41,45 +41,57 @@ export function SidePanelHost({ slot, onOpenStateChange }: Props) {
     onOpenStateChange?.(openIds.size > 0);
   }, [openIds, onOpenStateChange]);
 
-  // Plugins can request a panel open via a window event so they don't need a
-  // ref into the host. Only panels for this slot react.
+  // Broadcast a panel's open/closed state so external chrome (TopBar view
+  // toggles) can reflect and drive it without a ref into the host.
+  const emitChanged = (id: string, open: boolean) => {
+    window.dispatchEvent(
+      new CustomEvent('foldo:sidePanelChanged', { detail: { id, open } }),
+    );
+  };
+
+  const setOpen = (id: string, open: boolean) => {
+    setOpenIds((prev) => {
+      if (open === prev.has(id)) return prev;
+      const next = new Set(prev);
+      if (open) next.add(id);
+      else next.delete(id);
+      persistOpenState(id, open);
+      return next;
+    });
+    emitChanged(id, open);
+  };
+
+  // Plugins / chrome drive panels via window events so they don't need a ref
+  // into the host. Only panels owned by this slot react.
   useEffect(() => {
+    const owns = (id?: string) => !!id && panels.some((p) => p.id === id);
     const onOpen = (e: Event) => {
-      const detail = (e as CustomEvent<{ id: string }>).detail;
-      if (!detail?.id) return;
-      const plugin = panels.find((p) => p.id === detail.id);
-      if (!plugin) return;
-      setOpenIds((prev) => {
-        if (prev.has(detail.id)) return prev;
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (owns(id)) setOpen(id, true);
+    };
+    const onToggle = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (owns(id)) setOpenIds((prev) => {
+        const open = !prev.has(id);
         const next = new Set(prev);
-        next.add(detail.id);
-        persistOpenState(detail.id, true);
+        if (open) next.add(id); else next.delete(id);
+        persistOpenState(id, open);
+        emitChanged(id, open);
         return next;
       });
     };
     window.addEventListener('foldo:openSidePanel', onOpen);
-    return () => window.removeEventListener('foldo:openSidePanel', onOpen);
+    window.addEventListener('foldo:toggleSidePanel', onToggle);
+    // Announce current state so late-mounting chrome can sync.
+    for (const p of panels) emitChanged(p.id, persistedOpenState(p));
+    return () => {
+      window.removeEventListener('foldo:openSidePanel', onOpen);
+      window.removeEventListener('foldo:toggleSidePanel', onToggle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels]);
 
-  const toggle = (id: string) => {
-    setOpenIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-        persistOpenState(id, false);
-      } else {
-        next.add(id);
-        persistOpenState(id, true);
-      }
-      return next;
-    });
-  };
-
   if (panels.length === 0) return null;
-
-  // For v1, render each open panel as a stacked column. The Layers plugin is
-  // the only left-slot contributor right now, so this collapses to a single
-  // panel + a small launcher strip when collapsed.
 
   const horizontalPos = slot === 'left' ? 'left-3' : 'right-3';
 
@@ -87,22 +99,11 @@ export function SidePanelHost({ slot, onOpenStateChange }: Props) {
     <div
       className={`pointer-events-none absolute ${horizontalPos} top-16 bottom-16 z-30 flex flex-col items-stretch gap-2`}
     >
-      {panels.map((p) => {
-        const open = openIds.has(p.id);
-        return open ? (
-          <OpenPanel
-            key={p.id}
-            plugin={p}
-            onCollapse={() => toggle(p.id)}
-          />
-        ) : (
-          <CollapsedLauncher
-            key={p.id}
-            plugin={p}
-            onExpand={() => toggle(p.id)}
-          />
-        );
-      })}
+      {panels.map((p) =>
+        openIds.has(p.id) ? (
+          <OpenPanel key={p.id} plugin={p} onCollapse={() => setOpen(p.id, false)} />
+        ) : null,
+      )}
     </div>
   );
 }
@@ -142,43 +143,11 @@ function OpenPanel({
   );
 }
 
-function CollapsedLauncher({
-  plugin,
-  onExpand,
-}: {
-  plugin: SidePanelPlugin;
-  onExpand: () => void;
-}) {
-  return (
-    <button
-      onClick={onExpand}
-      title={plugin.label}
-      aria-label={`Open ${plugin.label}`}
-      className="touch-target pointer-events-auto flex h-9 w-9 items-center justify-center rounded-lg border border-hairlineSoft bg-panel text-inkMute shadow-panel hover:text-ink"
-    >
-      {plugin.Icon ? <plugin.Icon size={14} /> : <ChevronRight />}
-    </button>
-  );
-}
-
 function ChevronLeft() {
   return (
     <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
       <path
         d="M10 4l-4 4 4 4"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-function ChevronRight() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
-      <path
-        d="M6 4l4 4-4 4"
         stroke="currentColor"
         strokeWidth="1.4"
         strokeLinecap="round"

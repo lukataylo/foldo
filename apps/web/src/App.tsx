@@ -59,10 +59,6 @@ export default function App() {
   const [testsOpen, setTestsOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [followingUserId, setFollowingUserId] = useState<UserId | null>(null);
-  /** True while any left-slot side panel (e.g. Layers) is open. Flips the
-   * LeftRail from its default left-edge column to a bottom-centred row so
-   * the panel has the left dock to itself. */
-  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
 
   const canvasRef = useRef<CanvasHandle>(null);
   const lastBroadcastSelectionRef = useRef<string | null>(null);
@@ -424,13 +420,10 @@ export default function App() {
         wsStatus={snap.wsStatus}
         offline={boot.kind === 'offline'}
       />
-      <SidePanelHost slot="left" onOpenStateChange={setLeftPanelOpen} />
+      <SidePanelHost slot="left" />
       <SidePanelHost slot="right" />
-      <LeftRail
-        tool={tool}
-        onChange={setTool}
-        orientation={leftPanelOpen ? 'horizontal' : 'vertical'}
-      />
+      {/* Single tool bar: always docked at the bottom-centre, icon-only. */}
+      <LeftRail tool={tool} onChange={setTool} orientation="horizontal" />
       <input
         ref={imageInputRef}
         type="file"

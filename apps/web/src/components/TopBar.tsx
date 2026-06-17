@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Board, UserId, User } from '@foldo/protocol';
 import { PresenceAvatars } from '../multiplayer/PresenceAvatars';
 import { useBoardSelector } from '../state/useBoardStore';
+import { storageGetBool } from '../lib/storage';
 
 const HOME_URL = '/home';
 
@@ -93,8 +94,9 @@ export function TopBar({
         )}
       </div>
 
-      {/* right: capture, share, avatars */}
+      {/* right: view toggles, capture, share, avatars */}
       <div className="pointer-events-auto flex items-center gap-2">
+        <ViewToggles />
         {me && switchable.length > 1 && (
           <div className="relative">
             <button
@@ -177,6 +179,85 @@ export function TopBar({
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * Show/hide toggles for the Layers navigator (left) and Inspector (right).
+ * State is mirrored from SidePanelHost via the `foldo:sidePanelChanged` event;
+ * clicking dispatches `foldo:toggleSidePanel` which the host acts on.
+ */
+function ViewToggles() {
+  const [openState, setOpenState] = useState(() => ({
+    layers: storageGetBool('foldo:sidepanel:layers', false),
+    design: storageGetBool('foldo:sidepanel:design', false),
+  }));
+  useEffect(() => {
+    const onChanged = (e: Event) => {
+      const d = (e as CustomEvent<{ id: string; open: boolean }>).detail;
+      if (!d) return;
+      if (d.id === 'layers' || d.id === 'design') {
+        setOpenState((p) => ({ ...p, [d.id]: d.open }));
+      }
+    };
+    window.addEventListener('foldo:sidePanelChanged', onChanged);
+    return () => window.removeEventListener('foldo:sidePanelChanged', onChanged);
+  }, []);
+  const toggle = (id: 'layers' | 'design') =>
+    window.dispatchEvent(new CustomEvent('foldo:toggleSidePanel', { detail: { id } }));
+  return (
+    <div className="flex items-center gap-0.5 rounded-lg border border-hairlineSoft bg-panel p-0.5 shadow-panel">
+      <ViewToggleButton label="Layers" active={openState.layers} onClick={() => toggle('layers')}>
+        <LayersIcon />
+      </ViewToggleButton>
+      <ViewToggleButton label="Inspector" active={openState.design} onClick={() => toggle('design')}>
+        <InspectIcon />
+      </ViewToggleButton>
+    </div>
+  );
+}
+
+function ViewToggleButton({
+  label,
+  active,
+  onClick,
+  children,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={`${active ? 'Hide' : 'Show'} ${label}`}
+      aria-label={`${active ? 'Hide' : 'Show'} ${label}`}
+      aria-pressed={active}
+      className={
+        'flex h-7 w-7 items-center justify-center rounded-md transition-colors ' +
+        (active ? 'bg-accent/15 text-accent' : 'text-inkMute hover:bg-white/5 hover:text-ink')
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+function LayersIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round">
+      <path d="M8 2.2 14 5.3 8 8.4 2 5.3z" />
+      <path d="M2.4 8.2 8 11.1l5.6-2.9M2.4 10.9 8 13.8l5.6-2.9" />
+    </svg>
+  );
+}
+function InspectIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round">
+      <path d="M2.6 2.6h4M2.6 2.6v4M13.4 2.6h-4M13.4 2.6v4M2.6 13.4h4M2.6 13.4v-4M13.4 13.4h-4M13.4 13.4v-4" />
+      <circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
   );
 }
 

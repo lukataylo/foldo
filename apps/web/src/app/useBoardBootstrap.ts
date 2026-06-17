@@ -46,17 +46,23 @@ function readStoredAuth(): { userId: string; token: string } | null {
   }
 }
 
+const DEMO_PERSONAS = ['u-you', 'u-anna', 'u-mateo', 'u-priya'];
+
 /**
- * Demo identity picker. Defaults to `u-you` (the seeded "You" user). Open multiple
- * browsers / windows and switch to `u-anna` / `u-mateo` / `u-priya` to demo
- * multiplayer with distinct cursors. Selection persists in localStorage.
+ * Demo identity picker. Defaults to `u-you` (the seeded "You" user).
+ *
+ * To demo multiplayer with distinct cursors, open a second window (incognito,
+ * or any separate browser) with `?as=u-anna` (or u-mateo / u-priya) — the
+ * `?as=` override applies per window and is NOT persisted, so two tabs can hold
+ * different identities even in the same browser. Without it, the persisted
+ * localStorage selection (set by the "Demo as" picker) is used.
  */
 function readOrCreateDemoUserId(): string {
   try {
-    const KEY = 'foldo:demoUserId';
-    const stored = localStorage.getItem(KEY);
-    const valid = ['u-you', 'u-anna', 'u-mateo', 'u-priya'];
-    if (stored && valid.includes(stored)) return stored;
+    const asParam = new URLSearchParams(window.location.search).get('as');
+    if (asParam && DEMO_PERSONAS.includes(asParam)) return asParam;
+    const stored = localStorage.getItem('foldo:demoUserId');
+    if (stored && DEMO_PERSONAS.includes(stored)) return stored;
     // Default to u-you so the first paint always authenticates against the seed.
     return 'u-you';
   } catch {

@@ -6,6 +6,11 @@ import { storageGetBool } from '../lib/storage';
 
 const HOME_URL = '/home';
 
+// Canonical demo personas shown in the "Demo as" picker (matches the demo
+// identity allow-list in useBoardBootstrap). Keeps real signups / E2E test
+// accounts out of the dropdown.
+const DEMO_PERSONA_IDS = ['u-you', 'u-anna', 'u-mateo', 'u-priya'];
+
 // One shared style for every top-bar control so the cluster reads as a single
 // consistent set (same height, padding, border, radius, type).
 const CTRL =
@@ -40,8 +45,13 @@ export function TopBar({
   const users = useBoardSelector((s) => s.users);
   const mcpConnected = useBoardSelector((s) => s.mcpConnected);
   const me = meUserId ? users.get(meUserId) ?? null : null;
+  // "Demo as" only offers the canonical demo personas — not real signups or
+  // E2E test accounts that happen to be members of the board.
   const switchable: User[] = [];
-  for (const u of users.values()) if (u.kind === 'human') switchable.push(u);
+  for (const id of DEMO_PERSONA_IDS) {
+    const u = users.get(id);
+    if (u && u.kind === 'human') switchable.push(u);
+  }
   const repoName = board?.repoSlug ?? 'unloaded';
 
   const onShare = async () => {

@@ -306,7 +306,7 @@ function Footer({
             : 'cursor-not-allowed bg-hairlineSoft text-inkFaint')
         }
       >
-        <span>Send to Claude Code</span>
+        <span>Send to CC</span>
         <SendIcon />
       </button>
     </div>

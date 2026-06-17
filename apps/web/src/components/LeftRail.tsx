@@ -23,7 +23,7 @@ export function LeftRail({ tool, onChange, orientation = 'vertical' }: Props) {
       ? 'pointer-events-none absolute left-1/2 z-40 -translate-x-1/2 safe-bottom'
       : 'pointer-events-none absolute left-3 top-1/2 z-40 -translate-y-1/2';
   const wrapStyle: React.CSSProperties =
-    orientation === 'horizontal' ? { bottom: `calc(4.25rem + env(safe-area-inset-bottom, 0px))` } : {};
+    orientation === 'horizontal' ? { bottom: `calc(1rem + env(safe-area-inset-bottom, 0px))` } : {};
 
   const innerClass =
     orientation === 'horizontal'

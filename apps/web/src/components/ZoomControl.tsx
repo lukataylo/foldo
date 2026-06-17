@@ -9,7 +9,7 @@ interface Props {
 export function ZoomControl({ zoom, onZoomIn, onZoomOut, onZoomToFit, onReset }: Props) {
   return (
     <div
-      className="pointer-events-none absolute left-1/2 z-40 -translate-x-1/2"
+      className="pointer-events-none absolute left-3 z-40"
       style={{ bottom: `calc(1rem + env(safe-area-inset-bottom, 0px))` }}
     >
       <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-hairlineSoft bg-panel px-1 py-1 text-[12px] text-ink shadow-panel">

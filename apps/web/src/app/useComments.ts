@@ -145,29 +145,16 @@ export function useComments({
     if (!c) return;
     const f = snap.frames.get(c.frameId);
     if (!f) return;
-    if (c.target?.elementLabel && f.kind === 'app') {
-      // Synthesise a small highlight rect around the comment's pin if we have one.
-      const rect = c.pin
-        ? {
-            x: c.pin.x * f.size.width - 18,
-            y: c.pin.y * f.size.height - 18,
-            width: 36,
-            height: 36,
-          }
-        : { x: 0, y: 0, width: 0, height: 0 };
-      setSelectedElement({
-        frameId: f.id,
-        label: c.target.elementLabel,
-        file: c.target.elementFile ?? 'src/components/Pricing.tsx',
-        line: c.target.elementLine ?? 0,
-        currentSource: c.target.elementLabel,
-        rect,
-      });
-    } else if (
-      c.anchor &&
-      f.kind === 'markdown' &&
-      f.content.kind === 'markdown'
-    ) {
+    // Synthesise a small highlight rect around the comment's pin if we have one.
+    const rect = c.pin
+      ? {
+          x: c.pin.x * f.size.width - 18,
+          y: c.pin.y * f.size.height - 18,
+          width: 36,
+          height: 36,
+        }
+      : { x: 0, y: 0, width: 0, height: 0 };
+    if (c.anchor && f.kind === 'markdown' && f.content.kind === 'markdown') {
       setSelectedElement({
         frameId: f.id,
         label: `${f.content.docPath} · ${c.anchor.sectionId} · L${c.anchor.lineStart ?? 1}`,
@@ -175,6 +162,25 @@ export function useComments({
         line: c.anchor.lineStart ?? 1,
         currentSource: c.text,
         rect: { x: 0, y: 0, width: 0, height: 0 },
+      });
+    } else {
+      // App frames (with or without a specific element target) and every other
+      // frame kind fall through here, so a plain comment pin can ALWAYS be
+      // turned into an edit. When the comment lacks an element target we point
+      // at the frame itself with a sensible label/source default.
+      const frameLabel =
+        f.content.kind === 'app'
+          ? `the ${f.content.route} screen`
+          : f.content.kind === 'markdown'
+            ? f.content.docPath
+            : 'this frame';
+      setSelectedElement({
+        frameId: f.id,
+        label: c.target?.elementLabel ?? frameLabel,
+        file: c.target?.elementFile ?? 'src/components/Pricing.tsx',
+        line: c.target?.elementLine ?? 0,
+        currentSource: c.target?.elementLabel ?? c.text,
+        rect,
       });
     }
     setInitialIntent(c.text);

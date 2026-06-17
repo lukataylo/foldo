@@ -83,6 +83,18 @@ async function repositionResultFrame(
 
 export async function registerMcpWs(app: FastifyInstance): Promise<void> {
   app.get('/ws/mcp', { websocket: true }, async (socket, req) => {
+    // The client sends `mcp.hello` immediately on open; on a fast (localhost)
+    // link that frame can arrive *before* the awaited token resolution below
+    // attaches the real message listener, silently dropping the handshake.
+    // Buffer everything synchronously from open and drain once we're ready.
+    const earlyQueue: Buffer[] = [];
+    let ready = false;
+    let handleMessage: ((raw: Buffer) => void) | null = null;
+    socket.on('message', (raw: Buffer) => {
+      if (ready && handleMessage) handleMessage(raw);
+      else earlyQueue.push(raw);
+    });
+
     const url = new URL(req.url, `http://${req.headers.host}`);
     const token = url.searchParams.get('token');
     const boardId = url.searchParams.get('boardId');
@@ -107,7 +119,7 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
     let helloReceived = false;
     let registeredBoardId: BoardId | null = null;
 
-    socket.on('message', async (raw: Buffer) => {
+    handleMessage = async (raw: Buffer) => {
       let msg: McpClientMessage;
       try {
         msg = JSON.parse(raw.toString()) as McpClientMessage;
@@ -212,7 +224,7 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
         default:
           break;
       }
-    });
+    };
 
     socket.on('close', () => {
       if (registeredBoardId) {
@@ -230,5 +242,10 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
     socket.on('error', () => {
       // best-effort cleanup happens on close
     });
+
+    // Auth resolved + listeners wired: process anything that arrived early.
+    ready = true;
+    for (const raw of earlyQueue) handleMessage(raw);
+    earlyQueue.length = 0;
   });
 }

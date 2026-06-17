@@ -6,6 +6,11 @@ import { storageGetBool } from '../lib/storage';
 
 const HOME_URL = '/home';
 
+// One shared style for every top-bar control so the cluster reads as a single
+// consistent set (same height, padding, border, radius, type).
+const CTRL =
+  'inline-flex h-8 items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 text-[12px] text-ink transition-colors hover:bg-white/5';
+
 interface Props {
   board: Board | null;
   meUserId: UserId | null;
@@ -72,8 +77,7 @@ export function TopBar({
           <span>{repoName}</span>
           <Chevron />
         </button>
-        <ConnectionDot status={wsStatus} offline={offline} />
-        <McpChip connected={mcpConnected} />
+        <StatusChip status={wsStatus} offline={offline} mcpConnected={mcpConnected} />
         {open && (
           <div className="absolute left-2 top-12 w-60 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
             <a
@@ -102,7 +106,7 @@ export function TopBar({
             <button
               onClick={() => setUserPickerOpen((o) => !o)}
               title="Switch demo user (refresh required)"
-              className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2 py-1 text-[12px] text-ink hover:bg-white/5"
+              className={CTRL}
             >
               <span
                 className="flex h-4 w-4 items-center justify-center rounded-full text-[9.5px] font-semibold text-white"
@@ -147,28 +151,20 @@ export function TopBar({
             )}
           </div>
         )}
-        <button
-          onClick={onCapture}
-          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-1.5 text-[12px] text-ink hover:bg-white/5"
-        >
+        <button onClick={onCapture} className={CTRL}>
           <ExtensionIcon /> Capture from URL
         </button>
         <button
           onClick={onOpenTests}
           title="Create unmoderated UX test links"
-          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-1.5 text-[12px] text-ink hover:bg-white/5"
+          className={CTRL}
         >
           <FlaskIcon /> Tests
         </button>
         <button
           onClick={onShare}
           title="Copy this canvas URL to clipboard"
-          className={
-            'rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ' +
-            (shared
-              ? 'border-ok/40 bg-ok/15 text-ok'
-              : 'border-hairlineSoft bg-panel text-ink hover:bg-white/5')
-          }
+          className={CTRL + (shared ? ' !border-ok/40 !bg-ok/15 !text-ok' : '')}
         >
           {shared ? 'Copied!' : 'Share'}
         </button>
@@ -206,7 +202,7 @@ function ViewToggles() {
   const toggle = (id: 'layers' | 'design') =>
     window.dispatchEvent(new CustomEvent('foldo:toggleSidePanel', { detail: { id } }));
   return (
-    <div className="flex items-center gap-0.5 rounded-lg border border-hairlineSoft bg-panel p-0.5 shadow-panel">
+    <div className="inline-flex h-8 items-center gap-0.5 rounded-lg border border-hairlineSoft bg-panel px-1">
       <ViewToggleButton label="Layers" active={openState.layers} onClick={() => toggle('layers')}>
         <LayersIcon />
       </ViewToggleButton>
@@ -277,48 +273,49 @@ function Logo() {
   );
 }
 
-function ConnectionDot({
+/**
+ * Single combined status indicator: one dot + "MCP" label. The dot reflects
+ * the realtime connection — green only when the canvas WS is live AND a Claude
+ * MCP agent is connected; amber while reconnecting; red/grey when offline or
+ * MCP is absent (dispatches then run on the simulator). Replaces the old
+ * separate WS dot + MCP chip so there is just one status element.
+ */
+function StatusChip({
   status,
   offline,
+  mcpConnected,
 }: {
   status: Props['wsStatus'];
   offline: boolean;
+  mcpConnected: boolean;
 }) {
-  let color = '#7fd49a';
-  let title = 'Live · connected';
+  let dot = '#7fd49a';
+  let title = mcpConnected
+    ? 'Live · MCP connected (real Claude)'
+    : 'Live · MCP offline — dispatches simulated';
   if (offline) {
-    color = '#9a9a9a';
-    title = 'Offline demo · using local mock data';
+    dot = '#9a9a9a';
+    title = 'Offline demo · local mock data';
   } else if (status === 'connecting' || status === 'reconnecting') {
-    color = '#f5b86b';
+    dot = '#f5b86b';
     title = 'Reconnecting…';
   } else if (status === 'closed') {
-    color = '#9a9a9a';
+    dot = '#9a9a9a';
     title = 'Disconnected';
   } else if (status === 'offline') {
-    color = '#ef6f6f';
+    dot = '#ef6f6f';
     title = 'Server unreachable';
+  } else if (!mcpConnected) {
+    dot = '#9a9a9a';
   }
   return (
-    <div
-      title={title}
-      className="ml-1 h-2 w-2 rounded-full"
-      style={{ background: color, boxShadow: `0 0 6px ${color}` }}
-    />
-  );
-}
-
-function McpChip({ connected }: { connected: boolean }) {
-  const color = connected ? '#7fd49a' : '#9a9a9a';
-  const label = connected ? 'MCP live' : 'MCP offline · dispatches simulated';
-  return (
     <span
-      title={label}
-      className="ml-1 inline-flex items-center gap-1 rounded-md border border-hairlineSoft px-1.5 py-0.5 text-[10.5px] text-inkMute"
+      title={title}
+      className="ml-1 inline-flex items-center gap-1.5 rounded-md border border-hairlineSoft px-1.5 py-0.5 text-[10.5px] text-inkMute"
     >
       <span
         className="h-1.5 w-1.5 rounded-full"
-        style={{ background: color, boxShadow: `0 0 6px ${color}` }}
+        style={{ background: dot, boxShadow: `0 0 6px ${dot}` }}
       />
       MCP
     </span>

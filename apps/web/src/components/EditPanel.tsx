@@ -294,7 +294,7 @@ function Footer({
       <div className="text-[11px] text-inkFaint">
         {mcpConnected
           ? 'Sends via the local MCP server to Claude Code.'
-          : 'No MCP connected. Foldo will simulate the edit (no real commit).'}
+          : 'Connect the MCP server to apply this as a real Claude Code edit.'}
       </div>
       <button
         disabled={!canSend}
@@ -306,7 +306,7 @@ function Footer({
             : 'cursor-not-allowed bg-hairlineSoft text-inkFaint')
         }
       >
-        <span>{mcpConnected ? 'Send to Claude Code' : 'Simulate edit'}</span>
+        <span>Send to Claude Code</span>
         <SendIcon />
       </button>
     </div>

@@ -1,0 +1,10 @@
+import { chromium } from '@playwright/test';
+const b=await chromium.launch();
+const p=await b.newPage({viewport:{width:600,height:200}});
+const fails=[]; p.on('requestfailed',r=>fails.push(r.url())); p.on('response',r=>{if(r.status()>=400)fails.push(r.status()+' '+r.url());});
+await p.goto('http://localhost:8012/?variant=baseline&commit=abc123&route=/',{waitUntil:'networkidle',timeout:15000}).catch(()=>{});
+await p.waitForTimeout(800);
+const imgOk = await p.evaluate(()=>{const i=document.querySelector('img'); return i? {complete:i.complete, w:i.naturalWidth, h:i.naturalHeight}:null;});
+await p.screenshot({path:'/tmp/foldo-e2e/xt/resultframe-check.png'});
+console.log('img:', JSON.stringify(imgOk), 'failures:', [...new Set(fails)].slice(0,3));
+await b.close();

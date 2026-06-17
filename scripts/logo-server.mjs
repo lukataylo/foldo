@@ -1,20 +1,38 @@
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-const REPO='/tmp/xt-logo-demo';
-function latestRef(){
-  try{ const out=execFileSync('git',['-C',REPO,'for-each-ref','--sort=-committerdate','--format=%(refname:short)','refs/heads/foldo'],{encoding:'utf8'}).trim().split('\n').filter(Boolean); return out[0]||'main'; }catch{ return 'main'; }
+
+// Serves the WHOLE captured xTrade screen (DOM snapshot) with the latest
+// Claude-edited logo swapped in — so a "change the logo colour" dispatch's
+// result frame shows the full screen with the recoloured logo, not a
+// standalone logo page. The dashboard snapshot inlines exactly one
+// image/svg+xml data URL (the logo, verbatim), so the swap is unambiguous.
+const REPO = '/tmp/xt-logo-demo';
+const SNAPSHOT = '/tmp/foldo-e2e/xt/journey/01-dashboard.html';
+
+function latestRef() {
+  try {
+    const out = execFileSync(
+      'git',
+      ['-C', REPO, 'for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads/foldo'],
+      { encoding: 'utf8' },
+    ).trim().split('\n').filter(Boolean);
+    return out[0] || 'main';
+  } catch { return 'main'; }
 }
-createServer((req,res)=>{
-  // Route on the pathname only — the canvas result frame appends query params
-  // (?variant=&commit=&route=…) to the iframe URL, so matching the raw req.url
-  // 404'd on '/?variant=…' and the updated screen came back blank.
-  const path = new URL(req.url, 'http://localhost:8012').pathname;
-  if(path==='/xTrade-logo.svg'){
-    try{ const svg=execFileSync('git',['-C',REPO,'show',`${latestRef()}:xTrade-logo.svg`]); res.writeHead(200,{'content-type':'image/svg+xml','cache-control':'no-store'}); return res.end(svg); }
-    catch(e){ res.writeHead(500); return res.end(String(e)); }
+function editedLogoDataUrl() {
+  const svg = execFileSync('git', ['-C', REPO, 'show', `${latestRef()}:xTrade-logo.svg`]);
+  return 'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64');
+}
+
+createServer((req, res) => {
+  try {
+    let html = readFileSync(SNAPSHOT, 'utf8');
+    html = html.replace(/data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+/, editedLogoDataUrl());
+    res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
+    res.end(html);
+  } catch (e) {
+    res.writeHead(500);
+    res.end(String(e));
   }
-  // Everything else (/, /index.html, or / with any query string) -> logo page.
-  res.writeHead(200,{'content-type':'text/html','cache-control':'no-store'});
-  return res.end(readFileSync(REPO+'/index.html'));
-}).listen(8012,()=>console.log('logo-server on 8012, serving latest-edit SVG'));
+}).listen(8012, () => console.log('logo-server on 8012: whole screen + latest-edit logo'));

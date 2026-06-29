@@ -380,6 +380,41 @@ export async function initSchema(): Promise<void> {
   }
 }
 
+/**
+ * DANGER — one-shot destructive reset. Drops and recreates the `public` schema
+ * (wiping ALL data), gated on a reset `token`. The token is recorded in a
+ * marker table so the reset runs at most once per unique token, even if the
+ * FOLDO_RESET_DB env var lingers across restarts. Used once to recover a prod
+ * DB created by an incompatible server version; initSchema() + seed() run
+ * afterward to rebuild the tables.
+ */
+export async function maybeResetSchema(token: string): Promise<boolean> {
+  const markerExists = await queryOne<{ x: number }>(
+    `SELECT 1 AS x FROM pg_tables WHERE schemaname='public' AND tablename='schema_reset_log'`,
+  ).catch(() => null);
+  if (markerExists) {
+    const seen = await queryOne<{ x: number }>(
+      `SELECT 1 AS x FROM schema_reset_log WHERE token = $1`,
+      [token],
+    ).catch(() => null);
+    if (seen) {
+      console.warn(`[reset] token ${token} already applied — skipping`);
+      return false;
+    }
+  }
+  console.warn(`[reset] DROP SCHEMA public CASCADE for reset token ${token}`);
+  await exec('DROP SCHEMA IF EXISTS public CASCADE');
+  await exec('CREATE SCHEMA public');
+  await exec(
+    'CREATE TABLE IF NOT EXISTS schema_reset_log (token TEXT PRIMARY KEY, applied_at TEXT NOT NULL)',
+  );
+  await exec(
+    'INSERT INTO schema_reset_log (token, applied_at) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+    [token, new Date().toISOString()],
+  );
+  return true;
+}
+
 export async function closePool(): Promise<void> {
   await pool.end();
 }

@@ -8,7 +8,7 @@ import compress from '@fastify/compress';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
-import { closePool, initSchema } from './db.ts';
+import { closePool, initSchema, maybeResetSchema } from './db.ts';
 import { seed } from './seed.ts';
 import { registerAuth, extractBearerToken, resolveUserFromToken } from './auth.ts';
 import { registerBoardRoutes } from './routes/boards.ts';
@@ -59,6 +59,13 @@ async function withBootRetry<T>(label: string, fn: () => Promise<T>): Promise<T>
 }
 
 async function main(): Promise<void> {
+  // One-shot guarded DB reset (recover a DB created by an incompatible server
+  // version). Runs at most once per unique FOLDO_RESET_DB token; safe to leave
+  // the env var set afterward.
+  const resetToken = process.env.FOLDO_RESET_DB;
+  if (resetToken && resetToken !== '0') {
+    await withBootRetry('maybeResetSchema', () => maybeResetSchema(resetToken));
+  }
   // Bootstrap schema + seed first so the DB has data before routes go up.
   // Retried with backoff so a transient DB blip at boot doesn't restart-loop.
   await withBootRetry('initSchema', () => initSchema());

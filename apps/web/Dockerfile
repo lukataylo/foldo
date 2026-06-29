@@ -23,12 +23,14 @@ COPY apps/sample-app/package.json ./apps/sample-app/
 COPY apps/mcp/package.json ./apps/mcp/
 COPY apps/extension/package.json ./apps/extension/
 COPY packages/protocol/package.json ./packages/protocol/
+COPY packages/plugin-api/package.json ./packages/plugin-api/
 
 # Web build doesn't need native modules — skip better-sqlite3 to keep the
 # build fast and small. ignore-scripts prevents the postinstall.
 RUN npm ci --workspaces --include-workspace-root --ignore-scripts
 
 COPY packages/protocol ./packages/protocol
+COPY packages/plugin-api ./packages/plugin-api
 COPY apps/web ./apps/web
 
 RUN npm --workspace @foldo/web run build

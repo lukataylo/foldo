@@ -1,33 +1,43 @@
-import React, { Suspense } from 'react';
+import React, { Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
-import { CookieBanner } from './marketing/CookieBanner';
-import { registerBuiltinFrameKinds } from './plugins/builtin';
-import { registry as pluginRegistry } from './plugins/registry';
-import { layersPlugin } from './plugins/layers';
-import { designPlugin } from './plugins/design';
-import { commentsPlugin } from './plugins/comments';
-import { htmlFramePlugin } from './plugins/html-frame';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { isMarketingPath } from './marketing/path';
+import { bootPlugins } from './plugins/registry';
+import { BUILTIN_PLUGINS, EXPERIMENTAL_PLUGINS } from './plugins';
 import './index.css';
 
-// Lazy route roots — each becomes its own JS chunk at build time.
-const App = React.lazy(() => import('./App'));
-const MarketingRouter = React.lazy(() => import('./marketing/MarketingRouter'));
-const HomeApp = React.lazy(() => import('./home/HomeApp'));
-const SettingsApp = React.lazy(() => import('./settings/SettingsApp'));
-const ShareViewer = React.lazy(() => import('./share/ShareViewer'));
-const CaptureViewer = React.lazy(() => import('./capture/CaptureViewer'));
-const TestRunner = React.lazy(() => import('./test/TestRunner'));
+// Install + activate built-in plugins before the first render. v1 is a
+// frozen registry; nothing mutates it after this call. New plugins added
+// later (Step 10's Layer Navigator, Step 11's DOM Editor) just append to
+// BUILTIN_PLUGINS and get picked up here.
+//
+// EXPERIMENTAL_PLUGINS are gated behind a build-time Vite env flag —
+// `VITE_FOLDO_EXPERIMENTAL_PLUGINS=1 npm --workspace @foldo/web run build`
+// produces a bundle that boots the experimental list too. The default
+// production build (and `npm run dev` without the flag) ships only the
+// vetted built-ins. See plugins/index.ts and CLAUDE.md for the policy.
+const experimentalEnabled =
+  import.meta.env.VITE_FOLDO_EXPERIMENTAL_PLUGINS === '1';
+const pluginsToBoot = experimentalEnabled
+  ? [...BUILTIN_PLUGINS, ...EXPERIMENTAL_PLUGINS]
+  : BUILTIN_PLUGINS;
+bootPlugins(pluginsToBoot);
 
-// Register the built-in canvas frame kinds before any component mounts. The
-// canvas's frame renderer reads from the registry, so this MUST run before
-// <App /> hits its first render pass.
-registerBuiltinFrameKinds();
-
-// First-party plugins shipped with the app.
-pluginRegistry.load(layersPlugin);
-pluginRegistry.load(designPlugin);
-pluginRegistry.load(commentsPlugin);
-pluginRegistry.load(htmlFramePlugin);
+// Route components are loaded lazily so the landing page doesn't ship the
+// canvas bundle (and vice versa). Each route lives in its own JS chunk; the
+// route bundle is fetched on demand the first time its URL is visited.
+const App = lazy(() => import('./App'));
+const MarketingRouter = lazy(() => import('./marketing/MarketingRouter'));
+const HomeApp = lazy(() => import('./home/HomeApp'));
+const SettingsApp = lazy(() => import('./settings/SettingsApp'));
+const ShareViewer = lazy(() => import('./share/ShareViewer'));
+const CaptureViewer = lazy(() => import('./capture/CaptureViewer'));
+const TestRunner = lazy(() => import('./test/TestRunner'));
+// The CookieBanner is tiny but renders on every non-tester page, so keep it
+// lazy too — saves an extra request on the tester route.
+const CookieBanner = lazy(() =>
+  import('./marketing/CookieBanner').then((m) => ({ default: m.CookieBanner })),
+);
 
 const path = typeof location !== 'undefined' ? location.pathname : '/';
 
@@ -35,65 +45,36 @@ const path = typeof location !== 'undefined' ? location.pathname : '/';
 // in or open boards — the cookie banner doesn't apply and would just be noise.
 const isTesterPage = path.startsWith('/t/');
 
-// Inlined from marketing/MarketingRouter so that module can remain a pure
-// lazy chunk (a static named import from it would pull it into the entry bundle).
-const KNOWN_MARKETING_PATHS = new Set([
-  '/', '/landing', '/login', '/signup', '/pricing', '/demo', '/docs',
-  '/forgot', '/reset', '/verify-email', '/terms', '/privacy', '/about',
-  '/brand', '/changelog', '/cookies', '/cookie-policy', '/extension',
-]);
-function isMarketingPath(pathname: string): boolean {
-  if (KNOWN_MARKETING_PATHS.has(pathname)) return true;
-  if (pathname.startsWith('/docs/')) return true;
-  if (pathname === '/home' || pathname.startsWith('/home/')) return false;
-  if (pathname === '/settings' || pathname.startsWith('/settings/')) return false;
-  if (pathname.startsWith('/s/') || pathname.startsWith('/share/')) return false;
-  if (pathname.startsWith('/c/')) return false;
-  if (pathname.startsWith('/app') || pathname.startsWith('/board/')) return false;
-  return true;
+function pickRoot(): { node: React.ReactNode; label: string } {
+  if (path.startsWith('/s/') || path.startsWith('/share/'))
+    return { node: <ShareViewer />, label: 'share' };
+  if (path.startsWith('/c/')) return { node: <CaptureViewer />, label: 'capture' };
+  if (isTesterPage) return { node: <TestRunner />, label: 'test runner' };
+  if (path === '/home' || path.startsWith('/home/'))
+    return { node: <HomeApp />, label: 'home' };
+  if (path === '/settings' || path.startsWith('/settings/'))
+    return { node: <SettingsApp />, label: 'settings' };
+  if (isMarketingPath(path))
+    return { node: <MarketingRouter />, label: 'marketing' };
+  return { node: <App />, label: 'canvas' };
 }
 
-function pickRoot(): React.ReactNode {
-  if (path.startsWith('/s/') || path.startsWith('/share/')) return <ShareViewer />;
-  if (path.startsWith('/c/')) return <CaptureViewer />;
-  if (isTesterPage) return <TestRunner />;
-  if (path === '/home' || path.startsWith('/home/')) return <HomeApp />;
-  if (path === '/settings' || path.startsWith('/settings/')) return <SettingsApp />;
-  if (isMarketingPath(path)) return <MarketingRouter />;
-  return <App />;
-}
+const { node, label } = pickRoot();
 
-/** Minimal full-screen loading state matching the app's dark theme. */
-function RouteLoadingFallback() {
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#0e0e0f',
-      }}
-    >
-      <div
-        style={{
-          fontSize: 13,
-          color: 'rgba(255,255,255,0.35)',
-          letterSpacing: '0.01em',
-        }}
-      >
-        Loading…
-      </div>
-    </div>
-  );
-}
+// Suspense fallback is intentionally invisible — the chunk loads fast enough
+// on local + behind a CDN that a flash of spinner is worse than a brief blank
+// frame. Replace with a skeleton if the chunk grows past ~250 KB.
+const SUSPENSE_FALLBACK: React.ReactNode = null;
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Suspense fallback={<RouteLoadingFallback />}>
-      {pickRoot()}
-    </Suspense>
-    {!isTesterPage && <CookieBanner />}
+    <ErrorBoundary label={label}>
+      <Suspense fallback={SUSPENSE_FALLBACK}>{node}</Suspense>
+    </ErrorBoundary>
+    {!isTesterPage && (
+      <Suspense fallback={null}>
+        <CookieBanner />
+      </Suspense>
+    )}
   </React.StrictMode>,
 );

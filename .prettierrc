@@ -1,0 +1,11 @@
+{
+  "//": "Match the existing repo style: 2 spaces, single quotes, ES5 trailing commas. Don't reformat the whole tree in this PR — the CI `format` job runs in --check mode so new code gets gated.",
+  "semi": true,
+  "singleQuote": true,
+  "trailingComma": "es5",
+  "tabWidth": 2,
+  "useTabs": false,
+  "printWidth": 100,
+  "arrowParens": "always",
+  "endOfLine": "lf"
+}

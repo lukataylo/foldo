@@ -48,7 +48,11 @@ export async function registerRecordingRoutes(
     '/api/recordings/*',
     async (req: FastifyRequest<{ Params: { '*': string } }>, reply: FastifyReply) => {
       const key = decodeURIComponent(req.params['*'] ?? '');
-      if (!key || key.includes('..')) {
+      // All recording keys live under the `recordings/` namespace. Enforcing
+      // the prefix matters on S3 deploys: `signedUrl()` will happily presign
+      // ANY bucket key, so without this check the route doubles as an open
+      // "presign anything" oracle (e.g. /api/recordings/uploads/<id>.png).
+      if (!key.startsWith('recordings/') || key.includes('..')) {
         return reply
           .code(400)
           .send({ error: 'Bad recording key', code: 'BAD_REQUEST' });

@@ -35,10 +35,34 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
+  // Production smoke specs (e2e/deploy/*.spec.ts) talk to the live
+  // api.foldo.dev surface — they don't need a local dev server. Skip the
+  // webServer block when RUN_PROD_SMOKE=1 is set so the runner doesn't
+  // boot `npm run dev` for nothing (and so this spec can run on a CI
+  // job that doesn't have the full stack installed).
+  webServer: process.env.RUN_PROD_SMOKE === '1' ? undefined : {
     command: 'npm run dev',
     url: process.env.FOLDO_WEB ?? 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
+    // CI's "boot dev servers" step in .github/workflows/ci.yml already
+    // launches the stack and waits for :5173 before this step runs, so
+    // Playwright must reuse it — the default `!process.env.CI` causes a
+    // port-in-use crash on every CI run. Locally we also reuse a stray
+    // dev server so the suite is dev-friendly.
+    reuseExistingServer: true,
     timeout: 120_000,
+    env: {
+      // Bring the shotter up alongside server/web/sample so Step 4's
+      // capture-from-URL spec has a real backend without booting a second
+      // dev server. Off in plain `npm run dev` — set explicitly here so the
+      // suite is self-contained.
+      FOLDO_SHOTTER_DEV: '1',
+      // The spec asks the shotter to screenshot http://localhost:5174 (the
+      // sample-app). The shotter's SSRF guard rejects private hostnames by
+      // default; flip it on for e2e.
+      FOLDO_SHOT_ALLOW_PRIVATE: '1',
+      // Wire the canvas's Capture modal at build time so it knows where the
+      // shotter lives. Vite inlines this into the bundle on first hit.
+      VITE_SHOTTER_URL: 'http://localhost:5175',
+    },
   },
 });

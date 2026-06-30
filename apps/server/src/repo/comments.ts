@@ -7,8 +7,8 @@ import type {
   User,
 } from '@foldo/protocol';
 import { query, queryOne, exec } from '../db.ts';
-import { nowIso, parseJson } from '../util.ts';
-import { getUserById, listUsers } from './users.ts';
+import { nowIso } from '../util.ts';
+import { getUserById } from './users.ts';
 
 interface CommentRow {
   id: string;
@@ -26,20 +26,13 @@ interface CommentRow {
   anchor_section: string | null;
   anchor_line_start: number | null;
   anchor_line_end: number | null;
-  target_json: string | null;
-  replies_json: string;
+  // JSONB columns — pg driver returns these already parsed.
+  target_json: CommentTarget | null;
+  replies_json: CommentReply[] | null;
 }
 
-/**
- * Build a Comment from a row, resolving author display fields via the
- * supplied lookup. The lookup is in-memory (from an already-loaded user
- * list) so per-comment hydration costs no extra query — see W3.1.
- */
-function rowToComment(
-  r: CommentRow,
-  resolveUser: (id: string) => User | undefined,
-): Comment {
-  const author = resolveUser(r.author_user_id);
+/** Pure row → Comment mapping. No DB I/O — pass the resolved author in. */
+function rowToComment(r: CommentRow, author: User | null): Comment {
   const pin: CommentPin | undefined =
     r.pin_x != null && r.pin_y != null ? { x: Number(r.pin_x), y: Number(r.pin_y) } : undefined;
   const anchor: CommentAnchor | undefined = r.anchor_section
@@ -49,8 +42,8 @@ function rowToComment(
         lineEnd: r.anchor_line_end ?? undefined,
       }
     : undefined;
-  const target = parseJson<CommentTarget | null>(r.target_json, null) ?? undefined;
-  const replies = parseJson<CommentReply[]>(r.replies_json, []);
+  const target = r.target_json ?? undefined;
+  const replies = r.replies_json ?? [];
   return {
     id: r.id,
     boardId: r.board_id,
@@ -72,31 +65,53 @@ function rowToComment(
   };
 }
 
-/**
- * List a board's comments. Pass `users` (the board route already loads the
- * full user list) to resolve author info in memory — without it, this falls
- * back to a single `listUsers()` query. Either way it's one query for
- * authors, never one-per-comment.
- */
-export async function listCommentsForBoard(
-  boardId: string,
-  users?: User[],
-): Promise<Comment[]> {
+interface UserRow {
+  id: string;
+  name: string;
+  initial: string;
+  color: string;
+  kind: 'human' | 'agent';
+  email: string | null;
+}
+
+function userRowToUser(r: UserRow): User {
+  return {
+    id: r.id,
+    name: r.name,
+    initial: r.initial,
+    color: r.color,
+    kind: r.kind,
+    email: r.email ?? undefined,
+  };
+}
+
+export async function listCommentsForBoard(boardId: string): Promise<Comment[]> {
   const rows = await query<CommentRow>(
     `SELECT * FROM comments WHERE board_id = $1 ORDER BY created_at`,
     [boardId],
   );
-  const userList = users ?? (await listUsers());
-  const byId = new Map(userList.map((u) => [u.id, u]));
-  return rows.map((r) => rowToComment(r, (id) => byId.get(id)));
+  if (rows.length === 0) return [];
+  // Batch-fetch every distinct author in a single SELECT instead of one
+  // per row — the previous code called getUserById per comment, so a board
+  // with 100 comments issued 101 queries (this listing + 100 author lookups).
+  const authorIds = Array.from(new Set(rows.map((r) => r.author_user_id)));
+  const authorRows = await query<UserRow>(
+    `SELECT id, name, initial, color, kind, email
+       FROM users
+      WHERE id = ANY($1::text[])`,
+    [authorIds],
+  );
+  const authors = new Map<string, User>(
+    authorRows.map((u) => [u.id, userRowToUser(u)]),
+  );
+  return rows.map((r) => rowToComment(r, authors.get(r.author_user_id) ?? null));
 }
 
 export async function getCommentById(id: string): Promise<Comment | null> {
   const r = await queryOne<CommentRow>(`SELECT * FROM comments WHERE id = $1`, [id]);
   if (!r) return null;
-  // Single-comment fetch: resolve just this one author.
   const author = await getUserById(r.author_user_id);
-  return rowToComment(r, (id) => (id === author?.id ? author : undefined));
+  return rowToComment(r, author);
 }
 
 export interface CommentInsert {
@@ -175,18 +190,106 @@ export async function addReply(
   commentId: string,
   reply: CommentReply,
 ): Promise<Comment | null> {
-  const existing = await getCommentById(commentId);
-  if (!existing) return null;
-  const replies = [...existing.replies, reply];
-  await exec(`UPDATE comments SET replies_json = $1, updated_at = $2 WHERE id = $3`, [
-    JSON.stringify(replies),
-    nowIso(),
-    commentId,
-  ]);
+  // Atomic append: previously this was read-mutate-write at the application
+  // layer, so two concurrent replies could each read the same `existing.replies`
+  // and one of the writes would silently clobber the other. JSONB array
+  // concat in a single statement; the row's implicit row-lock during UPDATE
+  // serialises concurrent appends.
+  const updated = await exec(
+    `UPDATE comments
+        SET replies_json = COALESCE(replies_json, '[]'::jsonb) || $1::jsonb,
+            updated_at = $2
+      WHERE id = $3`,
+    [JSON.stringify([reply]), nowIso(), commentId],
+  );
+  if (updated === 0) return null;
   return getCommentById(commentId);
 }
 
 export async function deleteComment(id: string): Promise<boolean> {
   const changes = await exec(`DELETE FROM comments WHERE id = $1`, [id]);
   return changes > 0;
+}
+
+/**
+ * Every comment authored by `userId`, across every board. Used by the GDPR
+ * data-export endpoint — exposes the raw row text so the user can keep their
+ * own contributions. Author display fields come from the live `users` row at
+ * call time (so a deleted user shows up as "deleted user", same as the canvas).
+ */
+export async function listCommentsAuthoredBy(userId: string): Promise<Comment[]> {
+  const rows = await query<CommentRow>(
+    `SELECT * FROM comments WHERE author_user_id = $1 ORDER BY created_at`,
+    [userId],
+  );
+  if (rows.length === 0) return [];
+  const author = await getUserById(userId);
+  return rows.map((r) => rowToComment(r, author));
+}
+
+/**
+ * Repoint every comment authored by `fromUserId` at `toUserId`. Used by the
+ * GDPR delete flow to anonymise authorship while preserving the comment row
+ * itself — the board still shows the conversation, just attributed to the
+ * "deleted user" sentinel. Returns the number of rows reassigned.
+ */
+export async function reassignCommentsAuthor(
+  fromUserId: string,
+  toUserId: string,
+): Promise<number> {
+  return exec(
+    `UPDATE comments SET author_user_id = $2 WHERE author_user_id = $1`,
+    [fromUserId, toUserId],
+  );
+}
+
+/**
+ * The companion to `reassignCommentsAuthor` for the THREADED replies stored
+ * inline on each comment row. `comments.replies_json` is a JSONB array of
+ * `{ authorUserId, authorName, authorInitial, authorColor, ... }`; the
+ * top-level reassignment only touches `author_user_id`, so without this
+ * sweep every reply the user left to other people's comments still carries
+ * their original name / colour / id.
+ *
+ * The UPDATE walks the array with `jsonb_array_elements` and only touches
+ * rows that actually contain a reply by `fromUserId` — keeps the write set
+ * tiny on big boards. Returns the number of comment ROWS changed (a single
+ * row may have had multiple matching replies).
+ */
+export async function anonymiseRepliesByAuthor(
+  fromUserId: string,
+  to: {
+    userId: string;
+    name: string;
+    initial: string;
+    color: string;
+  },
+): Promise<number> {
+  // jsonb_set is per-key, so we rebuild the array by aggregating each
+  // element after mapping the matching ones. The CASE replaces only the
+  // identity fields; text / createdAt / id stay untouched so the thread
+  // still reads as a real exchange. WHERE filter uses the `@?` jsonpath
+  // existence operator (PG12+) which is index-friendly and avoids a full
+  // scan on big boards.
+  return exec(
+    `UPDATE comments
+        SET replies_json = (
+          SELECT COALESCE(jsonb_agg(
+            CASE
+              WHEN (elem->>'authorUserId') = $1 THEN
+                elem
+                  || jsonb_build_object(
+                       'authorUserId',  $2::text,
+                       'authorName',    $3::text,
+                       'authorInitial', $4::text,
+                       'authorColor',   $5::text
+                     )
+              ELSE elem
+            END
+          ), '[]'::jsonb)
+            FROM jsonb_array_elements(replies_json) elem
+        )
+      WHERE replies_json @? ('$[*] ? (@.authorUserId == "' || $1 || '")')::jsonpath`,
+    [fromUserId, to.userId, to.name, to.initial, to.color],
+  );
 }

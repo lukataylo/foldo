@@ -1,14 +1,14 @@
 // App frame, renders the sample app inside an iframe and forwards element
 // click/hover events from the sample app's postMessage bridge.
 
-import { useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppFrameContent,
   Branch,
   Comment,
   Frame,
 } from '@foldo/protocol';
-import { FrameShell } from './FrameShell';
+import { FrameMeta } from './FrameMeta';
 import { CommentPin } from './CommentPin';
 import {
   isSampleAppOutbound,
@@ -30,7 +30,7 @@ interface Props {
   onCommentClick: (frameId: string, comment: Comment) => void;
   /** When false the frame is far from the camera, render a static placeholder. */
   inViewport: boolean;
-  wrapperProps?: HTMLAttributes<HTMLDivElement>;
+  zoom: number;
 }
 
 const SAMPLE_APP_BASE =
@@ -49,7 +49,7 @@ export function AppFrame({
   onDropPin,
   onCommentClick,
   inViewport,
-  wrapperProps,
+  zoom,
 }: Props) {
   const content = frame.content as AppFrameContent;
   const [testMode, setTestMode] = useState(false);
@@ -84,12 +84,21 @@ export function AppFrame({
   }, [content.overrides, inViewport]);
 
   // Listen for sample-app postMessage events. Only react to messages whose
-  // source matches our own iframe contentWindow.
+  // source matches our own iframe contentWindow AND whose origin matches the
+  // iframe's loaded origin — defence in depth against a navigated-away iframe
+  // sending us spoofed messages.
   useEffect(() => {
     if (!inViewport) return;
     function onMessage(ev: MessageEvent) {
       const iframe = iframeRef.current;
       if (!iframe || ev.source !== iframe.contentWindow) return;
+      let expectedOrigin: string | null = null;
+      try {
+        expectedOrigin = new URL(iframe.src).origin;
+      } catch {
+        return;
+      }
+      if (expectedOrigin === 'null' || ev.origin !== expectedOrigin) return;
       if (!isSampleAppOutbound(ev.data)) return;
       const msg = ev.data as SampleAppOutbound;
       switch (msg.type) {
@@ -143,6 +152,29 @@ export function AppFrame({
           // Scroll position from the iframe, currently informational only.
           // Future: sync follow-me cursors to the embedded sample-app scroll.
           return;
+        case 'foldo.sample.wheel': {
+          // A zoom gesture caught inside the iframe. Re-dispatch it on the
+          // canvas background as a synthetic ctrl+wheel so the Canvas's own
+          // wheel handler zooms the canvas (anchored at the cursor) instead
+          // of the browser zooming the whole page.
+          const rect = iframe.getBoundingClientRect();
+          const canvasBg = document.querySelector<HTMLElement>(
+            '[data-canvas-bg="true"]',
+          );
+          if (!canvasBg) return;
+          canvasBg.dispatchEvent(
+            new WheelEvent('wheel', {
+              bubbles: true,
+              cancelable: true,
+              ctrlKey: true,
+              deltaX: msg.deltaX,
+              deltaY: msg.deltaY,
+              clientX: rect.left + msg.clientX,
+              clientY: rect.top + msg.clientY,
+            }),
+          );
+          return;
+        }
         default:
           return;
       }
@@ -178,7 +210,17 @@ export function AppFrame({
   const showSelectionOnThisFrame = selectedElement?.frameId === frame.id;
 
   return (
-    <FrameShell frame={frame} branch={branch} wrapperProps={wrapperProps}>
+    <div
+      className="absolute"
+      style={{
+        left: frame.position.x,
+        top: frame.position.y,
+        width: frame.size.width,
+        height: frame.size.height,
+      }}
+    >
+      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
+
       <div
         className="relative h-full w-full overflow-hidden rounded-md border border-black/15 bg-white frame-shadow"
         style={{ pointerEvents: 'auto' }}
@@ -270,17 +312,22 @@ export function AppFrame({
           </button>
         </div>
 
-        {/* comment pins */}
-        {comments.map((c) => (
-          <CommentPin
-            key={c.id}
-            comment={c}
-            frameSize={{ width: frame.size.width, height: frame.size.height }}
-            onClick={() => onCommentClick(frame.id, c)}
-          />
-        ))}
+        {/* comment pins — skipped off-viewport so they don't keep N DOM nodes
+            mounted (and N hover/click handlers live) when the frame itself is
+            showing a placeholder. */}
+        {inViewport &&
+          comments.map((c) => (
+            <CommentPin
+              key={c.id}
+              comment={c}
+              frameSize={{ width: frame.size.width, height: frame.size.height }}
+              onClick={() => onCommentClick(frame.id, c)}
+            />
+          ))}
       </div>
-    </FrameShell>
+      {/* Suppress unused-warning */}
+      <span style={{ display: 'none' }}>{zoom}</span>
+    </div>
   );
 }
 
@@ -295,8 +342,20 @@ function buildIframeUrl(content: AppFrameContent, commitSha: string): string {
 }
 
 function postToFrame(iframe: HTMLIFrameElement, msg: SampleAppInbound) {
+  // Target the iframe's own origin rather than '*' — otherwise, if the iframe
+  // ever navigates cross-origin (link click, redirect), the message would
+  // leak to whatever now lives at the other end. Derive from the iframe's
+  // current src; if that's not a real URL (about:blank, data:, blob:) we
+  // just skip — the sample-app isn't there to receive it yet anyway.
+  let targetOrigin: string;
   try {
-    iframe.contentWindow?.postMessage(msg, '*');
+    targetOrigin = new URL(iframe.src).origin;
+  } catch {
+    return;
+  }
+  if (targetOrigin === 'null' || !targetOrigin) return;
+  try {
+    iframe.contentWindow?.postMessage(msg, targetOrigin);
   } catch {
     /* ignore */
   }

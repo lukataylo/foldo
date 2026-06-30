@@ -1,5 +1,30 @@
 // REST API, request/response schemas. All endpoints under /api.
 // Auth: Authorization: Bearer <userId-token> (demo) or session cookie.
+//
+// Pagination contract: every list endpoint that may exceed ~100 items
+// supports keyset pagination via `?limit=N&cursor=…` and responds with
+// `PaginatedResponse<T>`. `cursor` is opaque to the client — it's a
+// server-issued string that, when round-tripped on the next request,
+// yields the page immediately after the one just received.
+//
+//   GET /api/boards/:id/frames?limit=100              → first page
+//   GET /api/boards/:id/frames?limit=100&cursor=AB12  → next page
+//
+// Legacy unpaginated endpoints (e.g. the all-in-one `GET /api/boards/:id`)
+// still exist for back-compat; clients should migrate as they touch them.
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  /** True iff a follow-up call with `cursor` would yield more rows. */
+  hasMore: boolean;
+  /** Opaque cursor for the next page. Omit on the last page. */
+  cursor?: string;
+}
+
+export interface PageQuery {
+  limit?: number;
+  cursor?: string;
+}
 
 import type {
   Board,
@@ -11,7 +36,6 @@ import type {
   CommentTarget,
   Dispatch,
   Frame,
-  FrameStyle,
   RecipeStep,
   SourceFile,
   User,
@@ -20,7 +44,6 @@ import type {
   ArrowFrameContent,
   FrameContent,
   FrameKind,
-  HtmlFrameContent,
   ImageFrameContent,
   MarkdownFrameContent,
   StickyFrameContent,
@@ -83,13 +106,7 @@ export interface UpdateFrameRequest {
     | Partial<MarkdownFrameContent>
     | Partial<StickyFrameContent>
     | Partial<ArrowFrameContent>
-    | Partial<ImageFrameContent>
-    | Partial<HtmlFrameContent>;
-  z?: number;
-  hidden?: boolean;
-  locked?: boolean;
-  /** Pass `null` to clear, an object to set, omit to leave unchanged. */
-  style?: FrameStyle | null;
+    | Partial<ImageFrameContent>;
 }
 
 // ---------- Comments ----------

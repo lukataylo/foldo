@@ -5,13 +5,14 @@
 //
 // Capture pipeline:
 //   popup → 'capture/run' → SW
-//     1. read settings + active tab — fail early if token/boardId not set
+//     1. read settings + active tab
 //     2. inject probePage() to gather DOM + viewport
 //     3. tabs.captureVisibleTab() for the PNG
-//     4. POST /api/captures with Authorization: Bearer <token>
+//     4. POST /api/captures
 //     5. inject showBanner() in the captured tab
 //     6. stream phase events back to the popup port
 
+import { DEFAULTS } from '../config.ts';
 import { probePage, type InlinePageProbe } from '../content/capture.ts';
 import { showBanner } from '../content/overlay.ts';
 import { createCapture } from '../shared/api.ts';
@@ -80,32 +81,14 @@ async function runCapture(port: chrome.runtime.Port): Promise<void> {
 
   const settings = await readSettings();
 
-  // Guard: require a real session token and board id before touching the page.
-  if (!settings.bearerToken) {
-    port.postMessage({
-      type: 'capture/failure',
-      message:
-        'No Foldo session token set. Open the extension options (or the gear in the popup) and paste your token from the Foldo app.',
-    } satisfies CaptureEvent);
-    return;
-  }
-  if (!settings.boardId) {
-    port.postMessage({
-      type: 'capture/failure',
-      message:
-        'No board id set. Open the extension options (or the gear in the popup) and enter the target board id.',
-    } satisfies CaptureEvent);
-    return;
-  }
-
   emit('injecting', 'Reading DOM…');
   let probe: InlinePageProbe;
   try {
-    const [{ result }] = await chrome.scripting.executeScript({
+    const [first] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: probePage,
     });
-    probe = result ?? {
+    probe = first?.result ?? {
       url: tab.url ?? '',
       title: tab.title ?? '',
       viewport: { width: 1280, height: 800 },
@@ -147,10 +130,7 @@ async function runCapture(port: chrome.runtime.Port): Promise<void> {
         viewport: probe.viewport,
         domSnapshot: probe.domSnapshot,
         screenshot,
-        // capturedByUserId is kept in the protocol type for compatibility but
-        // the server attributes the capture to the authenticated user derived
-        // from the Bearer token — we still pass it to satisfy the type contract.
-        capturedByUserId: '',
+        capturedByUserId: settings.bearerToken || DEFAULTS.capturedByUserId,
         boardId: settings.boardId,
       },
     });

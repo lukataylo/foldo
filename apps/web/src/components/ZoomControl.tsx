@@ -8,17 +8,15 @@ interface Props {
 
 export function ZoomControl({ zoom, onZoomIn, onZoomOut, onZoomToFit, onReset }: Props) {
   return (
-    <div
-      className="pointer-events-none absolute left-3 z-40"
-      style={{ bottom: `calc(1rem + env(safe-area-inset-bottom, 0px))` }}
-    >
+    <div className="pointer-events-none absolute bottom-4 left-1/2 z-40 -translate-x-1/2">
       <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-hairlineSoft bg-panel px-1 py-1 text-[12px] text-ink shadow-panel">
         <Button title="Zoom out (⌘-)" onClick={onZoomOut}>
           <Minus />
         </Button>
         <button
           onClick={onReset}
-          className="min-w-[60px] rounded-md px-2 py-1 text-center text-[11.5px] font-medium text-ink hover:bg-white/5"
+          /* A+W1 touch: 44px tall hit area so iPad fingers can tap to reset. */
+          className="flex h-11 min-w-[64px] items-center justify-center rounded-md px-2 text-center text-[12px] font-medium text-ink hover:bg-white/5"
         >
           {Math.round(zoom * 100)}%
         </button>
@@ -47,7 +45,8 @@ function Button({
     <button
       title={title}
       onClick={onClick}
-      className="touch-target flex h-7 w-7 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+      /* A+W1 touch: 44x44 (h-11 w-11); was 28x28. */
+      className="flex h-11 w-11 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
     >
       {children}
     </button>

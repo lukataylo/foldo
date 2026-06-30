@@ -4,8 +4,8 @@ import type {
   DispatchEvent,
   DispatchStatus,
 } from '@foldo/protocol';
-import { query, queryOne, exec, type Executor } from '../db.ts';
-import { nowIso, parseJson } from '../util.ts';
+import { query, queryOne, exec } from '../db.ts';
+import { nowIso } from '../util.ts';
 
 interface DispatchRow {
   id: string;
@@ -13,11 +13,12 @@ interface DispatchRow {
   frame_id: string;
   branch_id: string;
   initiator_user_id: string;
-  target_json: string;
+  // JSONB columns — pg returns them already parsed.
+  target_json: CommentTarget | null;
   base_commit_sha: string;
   intent: string;
   status: DispatchStatus;
-  events_json: string;
+  events_json: DispatchEvent[] | null;
   result_frame_id: string | null;
   result_commit_sha: string | null;
   created_at: string;
@@ -33,11 +34,11 @@ function rowToDispatch(r: DispatchRow): Dispatch {
     frameId: r.frame_id,
     branchId: r.branch_id,
     initiatorUserId: r.initiator_user_id,
-    target: parseJson<CommentTarget>(r.target_json, {}),
+    target: r.target_json ?? ({} as CommentTarget),
     baseCommitSha: r.base_commit_sha,
     intent: r.intent,
     status: r.status,
-    events: parseJson<DispatchEvent[]>(r.events_json, []),
+    events: r.events_json ?? [],
     resultFrameId: r.result_frame_id ?? undefined,
     resultCommitSha: r.result_commit_sha ?? undefined,
     createdAt: r.created_at,
@@ -55,15 +56,8 @@ export async function listDispatchesForBoard(boardId: string): Promise<Dispatch[
   return rows.map(rowToDispatch);
 }
 
-export async function getDispatchById(
-  id: string,
-  client?: Executor,
-): Promise<Dispatch | null> {
-  const r = await queryOne<DispatchRow>(
-    `SELECT * FROM dispatches WHERE id = $1`,
-    [id],
-    client,
-  );
+export async function getDispatchById(id: string): Promise<Dispatch | null> {
+  const r = await queryOne<DispatchRow>(`SELECT * FROM dispatches WHERE id = $1`, [id]);
   return r ? rowToDispatch(r) : null;
 }
 
@@ -140,18 +134,16 @@ export async function completeDispatch(
   resultFrameId: string,
   resultCommitSha: string,
   event?: DispatchEvent,
-  client?: Executor,
 ): Promise<Dispatch | null> {
-  const existing = await getDispatchById(id, client);
+  const existing = await getDispatchById(id);
   if (!existing) return null;
   const events = event ? [...existing.events, event] : existing.events;
   await exec(
     `UPDATE dispatches SET status = 'done', events_json = $1, result_frame_id = $2,
        result_commit_sha = $3, finished_at = $4 WHERE id = $5`,
     [JSON.stringify(events), resultFrameId, resultCommitSha, nowIso(), id],
-    client,
   );
-  return getDispatchById(id, client);
+  return getDispatchById(id);
 }
 
 export async function failDispatch(id: string, message: string): Promise<Dispatch | null> {

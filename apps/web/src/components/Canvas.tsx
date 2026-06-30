@@ -18,6 +18,12 @@ export interface ViewportState {
 export interface CanvasHandle {
   setZoom: (next: number, anchor?: { x: number; y: number }) => void;
   fitTo: (worldRect: { x: number; y: number; width: number; height: number }) => void;
+  /**
+   * Pan the camera so `rect` is centered, WITHOUT changing zoom level.
+   * Use this for in-canvas navigation (e.g. clicking a frame) — the user
+   * chose their zoom, don't smash it. Use fitTo for cold/deep-link entry.
+   */
+  panTo: (worldRect: { x: number; y: number; width: number; height: number }) => void;
   zoomIn: () => void;
   zoomOut: () => void;
   zoomToFit: () => void;
@@ -55,85 +61,15 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const wrapperRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<ViewportState>(
     initialViewport ?? { x: 0, y: 0, zoom: 0.6 },
   );
   const [panning, setPanning] = useState(false);
   const [spaceDown, setSpaceDown] = useState(false);
 
-  // Live viewport snapshot — the source of truth during a gesture. React
-  // state (`viewport`) trails this and is committed at most once per
-  // animation frame so wheel/pointermove/pinch (which can fire 100+/sec)
-  // don't trigger a re-render of the whole frame tree per event.
-  const viewportRef = useRef(viewport);
-
-  // Pending RAF that flushes the coalesced viewport into React state.
-  const commitRafRef = useRef<number | null>(null);
-  // Latest onViewportChange handler, read inside the RAF without re-binding.
-  const onViewportChangeRef = useRef(onViewportChange);
   useEffect(() => {
-    onViewportChangeRef.current = onViewportChange;
-  }, [onViewportChange]);
-
-  // Active pointers (multi-touch). Tracked for pinch-to-zoom + two-finger
-  // pan on iPad and other touch surfaces.
-  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pinchRef = useRef<{
-    startDist: number;
-    startZoom: number;
-    startCenter: { x: number; y: number };
-    startViewport: ViewportState;
-  } | null>(null);
-
-  // Imperatively paint the live viewport onto the DOM so the canvas tracks
-  // the gesture at native speed without waiting for a React render.
-  const paintViewport = useCallback((v: ViewportState) => {
-    const wrap = wrapperRef.current;
-    if (wrap) {
-      wrap.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.zoom})`;
-    }
-    const container = containerRef.current;
-    if (container) {
-      container.style.backgroundSize = `${24 * v.zoom}px ${24 * v.zoom}px`;
-      container.style.backgroundPosition = `${v.x}px ${v.y}px`;
-    }
-  }, []);
-
-  // Flush the coalesced viewport into React state + notify the parent.
-  // Runs once per animation frame regardless of how many events landed.
-  const flushViewport = useCallback(() => {
-    commitRafRef.current = null;
-    const v = viewportRef.current;
-    setViewport(v);
-    onViewportChangeRef.current?.(v);
-  }, []);
-
-  // Commit a new viewport: update the live ref, paint the DOM immediately,
-  // and schedule a single RAF to sync React state. Multiple calls within a
-  // frame coalesce into one state commit.
-  const commitViewport = useCallback(
-    (next: ViewportState | ((v: ViewportState) => ViewportState)) => {
-      const v =
-        typeof next === 'function' ? next(viewportRef.current) : next;
-      viewportRef.current = v;
-      paintViewport(v);
-      if (commitRafRef.current == null) {
-        commitRafRef.current = requestAnimationFrame(flushViewport);
-      }
-    },
-    [paintViewport, flushViewport],
-  );
-
-  // Cancel any pending RAF on unmount.
-  useEffect(() => {
-    return () => {
-      if (commitRafRef.current != null) {
-        cancelAnimationFrame(commitRafRef.current);
-        commitRafRef.current = null;
-      }
-    };
-  }, []);
+    onViewportChange?.(viewport);
+  }, [viewport, onViewportChange]);
 
   // Spacebar = temporary hand tool
   useEffect(() => {
@@ -154,29 +90,29 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     };
   }, []);
 
-  // Always reads the live viewport ref so callers see the latest position
-  // mid-gesture, not the stale (RAF-trailing) React state.
-  const screenToWorld = useCallback((sx: number, sy: number) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return { x: 0, y: 0 };
-    const v = viewportRef.current;
-    return {
-      x: (sx - rect.left - v.x) / v.zoom,
-      y: (sy - rect.top - v.y) / v.zoom,
-    };
-  }, []);
+  const screenToWorld = useCallback(
+    (sx: number, sy: number) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return { x: 0, y: 0 };
+      return {
+        x: (sx - rect.left - viewport.x) / viewport.zoom,
+        y: (sy - rect.top - viewport.y) / viewport.zoom,
+      };
+    },
+    [viewport],
+  );
 
   const setZoomAtAnchor = useCallback(
     (nextZoom: number, anchor?: { x: number; y: number }) => {
       const z = clamp(nextZoom, 0.1, 3);
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) {
-        commitViewport((v) => ({ ...v, zoom: z }));
+        setViewport((v) => ({ ...v, zoom: z }));
         return;
       }
       const cx = anchor ? anchor.x - rect.left : rect.width / 2;
       const cy = anchor ? anchor.y - rect.top : rect.height / 2;
-      commitViewport((v) => {
+      setViewport((v) => {
         const ratio = z / v.zoom;
         return {
           zoom: z,
@@ -185,7 +121,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         };
       });
     },
-    [commitViewport],
+    [],
   );
 
   const zoomToFit = useCallback(() => {
@@ -200,8 +136,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       rect.width / 2 - (contentBounds.x + contentBounds.width / 2) * z;
     const cy =
       rect.height / 2 - (contentBounds.y + contentBounds.height / 2) * z;
-    commitViewport({ x: cx, y: cy, zoom: z });
-  }, [contentBounds, commitViewport]);
+    setViewport({ x: cx, y: cy, zoom: z });
+  }, [contentBounds]);
 
   const fitTo = useCallback(
     (rect: { x: number; y: number; width: number; height: number }) => {
@@ -213,9 +149,24 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       const z = clamp(Math.min(sx, sy), 0.1, 3);
       const cx = c.width / 2 - (rect.x + rect.width / 2) * z;
       const cy = c.height / 2 - (rect.y + rect.height / 2) * z;
-      commitViewport({ x: cx, y: cy, zoom: z });
+      setViewport({ x: cx, y: cy, zoom: z });
     },
-    [commitViewport],
+    [],
+  );
+
+  // Pan-only navigation — keep the user's current zoom. Use for
+  // in-canvas hops (clicking a frame, Layer Navigator row click) so the
+  // camera doesn't keep snapping to different zoom levels.
+  const panTo = useCallback(
+    (rect: { x: number; y: number; width: number; height: number }) => {
+      const c = containerRef.current?.getBoundingClientRect();
+      if (!c) return;
+      const z = viewport.zoom;
+      const cx = c.width / 2 - (rect.x + rect.width / 2) * z;
+      const cy = c.height / 2 - (rect.y + rect.height / 2) * z;
+      setViewport({ x: cx, y: cy, zoom: z });
+    },
+    [viewport.zoom],
   );
 
   useImperativeHandle(
@@ -223,15 +174,14 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     () => ({
       setZoom: setZoomAtAnchor,
       fitTo,
-      zoomIn: () => setZoomAtAnchor(viewportRef.current.zoom * 1.2),
-      zoomOut: () => setZoomAtAnchor(viewportRef.current.zoom / 1.2),
+      panTo,
+      zoomIn: () => setZoomAtAnchor(viewport.zoom * 1.2),
+      zoomOut: () => setZoomAtAnchor(viewport.zoom / 1.2),
       zoomToFit,
-      // Read the live ref so consumers always see the latest viewport,
-      // even mid-gesture before the RAF commit lands.
-      getViewport: () => viewportRef.current,
+      getViewport: () => viewport,
       screenToWorld,
     }),
-    [setZoomAtAnchor, zoomToFit, fitTo, screenToWorld],
+    [setZoomAtAnchor, viewport, zoomToFit, fitTo, panTo, screenToWorld],
   );
 
   // Wheel handler: ctrl/meta = zoom (anchored at the cursor), plain = pan.
@@ -248,10 +198,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         // wherever the cursor happens to be.
         e.preventDefault();
         const factor = Math.exp(-e.deltaY * 0.01);
-        setZoomAtAnchor(viewportRef.current.zoom * factor, {
-          x: e.clientX,
-          y: e.clientY,
-        });
+        setZoomAtAnchor(viewport.zoom * factor, { x: e.clientX, y: e.clientY });
         return;
       }
       // Plain wheel = pan, but only when the cursor is actually over the
@@ -271,7 +218,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
           if (canScrollDown || canScrollUp) return;
         }
         e.preventDefault();
-        commitViewport((v) => ({
+        setViewport((v) => ({
           ...v,
           x: v.x - e.deltaX,
           y: v.y - e.deltaY,
@@ -280,107 +227,73 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     };
     window.addEventListener('wheel', onWheel, { passive: false });
     return () => window.removeEventListener('wheel', onWheel);
-  }, [setZoomAtAnchor, commitViewport]);
-
-  // iPad Safari fires non-standard `gesturestart/change/end` events alongside
-  // pointer events. We already handle pinch via pointer events; suppress these
-  // so Safari doesn't fall through to its own page-zoom path on the rare
-  // surface that isn't `touch-action: none`.
-  useEffect(() => {
-    const swallow = (e: Event) => e.preventDefault();
-    window.addEventListener('gesturestart', swallow);
-    window.addEventListener('gesturechange', swallow);
-    window.addEventListener('gestureend', swallow);
-    return () => {
-      window.removeEventListener('gesturestart', swallow);
-      window.removeEventListener('gesturechange', swallow);
-      window.removeEventListener('gestureend', swallow);
-    };
-  }, []);
+  }, [viewport.zoom, setZoomAtAnchor]);
 
   // Pan dragging
   const handMode = tool === 'hand' || spaceDown;
-  /**
-   * Tracks the in-flight background gesture. `moved` flips to true after the
-   * cursor travels more than CLICK_VS_DRAG_PX from the down point — used to
-   * distinguish "click on background" (which fires onBackgroundClick on up)
-   * from "drag on background" (which fires onBackgroundDragStart/Move/End).
-   */
-  const dragRef = useRef<
-    | {
-        pid: number;
-        downAt: number;
-        world: { x: number; y: number };
-        screen: { x: number; y: number };
-        moved: boolean;
-      }
-    | null
-  >(null);
-  const CLICK_VS_DRAG_PX = 4;
+  const dragRef = useRef<{ pid: number; downAt: number; world: { x: number; y: number } } | null>(null);
 
-  const startPinch = useCallback(() => {
-    const pts = Array.from(pointersRef.current.values());
-    if (pts.length < 2) return;
-    const [a, b] = pts;
-    const dist = Math.hypot(b.x - a.x, b.y - a.y);
-    if (dist < 1) return;
-    const v = viewportRef.current;
-    pinchRef.current = {
-      startDist: dist,
-      startZoom: v.zoom,
-      startCenter: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
-      startViewport: { x: v.x, y: v.y, zoom: v.zoom },
-    };
-  }, []);
-
-  const applyPinch = useCallback(() => {
-    const pr = pinchRef.current;
-    if (!pr) return;
-    const pts = Array.from(pointersRef.current.values());
-    if (pts.length < 2) return;
-    const [a, b] = pts;
-    const dist = Math.hypot(b.x - a.x, b.y - a.y);
-    if (dist < 1) return;
-    const center = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const z = clamp((pr.startZoom * dist) / pr.startDist, 0.1, 3);
-    // Pin the world point under the starting centroid to the moving centroid.
-    // This combines pan + zoom in a single transform.
-    const sx = pr.startCenter.x - rect.left;
-    const sy = pr.startCenter.y - rect.top;
-    const worldX = (sx - pr.startViewport.x) / pr.startViewport.zoom;
-    const worldY = (sy - pr.startViewport.y) / pr.startViewport.zoom;
-    const nx = center.x - rect.left;
-    const ny = center.y - rect.top;
-    commitViewport({
-      zoom: z,
-      x: nx - worldX * z,
-      y: ny - worldY * z,
-    });
-  }, [commitViewport]);
+  /* A+W1 touch: multi-touch bookkeeping for pinch-zoom + two-finger pan.
+     We track every active pointer's last screen position in pointersRef so
+     that, with 2+ pointers down, we can compute centroid + distance deltas
+     even though React's pointer events fire one-at-a-time. The dedicated
+     pinchRef snapshots the last frame's centroid/distance so we apply only
+     the delta between frames, not the cumulative drift since gesture-start. */
+  const pointersRef = useRef<Map<number, { x: number; y: number; type: string }>>(
+    new Map(),
+  );
+  const pinchRef = useRef<{
+    distance: number;
+    centerX: number;
+    centerY: number;
+  } | null>(null);
+  /** True iff an Apple Pencil pointer is currently down. Touch pointers that
+      arrive while a pen is active get ignored — palm rejection. */
+  const penActiveRef = useRef(false);
+  /** Last pressure value observed from a pen pointer. Future ink tools can
+      read it; today nothing consumes it but the wiring is here. */
+  const lastPenPressureRef = useRef(1);
+  /* /A+W1 touch */
 
   const onPointerDown = (e: React.PointerEvent) => {
-    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    /* A+W1 touch: register every pointer, even the ones that don't start
+       a pan or a draw, so the pinch-detection logic in onPointerMove can
+       see the full constellation. */
+    pointersRef.current.set(e.pointerId, {
+      x: e.clientX,
+      y: e.clientY,
+      type: e.pointerType,
+    });
 
-    // Second finger lands → enter pinch mode and abort any single-pointer gesture.
+    if (e.pointerType === 'pen') {
+      penActiveRef.current = true;
+      lastPenPressureRef.current = e.pressure || 1;
+    } else if (e.pointerType === 'touch' && penActiveRef.current) {
+      // Palm rejection: ignore touch pointers that arrive while a Pencil is
+      // also down on the canvas. The Pencil wins.
+      return;
+    }
+
+    // Two (or more) touches always pan — never start a draw/comment/sticky.
     if (pointersRef.current.size >= 2) {
-      if (panning) setPanning(false);
-      if (dragRef.current) {
-        try {
-          (e.currentTarget as Element).releasePointerCapture?.(dragRef.current.pid);
-        } catch {
-          /* ignore */
-        }
-        // Tell the parent the drag is over without committing a draft.
-        const world = screenToWorld(e.clientX, e.clientY);
-        onBackgroundDragEnd?.(world);
-        dragRef.current = null;
-      }
-      startPinch();
+      // If a single-pointer drag was just starting (sticky/arrow tool), abort
+      // it so the second finger doesn't accidentally place a frame.
+      dragRef.current = null;
+      const pts = [...pointersRef.current.values()];
+      const a = pts[0]!;
+      const b = pts[1]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      pinchRef.current = {
+        distance: Math.hypot(dx, dy),
+        centerX: (a.x + b.x) / 2,
+        centerY: (a.y + b.y) / 2,
+      };
+      setPanning(true);
       e.preventDefault();
       return;
     }
+    /* /A+W1 touch */
 
     // background click to deselect
     const isBg = (e.target as HTMLElement).dataset.canvasBg === 'true';
@@ -390,18 +303,14 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       e.preventDefault();
     } else if (isBg) {
       const world = screenToWorld(e.clientX, e.clientY);
-      // Always start a "maybe drag" gesture. If the user releases without
-      // moving past the threshold, we treat it as a click and fire
-      // onBackgroundClick on pointerUp instead of onBackgroundDragStart.
-      dragRef.current = {
-        pid: e.pointerId,
-        downAt: Date.now(),
-        world,
-        screen: { x: e.clientX, y: e.clientY },
-        moved: false,
-      };
-      (e.target as Element).setPointerCapture(e.pointerId);
-      e.preventDefault();
+      if (onBackgroundDragStart) {
+        dragRef.current = { pid: e.pointerId, downAt: Date.now(), world };
+        (e.target as Element).setPointerCapture(e.pointerId);
+        onBackgroundDragStart(world);
+        e.preventDefault();
+      } else {
+        onBackgroundClick?.(world);
+      }
     }
   };
   const lastCursorRef = useRef<{ x: number; y: number } | null>(null);
@@ -413,38 +322,72 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     const w = screenToWorld(c.x, c.y);
     onCursorMove(w.x, w.y);
   }, [onCursorMove, screenToWorld]);
+  // Cancel a pending cursor flush on unmount — once containerRef is gone,
+  // screenToWorld degrades to {0,0} and we'd broadcast a bogus origin cursor.
+  useEffect(
+    () => () => {
+      if (cursorRafRef.current != null) cancelAnimationFrame(cursorRafRef.current);
+    },
+    [],
+  );
 
   const onPointerMove = (e: React.PointerEvent) => {
+    /* A+W1 touch: keep the per-pointer position in sync so pinch math sees
+       this frame's coordinates, not stale ones. */
     if (pointersRef.current.has(e.pointerId)) {
-      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      pointersRef.current.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+        type: e.pointerType,
+      });
+    }
+    if (e.pointerType === 'pen') {
+      lastPenPressureRef.current = e.pressure || 1;
     }
 
-    if (pinchRef.current && pointersRef.current.size >= 2) {
-      applyPinch();
+    // Pinch / two-finger pan handling — when 2+ pointers are down we always
+    // route the move into the gesture, never into a draw/comment/sticky path.
+    if (pointersRef.current.size >= 2 && pinchRef.current) {
+      const pts = [...pointersRef.current.values()];
+      const a = pts[0]!;
+      const b = pts[1]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.hypot(dx, dy);
+      const cx = (a.x + b.x) / 2;
+      const cy = (a.y + b.y) / 2;
+
+      // Pan delta = centroid movement.
+      const panDx = cx - pinchRef.current.centerX;
+      const panDy = cy - pinchRef.current.centerY;
+      // Zoom delta = distance ratio.
+      const zoomFactor =
+        pinchRef.current.distance > 0 ? dist / pinchRef.current.distance : 1;
+
+      setViewport((v) => {
+        const nextZoom = clamp(v.zoom * zoomFactor, 0.1, 3);
+        const ratio = nextZoom / v.zoom;
+        const rect = containerRef.current?.getBoundingClientRect();
+        const ax = rect ? cx - rect.left : cx;
+        const ay = rect ? cy - rect.top : cy;
+        return {
+          zoom: nextZoom,
+          x: ax - (ax - v.x) * ratio + panDx,
+          y: ay - (ay - v.y) * ratio + panDy,
+        };
+      });
+
+      pinchRef.current = { distance: dist, centerX: cx, centerY: cy };
       e.preventDefault();
       return;
     }
+    /* /A+W1 touch */
 
     if (panning) {
-      commitViewport((v) => ({
-        ...v,
-        x: v.x + e.movementX,
-        y: v.y + e.movementY,
-      }));
+      setViewport((v) => ({ ...v, x: v.x + e.movementX, y: v.y + e.movementY }));
     }
-    if (dragRef.current) {
-      const d = dragRef.current;
-      if (!d.moved) {
-        const dx = e.clientX - d.screen.x;
-        const dy = e.clientY - d.screen.y;
-        if (Math.hypot(dx, dy) >= CLICK_VS_DRAG_PX) {
-          d.moved = true;
-          onBackgroundDragStart?.(d.world);
-        }
-      }
-      if (d.moved && onBackgroundDragMove) {
-        onBackgroundDragMove(screenToWorld(e.clientX, e.clientY));
-      }
+    if (dragRef.current && onBackgroundDragMove) {
+      onBackgroundDragMove(screenToWorld(e.clientX, e.clientY));
     }
     if (onCursorMove) {
       lastCursorRef.current = { x: e.clientX, y: e.clientY };
@@ -454,40 +397,29 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     }
   };
   const onPointerUp = (e: React.PointerEvent) => {
+    /* A+W1 touch: drop the lifted pointer; if we're back below 2 pointers,
+       clear the pinch state so the next gesture starts fresh. */
     pointersRef.current.delete(e.pointerId);
-
-    if (pinchRef.current && pointersRef.current.size < 2) {
-      // End of pinch. Don't promote the remaining finger (if any) to a pan —
-      // makes the gesture feel less twitchy when one finger lifts before the
-      // other.
-      pinchRef.current = null;
-      return;
+    if (e.pointerType === 'pen') {
+      penActiveRef.current = false;
     }
+    if (pointersRef.current.size < 2) {
+      pinchRef.current = null;
+    }
+    if (pointersRef.current.size === 0) {
+      // No more fingers down — release any leftover panning state.
+      setPanning(false);
+    }
+    /* /A+W1 touch */
 
-    if (panning) {
+    if (panning && pointersRef.current.size === 0) {
       setPanning(false);
       (e.target as Element).releasePointerCapture?.(e.pointerId);
     }
     if (dragRef.current && dragRef.current.pid === e.pointerId) {
-      const d = dragRef.current;
       const world = screenToWorld(e.clientX, e.clientY);
-      if (d.moved) {
-        onBackgroundDragEnd?.(world);
-      } else {
-        // No appreciable movement → it was a click, not a drag.
-        onBackgroundClick?.(d.world);
-      }
+      onBackgroundDragEnd?.(world);
       (e.target as Element).releasePointerCapture?.(e.pointerId);
-      dragRef.current = null;
-    }
-  };
-  const onPointerCancel = (e: React.PointerEvent) => {
-    pointersRef.current.delete(e.pointerId);
-    if (pinchRef.current && pointersRef.current.size < 2) {
-      pinchRef.current = null;
-    }
-    if (panning) setPanning(false);
-    if (dragRef.current && dragRef.current.pid === e.pointerId) {
       dragRef.current = null;
     }
   };
@@ -496,7 +428,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     <div
       ref={containerRef}
       className={
-        'canvas-surface relative h-full w-full overflow-hidden bg-canvas dotted-grid ' +
+        'relative h-full w-full overflow-hidden bg-canvas dotted-grid ' +
         (panning
           ? 'cursor-grabbing'
           : handMode
@@ -508,15 +440,21 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       style={{
         backgroundSize: `${24 * viewport.zoom}px ${24 * viewport.zoom}px`,
         backgroundPosition: `${viewport.x}px ${viewport.y}px`,
+        /* A+W1 touch: block iOS's native double-tap zoom + bounce-scroll so
+           pinch-zoom + two-finger pan stay in our handlers. */
+        touchAction: 'none',
       }}
       data-canvas-bg="true"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={onPointerCancel}
+      /* A+W1 touch: pointercancel fires when iOS reclaims a pointer (e.g.
+         system gesture, second app), so we mirror onPointerUp to clean state. */
+      onPointerCancel={onPointerUp}
+      onPointerLeave={onPointerUp}
     >
       <div
-        ref={wrapperRef}
+        data-testid="foldo-canvas-frames"
         className="no-select absolute left-0 top-0 origin-top-left"
         style={{
           transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,

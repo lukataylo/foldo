@@ -125,6 +125,24 @@ export function initBridge(options: BridgeOptions): BridgeHandle {
     });
   };
 
+  // Outbound: zoom gesture. A ctrl/⌘+wheel (or trackpad pinch) over this iframe
+  // never reaches the parent canvas — the cross-origin iframe swallows it — so
+  // the browser would zoom the whole page natively and push the canvas
+  // toolbars off-screen. Cancel the native zoom here and forward the gesture so
+  // the canvas can zoom itself instead.
+  const onWheel = (e: WheelEvent) => {
+    if (!isEmbedded()) return;
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    post({
+      type: 'foldo.sample.wheel',
+      deltaX: e.deltaX,
+      deltaY: e.deltaY,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    });
+  };
+
   // Inbound: messages from canvas
   const onMessage = (e: MessageEvent) => {
     if (e.origin !== PARENT_ORIGIN) return;
@@ -167,6 +185,7 @@ export function initBridge(options: BridgeOptions): BridgeHandle {
   document.addEventListener('mouseover', onMouseOver, true);
   document.addEventListener('mouseout', onMouseOut, true);
   window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('wheel', onWheel, { passive: false, capture: true });
   window.addEventListener('message', onMessage);
 
   // Announce ready (only meaningful when embedded, but harmless otherwise).
@@ -185,6 +204,7 @@ export function initBridge(options: BridgeOptions): BridgeHandle {
       document.removeEventListener('mouseover', onMouseOver, true);
       document.removeEventListener('mouseout', onMouseOut, true);
       window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('wheel', onWheel, { capture: true });
       window.removeEventListener('message', onMessage);
     },
     setReviewMode: applyReviewMode,

@@ -48,15 +48,26 @@ export async function registerUploadRoutes(app: FastifyInstance): Promise<void> 
     // Default Fastify JSON limit is 1 MB; raise it for image uploads so a
     // typical PNG (which base64-bloats by ~33%) fits comfortably.
     bodyLimit: 16 * 1024 * 1024,
-    // Per-route cap on uploads (storage + bandwidth costs money). Looser
-    // than the global cap would imply but still bounded.
-    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (req, reply) => {
     requireUser(req);
     const body = req.body ?? ({} as UploadBody);
     if (!body.filename || !body.contentType || !body.dataBase64) {
       return reply.code(400).send({
         error: 'filename, contentType, dataBase64 required',
+        code: 'BAD_REQUEST',
+      });
+    }
+    // Filename never touches the storage path (we mint a fresh `uploads/<newId>.<ext>`
+    // key below) but it does feed extFor() and is echoed back in some clients.
+    // Reject path-traversal characters defensively so a malicious filename
+    // can never sneak into a future code path that uses it as a path component.
+    if (
+      body.filename.includes('..') ||
+      body.filename.includes('/') ||
+      body.filename.includes('\\')
+    ) {
+      return reply.code(400).send({
+        error: 'Invalid filename',
         code: 'BAD_REQUEST',
       });
     }

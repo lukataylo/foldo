@@ -1,13 +1,10 @@
 import {
-  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
-import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { Readable } from 'node:stream';
 import type { Storage, StoredObject } from './index.ts';
 
 /**
@@ -36,7 +33,13 @@ export interface S3StorageConfig {
   endpoint?: string;
   accessKeyId: string;
   secretAccessKey: string;
-  /** Seconds a presigned GET URL stays valid. Default 1 hour. */
+  /**
+   * Seconds a presigned GET URL stays valid. Default 300 (5 min) — short
+   * enough that a leaked link expires before it's useful, long enough to
+   * survive a slow client tick. Bump via `FOLDO_S3_SIGNED_URL_TTL` if a
+   * particular deploy needs a longer window (e.g. a long video that's
+   * mid-buffer when the URL would have expired).
+   */
   signedUrlTtlSeconds?: number;
 }
 
@@ -47,7 +50,7 @@ export class S3Storage implements Storage {
 
   constructor(config: S3StorageConfig) {
     this.bucket = config.bucket;
-    this.signedUrlTtlSeconds = config.signedUrlTtlSeconds ?? 3600;
+    this.signedUrlTtlSeconds = config.signedUrlTtlSeconds ?? 300;
     this.client = new S3Client({
       region: config.region,
       endpoint: config.endpoint,
@@ -76,31 +79,6 @@ export class S3Storage implements Storage {
     return { key, size: body.length, contentType };
   }
 
-  async putStream(
-    key: string,
-    body: Readable,
-    contentType: string,
-  ): Promise<StoredObject> {
-    let size = 0;
-    body.on('data', (chunk: Buffer) => {
-      size += chunk.length;
-    });
-    // `Upload` does a streaming multipart PUT — it never needs the total
-    // length up front, so a recording is uploaded as it arrives rather than
-    // buffered whole in memory.
-    const upload = new Upload({
-      client: this.client,
-      params: {
-        Bucket: this.bucket,
-        Key: key,
-        Body: body,
-        ContentType: contentType,
-      },
-    });
-    await upload.done();
-    return { key, size, contentType };
-  }
-
   async get(
     key: string,
   ): Promise<{ body: Buffer; contentType: string } | null> {
@@ -127,16 +105,6 @@ export class S3Storage implements Storage {
       return true;
     } catch {
       return false;
-    }
-  }
-
-  async remove(key: string): Promise<void> {
-    try {
-      await this.client.send(
-        new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
-      );
-    } catch {
-      // best-effort: S3 DELETE is already idempotent for missing keys
     }
   }
 

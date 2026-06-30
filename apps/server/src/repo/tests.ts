@@ -12,7 +12,7 @@ import type {
   TestTaskStat,
 } from '@foldo/protocol';
 import { exec, query, queryOne } from '../db.ts';
-import { newId, nowIso, parseJson } from '../util.ts';
+import { newId, nowIso } from '../util.ts';
 
 // ---------- rows ----------
 interface TestRow {
@@ -24,8 +24,9 @@ interface TestRow {
   frameable: boolean | null;
   dom_snapshot_key: string | null;
   intro: string;
-  recording_modes_json: string;
-  questionnaire_json: string | null;
+  // JSONB columns — pg returns them already parsed.
+  recording_modes_json: RecordingMode[] | null;
+  questionnaire_json: TestQuestion[] | null;
   status: string;
   share_token: string;
   response_limit: number | null;
@@ -43,7 +44,7 @@ interface TestTaskRow {
   instruction: string;
   success_hint: string | null;
   start_url: string | null;
-  start_recipe_json: string | null;
+  start_recipe_json: RecipeStep[] | null;
 }
 
 const DEFAULT_RECORDING_MODES: RecordingMode[] = ['screen_voice', 'voice_only'];
@@ -58,13 +59,8 @@ function rowToTest(r: TestRow): Test {
     frameable: r.frameable ?? null,
     domSnapshotKey: r.dom_snapshot_key ?? undefined,
     intro: r.intro,
-    recordingModes: parseJson<RecordingMode[]>(
-      r.recording_modes_json,
-      DEFAULT_RECORDING_MODES,
-    ),
-    questionnaire: r.questionnaire_json
-      ? parseJson<TestQuestion[]>(r.questionnaire_json, [])
-      : undefined,
+    recordingModes: r.recording_modes_json ?? DEFAULT_RECORDING_MODES,
+    questionnaire: r.questionnaire_json ?? undefined,
     status: r.status as TestStatus,
     shareToken: r.share_token,
     responseLimit: r.response_limit ?? undefined,
@@ -84,9 +80,7 @@ function rowToTask(r: TestTaskRow): TestTask {
     instruction: r.instruction,
     successHint: r.success_hint ?? undefined,
     startUrl: r.start_url ?? undefined,
-    startRecipe: r.start_recipe_json
-      ? parseJson<RecipeStep[]>(r.start_recipe_json, [])
-      : undefined,
+    startRecipe: r.start_recipe_json ?? undefined,
   };
 }
 
@@ -98,7 +92,7 @@ function newTestToken(): string {
   const bytes = randomBytes(10);
   let out = '';
   for (let i = 0; i < bytes.length; i++) {
-    out += TOKEN_ALPHABET[bytes[i] % TOKEN_ALPHABET.length];
+    out += TOKEN_ALPHABET[(bytes[i] ?? 0) % TOKEN_ALPHABET.length];
   }
   return out;
 }
@@ -297,6 +291,7 @@ export async function replaceTasks(
   const created: TestTask[] = [];
   for (let i = 0; i < tasks.length; i++) {
     const input = tasks[i];
+    if (!input) continue; // bounds-checked, but `noUncheckedIndexedAccess` widens the type.
     const task: TestTask = {
       id: newId('tt'),
       testId,
@@ -419,9 +414,10 @@ function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
-    : sorted[mid];
+  if (sorted.length % 2 === 0) {
+    return Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
+  }
+  return sorted[mid] ?? 0;
 }
 
 /**

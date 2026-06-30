@@ -4,7 +4,6 @@
 // issue exposes a "Make this an edit" action that drops a comment on the frame
 // (wired through App.tsx so it shares the online/offline comment-create path).
 
-import type { HTMLAttributes } from 'react';
 import type {
   Branch,
   Frame,
@@ -16,17 +15,16 @@ import type {
   TranscriptCue,
   TranscriptStatus,
 } from '@foldo/protocol';
-import { FrameShell } from './FrameShell';
-import { frameStyleToCss } from '../plugins/frameStyle';
-import { API_BASE } from '../api/client';
+import { FrameMeta } from './FrameMeta';
+import { resolveApiUrl } from '../api/client';
 import { WaveformPlayer } from '../test/WaveformPlayer';
 
 interface Props {
   frame: Frame;
   branch: Branch;
+  zoom?: number;
   /** Drop a comment on this frame from a synthesis issue ("Make this an edit"). */
   onMakeEditFromIssue: (frame: Frame, issue: TestSessionIssue) => void;
-  wrapperProps?: HTMLAttributes<HTMLDivElement>;
 }
 
 const OUTCOME_STYLE: Record<
@@ -67,8 +65,8 @@ const TRANSCRIPT_LABEL: Record<TranscriptStatus, string> = {
 export function TestSessionFrame({
   frame,
   branch,
+  zoom = 1,
   onMakeEditFromIssue,
-  wrapperProps,
 }: Props) {
   const content = frame.content as TestSessionFrameContent;
   const recordingSrc = content.recordingUrl
@@ -76,10 +74,19 @@ export function TestSessionFrame({
     : null;
 
   return (
-    <FrameShell frame={frame} branch={branch} wrapperProps={wrapperProps}>
+    <div
+      className="absolute"
+      style={{
+        left: frame.position.x,
+        top: frame.position.y,
+        width: frame.size.width,
+        height: frame.size.height,
+      }}
+    >
+      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
       <div
         className="flex h-full w-full flex-col overflow-hidden rounded-md border border-hairlineSoft bg-panel frame-shadow"
-        style={{ pointerEvents: 'auto', ...frameStyleToCss(frame.style) }}
+        style={{ pointerEvents: 'auto' }}
       >
         {/* Header — tester label + recording meta */}
         <div className="flex items-center justify-between gap-3 border-b border-hairlineSoft bg-panelMute px-4 py-3">
@@ -101,7 +108,7 @@ export function TestSessionFrame({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto" data-canvas-scroll="true">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {/* Recording */}
           <Section>
             {recordingSrc ? (
@@ -185,7 +192,7 @@ export function TestSessionFrame({
           )}
         </div>
       </div>
-    </FrameShell>
+    </div>
   );
 }
 
@@ -305,10 +312,7 @@ function IssueRow({
 }
 
 function absoluteUrl(serverRelative: string): string {
-  if (/^https?:\/\//i.test(serverRelative)) return serverRelative;
-  return `${API_BASE}${
-    serverRelative.startsWith('/') ? '' : '/'
-  }${serverRelative}`;
+  return resolveApiUrl(serverRelative);
 }
 
 function recordingModeLabel(mode: TestSessionFrameContent['recordingMode']): string {

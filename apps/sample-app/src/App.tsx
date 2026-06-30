@@ -92,7 +92,7 @@ export default function App() {
         .map((s) => s.trim())
         .filter(Boolean)
         .map((s) => {
-          const [action, rest] = s.split('=', 2);
+          const [action = '', rest = ''] = s.split('=', 2);
           if (action === 'wait' || action === 'scroll' || action === 'goto') {
             return { action, value: rest };
           }

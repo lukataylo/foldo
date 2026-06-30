@@ -14,57 +14,53 @@ import {
   insertComment,
   updateComment,
 } from '../repo/comments.ts';
-import { canEditBoard, isMember } from '../repo/members.ts';
+import { canEditBoard } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
+import { userMutationLimit } from '../rateLimit.ts';
 import { newId, nowIso } from '../util.ts';
 
-async function requireEditor(userId: string, boardId: string): Promise<void> {
-  if (!(await canEditBoard(boardId, userId))) {
-    const err = new Error('Not a member of this board') as Error & {
-      statusCode?: number;
-    };
-    err.statusCode = 403;
-    throw err;
-  }
-}
-
-async function requireMember(userId: string, boardId: string): Promise<void> {
-  if (!(await isMember(boardId, userId))) {
-    const err = new Error('Not a member of this board') as Error & {
-      statusCode?: number;
-    };
-    err.statusCode = 403;
-    throw err;
-  }
-}
+/**
+ * Cap a single user's comment-creation rate. 500/hour easily covers an
+ * active reviewer landing pins on every frame of a busy board, but rejects
+ * a script trying to drown a board in noise. Hourly window (not per-minute)
+ * because comment activity is bursty — humans land 10 in a minute then go
+ * back to thinking for 20.
+ */
+const commentCreateLimit = userMutationLimit({
+  bucket: 'comments-create',
+  max: 500,
+  windowMs: 60 * 60_000,
+});
 
 export async function registerCommentRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: CreateCommentRequest }>('/api/comments', {
-    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
-  }, async (req, reply) => {
-    const user = requireUser(req);
-    const body = req.body;
-    // `text` may be empty when the client opens a fresh drop-pin in compose
-    // mode — the actual body lands via the subsequent PATCH. Require the
-    // field to be a string but allow ''.
-    if (!body?.boardId || !body?.frameId || typeof body?.text !== 'string') {
-      return reply.code(400).send({ error: 'Invalid comment body', code: 'BAD_REQUEST' });
-    }
-    // Comments require membership; even viewers can leave them in this MVP.
-    await requireMember(user.id, body.boardId);
-    const comment = await insertComment({
-      id: newId('c'),
-      boardId: body.boardId,
-      frameId: body.frameId,
-      authorUserId: user.id,
-      text: body.text,
-      pin: body.pin,
-      anchor: body.anchor,
-      target: body.target,
-    });
-    hub.broadcast(comment.boardId, { type: 'comment.added', comment });
-    return reply.send(comment);
-  });
+  app.post<{ Body: CreateCommentRequest }>(
+    '/api/comments',
+    { preHandler: commentCreateLimit },
+    async (req, reply) => {
+      const user = requireUser(req);
+      const body = req.body;
+      // text may legitimately be '' — the pin-drop flow POSTs an empty body
+      // so the pin appears instantly and the user types into the popover
+      // afterwards. Reject only a missing/non-string text.
+      if (!body?.boardId || !body?.frameId || typeof body.text !== 'string') {
+        return reply.code(400).send({ error: 'Invalid comment body', code: 'BAD_REQUEST' });
+      }
+      // Comments require membership; even viewers can leave them in this MVP.
+      await app.requireMember(req, body.boardId);
+      const comment = await insertComment({
+        id: newId('c'),
+        boardId: body.boardId,
+        frameId: body.frameId,
+        authorUserId: user.id,
+        text: body.text,
+        pin: body.pin,
+        anchor: body.anchor,
+        target: body.target,
+      });
+      hub.broadcast(comment.boardId, { type: 'comment.added', comment });
+      return reply.send(comment);
+    },
+  );
 
   app.patch<{ Params: { id: string }; Body: UpdateCommentRequest }>(
     '/api/comments/:id',
@@ -93,7 +89,7 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
       const user = requireUser(req);
       const existing = await getCommentById(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'Comment not found', code: 'NOT_FOUND' });
-      await requireMember(user.id, existing.boardId);
+      await app.requireMember(req, existing.boardId);
       if (!req.body?.text) {
         return reply.code(400).send({ error: 'Missing reply text', code: 'BAD_REQUEST' });
       }

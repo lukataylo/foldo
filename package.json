@@ -7,23 +7,30 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n server,sample,web -c blue,magenta,cyan \"npm:dev:server\" \"npm:dev:sample\" \"npm:dev:web\"",
+    "dev": "node scripts/dev.mjs",
     "dev:server": "npm run dev --workspace apps/server",
     "dev:web": "npm run dev --workspace apps/web",
     "dev:sample": "npm run dev --workspace apps/sample-app",
     "dev:sample-app": "npm run dev --workspace apps/sample-app",
     "dev:mcp": "npm run dev --workspace apps/mcp",
+    "dev:shotter": "npm run dev --workspace apps/shotter",
     "build": "npm run build --workspaces --if-present",
     "build:extension": "npm run build --workspace apps/extension",
+    "pack:extension": "npm run pack --workspace apps/extension",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "seed": "npm run seed --workspace apps/server",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",
     "concurrently": "^9.1.0",
-    "typescript": "^5.6.3"
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.4"
   },
   "engines": {
     "node": ">=20"

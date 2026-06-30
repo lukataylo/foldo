@@ -1,91 +1,85 @@
-import { Fragment, useMemo } from 'react';
-import type { ToolPlugin } from '@foldo/plugin-api';
-import { registry } from '../plugins/registry';
+// Vertical tool pill on the canvas's left edge. After the Step 9 fast-follow
+// this is a thin wrapper around the `toolbar` plugin surface — every button
+// you see here is contributed by the `core/tools` plugin (apps/web/src/
+// plugins/core-tools/index.tsx).
+//
+// The component is kept around (rather than deleted in favour of the
+// bottom-center PluginToolBar) for two reasons:
+//   1. The vertical-pill placement is part of the canvas's visual identity.
+//   2. Every e2e spec clicks `getByTestId('foldo-rail-tool-<id>')` — those
+//      testids stay alive here so the test suite doesn't churn.
+//
+// /* A+W1 features */ — the legacy `onChange` prop was dead (the buttons
+// route through `window.__foldoSetTool` via the plugin's ToolSpec.activate),
+// so it was removed from the signature. App.tsx's call site no longer
+// passes it either.
+
+import { Fragment } from 'react';
+import { usePluginSurfaces } from '../plugins/registry';
 import type { Tool } from '../types';
 
 interface Props {
   tool: Tool;
-  onChange: (t: Tool) => void;
-  /**
-   * Render orientation. `vertical` is the default left-rail layout; `horizontal`
-   * is used when the Layers panel takes over the left side and the rail moves
-   * to the bottom of the screen.
-   */
-  orientation?: 'vertical' | 'horizontal';
 }
 
-export function LeftRail({ tool, onChange, orientation = 'vertical' }: Props) {
-  const tools = useMemo(() => registry.listTools(), []);
-  const groups = useMemo(() => groupByContinuousField(tools, (t) => t.group), [tools]);
-
-  const wrapClass =
-    orientation === 'horizontal'
-      ? 'pointer-events-none absolute left-1/2 z-40 -translate-x-1/2 safe-bottom'
-      : 'pointer-events-none absolute left-3 top-1/2 z-40 -translate-y-1/2';
-  const wrapStyle: React.CSSProperties =
-    orientation === 'horizontal' ? { bottom: `calc(1rem + env(safe-area-inset-bottom, 0px))` } : {};
-
-  const innerClass =
-    orientation === 'horizontal'
-      ? 'pointer-events-auto flex items-center gap-0.5 rounded-xl border border-hairlineSoft bg-panel p-1 shadow-panel'
-      : 'pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-hairlineSoft bg-panel p-1 shadow-panel';
+export function LeftRail({ tool }: Props) {
+  const surfaces = usePluginSurfaces('toolbar');
+  const tools = surfaces.flatMap((s) => s.tools);
+  // Don't render the container if no plugin contributes tools — the slot is
+  // visually-empty and stealing left-edge real estate would be a regression.
+  if (tools.length === 0) return null;
 
   return (
-    <div className={wrapClass} style={wrapStyle}>
-      <div className={innerClass}>
-        {groups.map((group, gi) => (
-          <Fragment key={gi}>
-            {gi > 0 &&
-              (orientation === 'horizontal' ? (
-                <div className="mx-0.5 h-4 w-px bg-hairlineSoft" />
-              ) : (
+    <div
+      data-testid="foldo-canvas-leftrail"
+      className="pointer-events-none absolute left-3 top-1/2 z-40 -translate-y-1/2"
+    >
+      <div
+        role="toolbar"
+        aria-label="Canvas tools"
+        aria-orientation="vertical"
+        className="pointer-events-auto flex flex-col gap-0.5 rounded-xl border border-hairlineSoft bg-panel p-1 shadow-panel"
+      >
+        {tools.map((t, i) => {
+          const prev = i > 0 ? tools[i - 1] : undefined;
+          const groupChanged = prev && (prev.group ?? '') !== (t.group ?? '');
+          return (
+            <Fragment key={t.id}>
+              {groupChanged ? (
                 <div className="my-0.5 h-px bg-hairlineSoft" />
-              ))}
-            {group.map((t) => (
+              ) : null}
               <RailButton
-                key={t.id}
-                label={t.label}
+                toolId={t.id}
+                label={
+                  t.shortcut ? `${t.label} (${t.shortcut.toUpperCase()})` : t.label
+                }
+                ariaLabel={t.label}
                 active={tool === t.id}
-                onClick={() => onChange(t.id)}
+                onClick={t.activate}
                 shortcut={t.shortcut}
               >
-                <t.Icon />
+                {t.icon}
               </RailButton>
-            ))}
-          </Fragment>
-        ))}
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-/** Split a sorted list into runs sharing the same field value. */
-function groupByContinuousField<T>(
-  items: T[],
-  getField: (item: T) => string | undefined,
-): T[][] {
-  const groups: T[][] = [];
-  let last: string | undefined | null = null;
-  for (const item of items) {
-    const field = getField(item);
-    if (field !== last || groups.length === 0) {
-      groups.push([item]);
-      last = field;
-    } else {
-      groups[groups.length - 1].push(item);
-    }
-  }
-  return groups;
-}
-
 function RailButton({
+  toolId,
   label,
+  ariaLabel,
   active,
   onClick,
   shortcut,
   children,
 }: {
+  toolId: string;
   label: string;
+  ariaLabel?: string;
   active?: boolean;
   onClick: () => void;
   shortcut?: string;
@@ -93,11 +87,15 @@ function RailButton({
 }) {
   return (
     <button
+      data-testid={`foldo-rail-tool-${toolId}`}
       title={label}
-      aria-label={label}
+      aria-label={ariaLabel ?? label}
+      aria-keyshortcuts={shortcut ?? undefined}
+      aria-pressed={!!active}
       onClick={onClick}
+      /* A+W1 touch: 44x44 (h-11 w-11) for iPad finger-friendliness; was 36x36. */
       className={
-        'touch-target group relative flex h-9 w-9 items-center justify-center rounded-md transition-colors ' +
+        'group relative flex h-11 w-11 items-center justify-center rounded-md transition-colors ' +
         (active
           ? 'bg-accent/15 text-accent'
           : 'text-inkMute hover:bg-white/5 hover:text-ink')
@@ -112,6 +110,3 @@ function RailButton({
     </button>
   );
 }
-
-// Re-export so existing imports `import type { ToolPlugin } from "..."` keep working.
-export type { ToolPlugin };

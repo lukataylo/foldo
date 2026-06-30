@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle, INK, MarketingLayout, PILLOW, PromptCaret, SOFT_GREY, YELLOW } from './shared';
+import { CheckCircle, INK, MarketingLayout, MarketingPicture, PILLOW, PromptCaret, SOFT_GREY, YELLOW } from './shared';
 import { API_BASE } from './auth';
 
 const REASONS = [
@@ -110,7 +110,7 @@ export default function Demo() {
                 alignItems: 'center',
               }}
             >
-              <img
+              <MarketingPicture
                 src="/marketing/step-2-review.png"
                 alt=""
                 style={{ width: 80, height: 'auto', flex: 'none' }}
@@ -154,7 +154,7 @@ export default function Demo() {
           >
             {sent ? (
               <div style={{ textAlign: 'center', padding: '40px 12px' }}>
-                <img
+                <MarketingPicture
                   src="/marketing/step-4-verify.png"
                   alt="Foldo wagging tail"
                   style={{ width: 200, height: 'auto', margin: '0 auto 16px' }}

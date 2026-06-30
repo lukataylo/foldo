@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { FoldoMark, GitHubIcon, INK, MarketingStyles, useMarketingTheme, PAPER, PILLOW } from './shared';
+import { FoldoMark, GitHubIcon, INK, MarketingPicture, MarketingStyles, useMarketingTheme, PAPER, PILLOW } from './shared';
 import { apiLogin, storeAuth } from './auth';
 
 export default function Login() {
@@ -9,18 +9,6 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // `?expired=1` is set when a stale session bounced the user here.
-  // `?next=` is the same-origin path to return to after logging back in.
-  const params =
-    typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search)
-      : new URLSearchParams();
-  const expired = params.get('expired') === '1';
-  const nextParam = params.get('next');
-  // Only honour a same-origin absolute path — never an external/protocol URL.
-  const nextPath =
-    nextParam && /^\/(?!\/)/.test(nextParam) ? nextParam : '/home';
-
   async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault();
     if (submitting) return;
@@ -29,7 +17,7 @@ export default function Login() {
     try {
       const { token, user } = await apiLogin({ email, password });
       storeAuth(token, user);
-      window.location.assign(nextPath);
+      window.location.assign('/home');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
       setSubmitting(false);
@@ -38,6 +26,7 @@ export default function Login() {
 
   return (
     <div
+      className="marketing-root"
       style={{
         background: PAPER,
         color: INK,
@@ -101,22 +90,6 @@ export default function Login() {
             Log in to your canvas. Resume the review you abandoned last Thursday
             . The dog hasn't moved.
           </p>
-
-          {expired && (
-            <div
-              role="status"
-              style={{
-                marginBottom: 16,
-                padding: '10px 12px',
-                borderRadius: 10,
-                background: PILLOW,
-                color: INK,
-                fontSize: 13.5,
-              }}
-            >
-              Your session expired — please log in again to continue.
-            </div>
-          )}
 
           <form onSubmit={onSubmit}>
             <div style={{ marginBottom: 16 }}>
@@ -281,7 +254,7 @@ export default function Login() {
               designers, and the agent that just shipped commit #12.
             </p>
           </div>
-          <img
+          <MarketingPicture
             src="/marketing/pillow.png"
             alt="Foldo on a pillow"
             style={{

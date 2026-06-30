@@ -9,14 +9,14 @@ export interface AuthUser {
   initial: string;
   color: string;
   email?: string;
+  /** ISO timestamp when the user clicked the verify-email link; undefined if not yet. */
+  emailVerifiedAt?: string;
   kind: 'human' | 'agent';
 }
 
 export interface AuthResponse {
   token: string;
   user: AuthUser;
-  /** Whether the account's email is confirmed. Drives the verify banner. */
-  emailVerified?: boolean;
 }
 
 const TOKEN_KEY = 'foldo:token';
@@ -95,72 +95,5 @@ export async function apiLogout(): Promise<void> {
     localStorage.removeItem(USER_KEY);
   } catch {
     // ignore
-  }
-}
-
-// -------- account lifecycle: password reset & email verification --------
-
-/**
- * Request a password-reset email. The server always responds 200 (it never
- * reveals whether the email maps to an account), so callers should show the
- * same confirmation regardless of outcome.
- */
-export async function apiRequestPasswordReset(email: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/auth/request-password-reset`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
-  });
-  if (!res.ok) throw new Error(await parseErr(res));
-}
-
-/** Complete a password reset using the token from the emailed link. */
-export async function apiResetPassword(input: {
-  token: string;
-  password: string;
-}): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) throw new Error(await parseErr(res));
-}
-
-/** Confirm an email address using the token from the verification link. */
-export async function apiVerifyEmail(token: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/auth/verify-email`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token }),
-  });
-  if (!res.ok) throw new Error(await parseErr(res));
-}
-
-/** Resend the verification email to the logged-in user. */
-export async function apiResendVerification(): Promise<void> {
-  const token = readToken();
-  const res = await fetch(`${API_BASE}/api/auth/resend-verification`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
-  if (!res.ok) throw new Error(await parseErr(res));
-}
-
-/** The authenticated user plus their email-verification status. */
-export async function apiMe(): Promise<{
-  user: AuthUser;
-  emailVerified: boolean;
-} | null> {
-  const token = readToken();
-  if (!token) return null;
-  try {
-    const res = await fetch(`${API_BASE}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as { user: AuthUser; emailVerified: boolean };
-  } catch {
-    return null;
   }
 }

@@ -1,214 +1,132 @@
-// Account-lifecycle email. One `sendEmail` interface, two transports:
+// Email transport. Interface + selector + default stub implementation.
 //
-//   • Dev (default): writes each message as a standalone .html file under
-//     `.foldo-mail/` AND keeps the last ~20 in an in-memory ring buffer. The
-//     dev-only `GET /api/dev/last-email` route reads that ring so E2E specs
-//     can extract reset / verification links without real mail infrastructure.
-//   • Prod: nodemailer SMTP, configured from env. Used automatically whenever
-//     SMTP env vars are present.
+// Production switches by env:
+//   FOLDO_EMAIL_PROVIDER=stub    (default — writes to .foldo-email-outbox/)
+//   FOLDO_EMAIL_PROVIDER=resend  + RESEND_API_KEY + FOLDO_EMAIL_FROM
 //
-// Never logs secrets — only a one-line summary (to / subject) per message.
+// The stub is what dev + CI + Playwright use: every send writes a JSON file
+// to `.foldo-email-outbox/<rand>.json` so tests can poll for it.
 
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import nodemailer, { type Transporter } from 'nodemailer';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { jobLogger } from '../log.ts';
 
-export interface SendEmailInput {
+const log = jobLogger('email');
+
+export interface EmailMessage {
   to: string;
   subject: string;
-  html: string;
-  /** Plain-text fallback. Derived from `html` when omitted. */
-  text?: string;
-}
-
-export interface SentEmail {
-  to: string;
-  subject: string;
-  html: string;
   text: string;
-  sentAt: string;
+  /** Optional HTML body. Stub serialises both. */
+  html?: string;
+  /** Tag for logs + Playwright filtering (e.g. 'password-reset'). */
+  kind: string;
 }
 
-const FROM = process.env.FOLDO_MAIL_FROM ?? 'Foldo <no-reply@foldo.dev>';
-const MAIL_DIR = join(process.cwd(), '.foldo-mail');
-const RING_LIMIT = 20;
-
-/** Most-recent-last ring buffer of dev-transport messages. */
-const devRing: SentEmail[] = [];
-
-function pushRing(msg: SentEmail): void {
-  devRing.push(msg);
-  while (devRing.length > RING_LIMIT) devRing.shift();
+export interface EmailSender {
+  readonly name: string;
+  send(msg: EmailMessage): Promise<void>;
 }
-
-/** The most recent email sent to `address` (case-insensitive), or null. */
-export function lastEmailTo(address: string): SentEmail | null {
-  const want = address.trim().toLowerCase();
-  for (let i = devRing.length - 1; i >= 0; i--) {
-    if (devRing[i].to.toLowerCase() === want) return devRing[i];
-  }
-  return null;
-}
-
-function htmlToText(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-interface MailTransport {
-  send(input: Required<SendEmailInput> & { from: string }): Promise<void>;
-}
-
-/** Dev transport: persist to disk + ring buffer, log a one-liner. */
-const devTransport: MailTransport = {
-  async send(input) {
-    const sentAt = new Date().toISOString();
-    pushRing({
-      to: input.to,
-      subject: input.subject,
-      html: input.html,
-      text: input.text,
-      sentAt,
-    });
-    try {
-      await mkdir(MAIL_DIR, { recursive: true });
-      const safeTo = input.to.replace(/[^a-zA-Z0-9._@-]/g, '_');
-      const stamp = sentAt.replace(/[:.]/g, '-');
-      const file = join(MAIL_DIR, `${stamp}__${safeTo}.html`);
-      const doc = `<!doctype html>
-<meta charset="utf-8">
-<title>${escapeHtml(input.subject)}</title>
-<!-- to: ${escapeHtml(input.to)} | sent: ${sentAt} -->
-${input.html}`;
-      await writeFile(file, doc, 'utf8');
-    } catch (err) {
-      // Disk write is a dev convenience; the ring buffer is the source of
-      // truth for the dev endpoint, so a failure here is non-fatal.
-      console.warn('[email] dev transport could not write file:', String(err));
-    }
-    console.log(`[email] (dev) → ${input.to} · "${input.subject}"`);
-  },
-};
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-let smtpTransporter: Transporter | null = null;
-
-function smtpConfigured(): boolean {
-  return Boolean(
-    process.env.FOLDO_SMTP_URL ||
-      (process.env.FOLDO_SMTP_HOST && process.env.FOLDO_SMTP_PORT),
-  );
-}
-
-function getSmtpTransporter(): Transporter {
-  if (smtpTransporter) return smtpTransporter;
-  if (process.env.FOLDO_SMTP_URL) {
-    smtpTransporter = nodemailer.createTransport(process.env.FOLDO_SMTP_URL);
-  } else {
-    const port = Number(process.env.FOLDO_SMTP_PORT);
-    const user = process.env.FOLDO_SMTP_USER;
-    const pass = process.env.FOLDO_SMTP_PASS;
-    smtpTransporter = nodemailer.createTransport({
-      host: process.env.FOLDO_SMTP_HOST,
-      port,
-      secure: port === 465,
-      auth: user && pass ? { user, pass } : undefined,
-    });
-  }
-  return smtpTransporter;
-}
-
-/** Prod transport: nodemailer SMTP. */
-const smtpTransport: MailTransport = {
-  async send(input) {
-    await getSmtpTransporter().sendMail({
-      from: input.from,
-      to: input.to,
-      subject: input.subject,
-      html: input.html,
-      text: input.text,
-    });
-    console.log(`[email] (smtp) → ${input.to} · "${input.subject}"`);
-  },
-};
 
 /**
- * Send an account-lifecycle email. Picks the SMTP transport when SMTP env
- * vars are configured, otherwise the dev (file + ring) transport.
+ * Dev/CI implementation. Drops the email payload as JSON into
+ * `FOLDO_EMAIL_OUTBOX_DIR` (default `.foldo-email-outbox/`) so Playwright
+ * specs can read the outbound link instead of hitting a real SMTP server.
  */
-export async function sendEmail(input: SendEmailInput): Promise<void> {
-  const text = input.text ?? htmlToText(input.html);
-  const transport = smtpConfigured() ? smtpTransport : devTransport;
-  await transport.send({
-    from: FROM,
-    to: input.to,
-    subject: input.subject,
-    html: input.html,
-    text,
-  });
+class StubEmailSender implements EmailSender {
+  readonly name = 'stub';
+  private readonly dir: string;
+  constructor() {
+    this.dir = resolve(
+      process.env.FOLDO_EMAIL_OUTBOX_DIR ??
+        resolve(process.cwd(), '.foldo-email-outbox'),
+    );
+    try {
+      if (!existsSync(this.dir)) mkdirSync(this.dir, { recursive: true });
+    } catch (err) {
+      log.warn({ err, dir: this.dir }, 'failed to create email outbox dir');
+    }
+  }
+
+  async send(msg: EmailMessage): Promise<void> {
+    const filename = `${Date.now()}-${msg.kind}-${randomBytes(4).toString('hex')}.json`;
+    const path = resolve(this.dir, filename);
+    const payload = JSON.stringify(
+      { ts: new Date().toISOString(), ...msg },
+      null,
+      2,
+    );
+    try {
+      writeFileSync(path, payload + '\n', 'utf8');
+      log.info({ to: msg.to, kind: msg.kind, path }, 'stub email written');
+    } catch (err) {
+      log.error({ err, to: msg.to, kind: msg.kind }, 'stub email write failed');
+      throw err;
+    }
+  }
 }
 
-/** True when the dev (file/ring) transport is active. */
-export function isDevMailTransport(): boolean {
-  return !smtpConfigured();
+/**
+ * Resend (https://resend.com) implementation. Activated when
+ * FOLDO_EMAIL_PROVIDER=resend. Requires RESEND_API_KEY + FOLDO_EMAIL_FROM.
+ * The Resend HTTP API is simple enough that we hit it with fetch rather
+ * than pull in their SDK.
+ */
+class ResendEmailSender implements EmailSender {
+  readonly name = 'resend';
+  constructor(
+    private readonly apiKey: string,
+    private readonly from: string,
+  ) {}
+  async send(msg: EmailMessage): Promise<void> {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        from: this.from,
+        to: [msg.to],
+        subject: msg.subject,
+        text: msg.text,
+        html: msg.html ?? msg.text,
+        tags: [{ name: 'kind', value: msg.kind }],
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      log.error({ status: res.status, kind: msg.kind, body }, 'resend send failed');
+      throw new Error(`resend send failed (${res.status})`);
+    }
+    log.info({ to: msg.to, kind: msg.kind }, 'resend email sent');
+  }
 }
 
-// ---------- message templates ----------
+let cached: EmailSender | null = null;
 
-const APP_URL = process.env.FOLDO_APP_URL ?? 'http://localhost:5173';
-
-function layout(heading: string, bodyHtml: string): string {
-  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#111">
-  <div style="font-size:22px;font-weight:800;margin-bottom:8px">Foldo</div>
-  <h1 style="font-size:20px;margin:16px 0 12px">${escapeHtml(heading)}</h1>
-  ${bodyHtml}
-  <hr style="border:none;border-top:1px solid #E6E3DE;margin:28px 0 16px">
-  <p style="font-size:12px;color:#999">If you didn't expect this email you can safely ignore it.</p>
-</div>`;
+export function getEmailSender(): EmailSender {
+  if (cached) return cached;
+  const provider = (process.env.FOLDO_EMAIL_PROVIDER ?? 'stub').toLowerCase();
+  if (provider === 'resend') {
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.FOLDO_EMAIL_FROM;
+    if (!apiKey || !from) {
+      log.error(
+        { provider },
+        'FOLDO_EMAIL_PROVIDER=resend but RESEND_API_KEY / FOLDO_EMAIL_FROM not set; falling back to stub',
+      );
+    } else {
+      cached = new ResendEmailSender(apiKey, from);
+      return cached;
+    }
+  }
+  cached = new StubEmailSender();
+  return cached;
 }
 
-function button(href: string, label: string): string {
-  return `<p style="margin:20px 0"><a href="${href}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:11px 20px;border-radius:10px;font-weight:700;font-size:14px">${escapeHtml(label)}</a></p>
-  <p style="font-size:12px;color:#888;word-break:break-all">Or paste this link: <br>${href}</p>`;
-}
-
-export function passwordResetEmail(token: string): {
-  subject: string;
-  html: string;
-} {
-  const link = `${APP_URL}/reset?token=${encodeURIComponent(token)}`;
-  return {
-    subject: 'Reset your Foldo password',
-    html: layout(
-      'Reset your password',
-      `<p style="font-size:14px;line-height:1.6;color:#444">Someone asked to reset the password for this Foldo account. Click below to choose a new one. This link expires in 1 hour and can be used once.</p>
-      ${button(link, 'Choose a new password')}`,
-    ),
-  };
-}
-
-export function verifyEmailEmail(token: string): {
-  subject: string;
-  html: string;
-} {
-  const link = `${APP_URL}/verify-email?token=${encodeURIComponent(token)}`;
-  return {
-    subject: 'Verify your Foldo email',
-    html: layout(
-      'Confirm your email',
-      `<p style="font-size:14px;line-height:1.6;color:#444">Welcome to Foldo. Confirm this email address so we know it's really you. This link expires in 24 hours.</p>
-      ${button(link, 'Verify email')}`,
-    ),
-  };
+/** Test-only reset so a Vitest can swap to a controlled implementation. */
+export function _resetEmailSenderForTests(): void {
+  cached = null;
 }

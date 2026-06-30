@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { CheckCircle, FoldoMark, GitHubIcon, INK, MarketingStyles, PAPER, useMarketingTheme } from './shared';
+import { CheckCircle, FoldoMark, GitHubIcon, INK, MarketingPicture, MarketingStyles, PAPER, useMarketingTheme } from './shared';
 import { apiSignup, storeAuth } from './auth';
 
 const PERKS = [
@@ -12,6 +12,7 @@ const PERKS = [
 export default function Signup() {
   useMarketingTheme('Sign up · Foldo');
   const [name, setName] = useState('');
+  const [team, setTeam] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -34,6 +35,7 @@ export default function Signup() {
 
   return (
     <div
+      className="marketing-root"
       style={{
         background: PAPER,
         color: INK,
@@ -99,19 +101,36 @@ export default function Signup() {
           </p>
 
           <form onSubmit={onSubmit}>
-            <div style={{ marginBottom: 16 }}>
-              <label className="field-label" htmlFor="name">Your name</label>
-              <input
-                id="name"
-                className="field-input"
-                type="text"
-                placeholder="Anna Cole"
-                autoComplete="name"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={submitting}
-              />
+            <div
+              className="stack-sm"
+              style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}
+            >
+              <div>
+                <label className="field-label" htmlFor="name">Your name</label>
+                <input
+                  id="name"
+                  className="field-input"
+                  type="text"
+                  placeholder="Anna Cole"
+                  autoComplete="name"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  disabled={submitting}
+                />
+              </div>
+              <div>
+                <label className="field-label" htmlFor="team">Team or repo</label>
+                <input
+                  id="team"
+                  className="field-input"
+                  type="text"
+                  placeholder="acme/landing"
+                  value={team}
+                  onChange={(e) => setTeam(e.target.value)}
+                  disabled={submitting}
+                />
+              </div>
             </div>
             <div style={{ marginBottom: 16 }}>
               <label className="field-label" htmlFor="email">Work email</label>
@@ -244,7 +263,7 @@ export default function Signup() {
 
         {/* Perks */}
         <div style={{ paddingTop: 12 }}>
-          <img
+          <MarketingPicture
             src="/marketing/step-3-edit.png"
             alt="Foldo in a yellow bandana"
             style={{ width: 280, height: 'auto', display: 'block', marginBottom: 16 }}

@@ -55,7 +55,11 @@ export function EditPanel({
   const inputDisabled = sending;
 
   return (
-    <div className="fade-in pointer-events-auto absolute right-3 top-16 bottom-16 z-50 flex w-[420px] flex-col rounded-xl border border-hairline bg-panel shadow-panel">
+    <div
+      data-testid="foldo-edit-panel"
+      data-foldo-dispatch-status={dispatchStatus}
+      className="fade-in pointer-events-auto absolute right-3 top-16 bottom-16 z-50 flex w-[420px] flex-col rounded-xl border border-hairline bg-panel shadow-panel"
+    >
       <Header
         branch={branch}
         label={selectedElement.label}
@@ -103,6 +107,7 @@ export function EditPanel({
 
         <Section title="Your intent">
           <textarea
+            data-testid="foldo-edit-panel-intent"
             disabled={inputDisabled}
             value={intent}
             onChange={(e) => setIntent(e.target.value)}
@@ -112,7 +117,8 @@ export function EditPanel({
                 ? 'Describe the change. e.g. "Add the trial duration to the button: Start your 14-day free trial. Also add a no-credit-card line under it."'
                 : 'Describe the doc change.'
             }
-            className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2.5 py-2 text-[12.5px] text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
+            /* A+W1 touch: 16px font on inputs stops iOS auto-zoom on focus. */
+            className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2.5 py-2 text-[16px] text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
           />
         </Section>
 
@@ -186,7 +192,8 @@ function Header({
       </div>
       <button
         onClick={onClose}
-        className="ml-2 flex h-6 w-6 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+        /* A+W1 touch: 44x44 close button (was 24x24). */
+        className="ml-2 flex h-11 w-11 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
         aria-label="Close edit panel"
       >
         <svg width="11" height="11" viewBox="0 0 16 16">
@@ -247,7 +254,11 @@ function Footer({
 }) {
   if (status === 'done') {
     return (
-      <div className="flex items-center justify-between border-t border-hairlineSoft bg-ok/5 px-4 py-3">
+      <div
+        data-testid="foldo-edit-panel-dispatch-status"
+        data-foldo-status="done"
+        className="flex items-center justify-between border-t border-hairlineSoft bg-ok/5 px-4 py-3"
+      >
         <div className="flex items-center gap-2 text-[12.5px] text-ok">
           <DoneIcon />
           <span>Done. New frame added to canvas.</span>
@@ -263,7 +274,11 @@ function Footer({
   }
   if (status === 'error' || status === 'cancelled') {
     return (
-      <div className="flex items-center justify-between border-t border-hairlineSoft bg-red-500/5 px-4 py-3">
+      <div
+        data-testid="foldo-edit-panel-dispatch-status"
+        data-foldo-status={status}
+        className="flex items-center justify-between border-t border-hairlineSoft bg-red-500/5 px-4 py-3"
+      >
         <div className="min-w-0 flex-1 truncate text-[12.5px] text-red-300">
           {status === 'cancelled' ? 'Cancelled.' : (errorMessage ?? 'Failed.')}
         </div>
@@ -278,7 +293,11 @@ function Footer({
   }
   if (status === 'running' || status === 'sending' || status === 'queued') {
     return (
-      <div className="border-t border-hairlineSoft px-4 py-3">
+      <div
+        data-testid="foldo-edit-panel-dispatch-status"
+        data-foldo-status={status}
+        className="border-t border-hairlineSoft px-4 py-3"
+      >
         <div className="mb-2 flex items-center gap-2 text-[12px] text-ink">
           <Spinner />
           <span>{statusDetail(status)}</span>
@@ -290,13 +309,18 @@ function Footer({
     );
   }
   return (
-    <div className="flex items-center justify-between border-t border-hairlineSoft px-4 py-3">
+    <div
+      data-testid="foldo-edit-panel-dispatch-status"
+      data-foldo-status="idle"
+      className="flex items-center justify-between border-t border-hairlineSoft px-4 py-3"
+    >
       <div className="text-[11px] text-inkFaint">
         {mcpConnected
           ? 'Sends via the local MCP server to Claude Code.'
-          : 'Connect the MCP server to apply this as a real Claude Code edit.'}
+          : 'No MCP connected. Foldo will simulate the edit (no real commit).'}
       </div>
       <button
+        data-testid="foldo-edit-panel-send"
         disabled={!canSend}
         onClick={onSend}
         className={
@@ -306,7 +330,7 @@ function Footer({
             : 'cursor-not-allowed bg-hairlineSoft text-inkFaint')
         }
       >
-        <span>Send to CC</span>
+        <span>{mcpConnected ? 'Send to Claude Code' : 'Simulate edit'}</span>
         <SendIcon />
       </button>
     </div>

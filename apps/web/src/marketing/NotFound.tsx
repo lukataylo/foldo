@@ -1,4 +1,4 @@
-import { INK, MarketingLayout, PILLOW, PromptCaret, YELLOW } from './shared';
+import { INK, MarketingLayout, MarketingPicture, PILLOW, PromptCaret, YELLOW } from './shared';
 
 const SUGGESTIONS = [
   { label: 'Landing page', href: '/' },
@@ -62,7 +62,7 @@ export default function NotFound() {
             Either the URL is wrong, the page was retired, or the dog ate it.
             Probably the dog. Try one of these instead.
           </p>
-          <img
+          <MarketingPicture
             src="/marketing/pillow.png"
             alt="Foldo asleep on a pillow"
             style={{

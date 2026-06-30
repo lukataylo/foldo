@@ -18,21 +18,19 @@ export default defineConfig({
     allowedHosts: true,
   },
   build: {
+    // Chunk splits that pair with the route-level React.lazy() in main.tsx:
+    //   - `react-vendor`: React + ReactDOM, the heaviest shared dep. Splits
+    //     out so a route-level reload doesn't reparse them.
+    //   - `protocol`: shared types/util. Tiny today but every route imports
+    //     it, so a separate chunk keeps it cacheable across deploys when the
+    //     route bundles change.
+    // The route bundles themselves (App, MarketingRouter, HomeApp, etc.)
+    // become their own chunks automatically via dynamic import.
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          // Core React runtime — loaded on every page.
-          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
-            return 'vendor-react';
-          }
-          // Router / navigation utilities.
-          if (id.includes('node_modules/react-router')) {
-            return 'vendor-router';
-          }
-          // All remaining node_modules go into a shared vendor chunk.
-          if (id.includes('node_modules/')) {
-            return 'vendor';
-          }
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-dom/client'],
+          protocol: ['@foldo/protocol'],
         },
       },
     },

@@ -421,9 +421,11 @@ VITE_PARENT_ORIGIN=https://foldo.dev`}</code></pre>
 
       <h2>Deploy to Railway</h2>
       <p>
-        A <code>railway.json</code> is already in the repo wiring three
-        services to per-app Dockerfiles. Provision a Postgres plugin and
-        wire <code>${'${{Postgres.DATABASE_URL}}'}</code> into the server
+        Each app ships its own <code>railway.json</code> (e.g.{' '}
+        <code>apps/server/railway.json</code>) wiring the service to its
+        Dockerfile — point each Railway service&apos;s config-file path at
+        the matching file. Provision a Postgres plugin and wire{' '}
+        <code>${'${{Postgres.DATABASE_URL}}'}</code> into the server
         service. Custom domains (Cloudflare → CNAME → Railway) take a few
         minutes once added in the Railway dashboard.
       </p>

@@ -10,52 +10,20 @@ import Demo from './Demo';
 import Docs from './Docs';
 import Extension from './Extension';
 import Forgot from './Forgot';
+import Reset from './Reset';
+import Verify from './Verify';
 import Landing from './Landing';
 import Login from './Login';
 import NotFound from './NotFound';
 import Pricing from './Pricing';
 import Privacy from './Privacy';
-import Reset from './Reset';
 import Signup from './Signup';
 import Terms from './Terms';
-import VerifyEmail from './VerifyEmail';
 
-const KNOWN_MARKETING_PATHS = new Set([
-  '/',
-  '/landing',
-  '/login',
-  '/signup',
-  '/pricing',
-  '/demo',
-  '/docs',
-  '/forgot',
-  '/reset',
-  '/verify-email',
-  '/terms',
-  '/privacy',
-  '/about',
-  '/brand',
-  '/changelog',
-  '/cookies',
-  '/cookie-policy',
-  '/extension',
-]);
-
-export function isMarketingPath(pathname: string): boolean {
-  if (KNOWN_MARKETING_PATHS.has(pathname)) return true;
-  if (pathname.startsWith('/docs/')) return true;
-  // Authenticated surfaces own their prefixes; don't route them to marketing.
-  if (pathname === '/home' || pathname.startsWith('/home/')) return false;
-  if (pathname === '/settings' || pathname.startsWith('/settings/')) return false;
-  // Share viewer owns /s/* and the legacy /share/*.
-  if (pathname.startsWith('/s/') || pathname.startsWith('/share/')) return false;
-  // Capture-by-URL viewer owns /c/*.
-  if (pathname.startsWith('/c/')) return false;
-  // The canvas owns these prefixes; defer to <App />.
-  if (pathname.startsWith('/app') || pathname.startsWith('/board/')) return false;
-  // Anything else marketing-ish (404 etc.) → marketing.
-  return true;
-}
+// Re-export so old callers (`import { isMarketingPath } from './MarketingRouter'`)
+// still work; new code should import directly from './path' to avoid pulling
+// in this module's marketing-screen dependency graph.
+export { isMarketingPath } from './path';
 
 export default function MarketingRouter() {
   const path = typeof location !== 'undefined' ? location.pathname : '/';
@@ -67,7 +35,7 @@ export default function MarketingRouter() {
   if (path === '/demo') return <Demo />;
   if (path === '/forgot') return <Forgot />;
   if (path === '/reset') return <Reset />;
-  if (path === '/verify-email') return <VerifyEmail />;
+  if (path === '/verify') return <Verify />;
   if (path === '/terms') return <Terms />;
   if (path === '/privacy') return <Privacy />;
   if (path === '/cookies' || path === '/cookie-policy') return <CookiePolicy />;

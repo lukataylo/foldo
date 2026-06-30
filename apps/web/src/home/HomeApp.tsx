@@ -10,23 +10,16 @@ import {
   YELLOW,
   useMarketingTheme,
 } from '../marketing/shared';
-import { readToken, apiLogout } from '../marketing/auth';
-import { fetchHomeBoards, fetchMe, type HomeBoardSummary } from './api';
+import { API_BASE, readToken, apiLogout } from '../marketing/auth';
+import { authHeaders, fetchHomeBoards, fetchMe, type HomeBoardSummary } from './api';
 import { Sidebar } from './Sidebar';
 import { BoardCard } from './BoardCard';
 import { AccountMenu } from './AccountMenu';
 import { NewBoardModal } from './NewBoardModal';
-import { MembersModal } from './MembersModal';
-import { RenameBoardModal } from './RenameBoardModal';
-import { DeleteBoardModal } from './DeleteBoardModal';
 import { CommandPalette } from './CommandPalette';
-import VerifyEmailBanner from '../marketing/VerifyEmailBanner';
 import { IconSearch } from './icons';
-import { searchComments, type CommentSearchResult } from './api';
 
 type View = 'all' | 'recents' | 'starred';
-/** Sidebar membership filters — orthogonal to View. */
-export type Scope = 'everything' | 'owned' | 'shared';
 
 const RECENTS_KEY = 'foldo:recents';
 const STARRED_KEY = 'foldo:starred';
@@ -63,19 +56,18 @@ export default function HomeApp() {
   const [boards, setBoards] = useState<HomeBoardSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>('recents');
-  const [scope, setScope] = useState<Scope>('everything');
   const [search, setSearch] = useState('');
-  const [me, setMe] = useState<{ id: string; name: string; initial: string; color: string; email?: string } | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [me, setMe] = useState<{
+    name: string;
+    initial: string;
+    color: string;
+    email?: string;
+    emailVerifiedAt?: string;
+  } | null>(null);
   const [starred, setStarred] = useState<Set<string>>(() => readStringSet(STARRED_KEY));
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  // Board-card kebab actions open one of these (board id being acted on).
-  const [membersFor, setMembersFor] = useState<HomeBoardSummary | null>(null);
-  const [renameFor, setRenameFor] = useState<HomeBoardSummary | null>(null);
-  const [deleteFor, setDeleteFor] = useState<HomeBoardSummary | null>(null);
-  // Comment-search results (populated when the query matches no board names
-  // by name/repo, so the search box honours its "…comments" promise).
-  const [commentHits, setCommentHits] = useState<CommentSearchResult[]>([]);
   const [newBoardOpen, setNewBoardOpen] = useState(() => {
     if (typeof location === 'undefined') return false;
     return new URLSearchParams(location.search).get('new') === '1';
@@ -91,15 +83,21 @@ export default function HomeApp() {
     let cancelled = false;
     (async () => {
       try {
-        const [b, m] = await Promise.all([fetchHomeBoards(), fetchMe()]);
+        // Re-fetch whenever the archived toggle flips so the grid shape
+        // matches what the user asked for. fetchMe stays the first time
+        // round; refetch on toggle just hits /api/home.
+        const [b, m] = await Promise.all([
+          fetchHomeBoards({ includeArchived: showArchived }),
+          fetchMe(),
+        ]);
         if (cancelled) return;
         setBoards(b);
         setMe({
-          id: m.user.id,
           name: m.user.name,
           initial: m.user.initial,
           color: m.user.color,
           email: m.user.email,
+          emailVerifiedAt: m.user.emailVerifiedAt,
         });
       } catch (err) {
         if (cancelled) return;
@@ -109,41 +107,14 @@ export default function HomeApp() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showArchived]);
 
   const recents = useMemo(() => readStringSet(RECENTS_KEY), []);
-
-  // Comment search: the box promises "boards, repos, comments". Board name +
-  // repo are filtered locally; comment text needs the server. We debounce and
-  // only show comment hits for boards that DIDN'T already match by name/repo,
-  // so the result list never double-counts a board.
-  useEffect(() => {
-    const q = search.trim();
-    if (q.length < 2) {
-      setCommentHits([]);
-      return;
-    }
-    const controller = new AbortController();
-    const handle = window.setTimeout(() => {
-      searchComments(q, controller.signal)
-        .then(setCommentHits)
-        .catch(() => {
-          // Aborted or failed — board-name search still works, so stay quiet.
-        });
-    }, 220);
-    return () => {
-      window.clearTimeout(handle);
-      controller.abort();
-    };
-  }, [search]);
 
   const filtered = useMemo(() => {
     if (!boards) return [] as HomeBoardSummary[];
     const q = search.trim().toLowerCase();
     let list = boards;
-    // Sidebar membership scope.
-    if (scope === 'owned') list = list.filter((b) => b.role === 'owner');
-    if (scope === 'shared') list = list.filter((b) => b.role !== 'owner');
     if (view === 'starred') list = list.filter((b) => starred.has(b.id));
     if (view === 'recents') {
       list = [...list].sort((a, b) => {
@@ -154,28 +125,13 @@ export default function HomeApp() {
       });
     }
     if (q.length > 0) {
-      // A board matches if its name/repo matches, OR a comment on it matches.
-      const commentBoardIds = new Set(commentHits.map((h) => h.boardId));
       list = list.filter(
         (b) =>
-          b.name.toLowerCase().includes(q) ||
-          b.repoSlug.toLowerCase().includes(q) ||
-          commentBoardIds.has(b.id),
+          b.name.toLowerCase().includes(q) || b.repoSlug.toLowerCase().includes(q),
       );
     }
     return list;
-  }, [boards, view, scope, search, starred, recents, commentHits]);
-
-  // Count of result boards surfaced purely because a comment matched.
-  const commentMatchCount = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (q.length < 2) return 0;
-    return filtered.filter(
-      (b) =>
-        !b.name.toLowerCase().includes(q) &&
-        !b.repoSlug.toLowerCase().includes(q),
-    ).length;
-  }, [filtered, search]);
+  }, [boards, view, search, starred, recents]);
 
   const toggleStar = (id: string): void => {
     setStarred((prev) => {
@@ -286,9 +242,29 @@ export default function HomeApp() {
           .home-shell { grid-template-columns: 1fr !important; }
           .home-sidebar { display: none; }
         }
+
+        /* A+W1 touch: tighter card grid on iPad portrait + phone. */
+        @media (max-width: 720px) {
+          .home-grid {
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important;
+            gap: 14px !important;
+          }
+          main { padding: 16px 16px 80px !important; }
+        }
+
+        /* A+W1 touch: touch screens can't hover, so the star/kebab affordances
+           need to be visible at rest — otherwise they're undiscoverable on iPad. */
+        @media (hover: none) {
+          .home-card .star-btn { opacity: 1 !important; }
+          .home-card .kebab-btn { opacity: 1 !important; }
+        }
       `}</style>
 
-      <VerifyEmailBanner />
+      <EmailVerificationBanner
+        email={me?.email}
+        verified={!!me?.emailVerifiedAt}
+        onToast={setToast}
+      />
 
       <div
         className="home-shell"
@@ -301,8 +277,6 @@ export default function HomeApp() {
         <Sidebar
           view={view}
           onView={setView}
-          scope={scope}
-          onScope={setScope}
           starredCount={starred.size}
           boards={boards}
         />
@@ -347,6 +321,7 @@ export default function HomeApp() {
               type="button"
               onClick={() => setNewBoardOpen(true)}
               style={{ padding: '11px 16px', fontSize: 14, gap: 6 }}
+              data-testid="foldo-home-newboard-trigger"
             >
               <span style={{ fontSize: 16, fontWeight: 700 }}>+</span> New board
             </button>
@@ -392,17 +367,41 @@ export default function HomeApp() {
               {view === 'recents' && (me ? `Welcome back, ${me.name.split(' ')[0]}.` : 'Recents')}
               {view === 'starred' && 'Starred.'}
             </h1>
-            <p style={{ color: '#666', fontSize: 14, marginTop: 6 }}>
-              {boards == null
-                ? 'Loading the pack…'
-                : `${filtered.length} board${filtered.length === 1 ? '' : 's'}`}
-              {commentMatchCount > 0 && (
-                <span style={{ color: '#999' }}>
-                  {' '}
-                  · {commentMatchCount} matched by comment
-                </span>
-              )}
-            </p>
+            <div
+              style={{
+                marginTop: 6,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                flexWrap: 'wrap',
+              }}
+            >
+              <p style={{ color: '#666', fontSize: 14, margin: 0 }}>
+                {boards == null
+                  ? 'Loading the pack…'
+                  : `${filtered.length} board${filtered.length === 1 ? '' : 's'}`}
+              </p>
+              <label
+                data-testid="foldo-home-show-archived"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 13,
+                  color: '#555',
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => setShowArchived(e.target.checked)}
+                  style={{ accentColor: INK, cursor: 'pointer' }}
+                />
+                Show archived
+              </label>
+            </div>
           </div>
 
           {error && (
@@ -447,9 +446,34 @@ export default function HomeApp() {
                   onOpen={() => openBoard(b.id)}
                   onToggleStar={() => toggleStar(b.id)}
                   onToast={(m) => setToast(m)}
-                  onManageMembers={() => setMembersFor(b)}
-                  onRename={() => setRenameFor(b)}
-                  onDelete={() => setDeleteFor(b)}
+                  onArchived={() => {
+                    // Optimistically remove from the active list unless the
+                    // user is also showing archived boards (in which case the
+                    // card stamps itself "Archived" instead of vanishing).
+                    setBoards((prev) =>
+                      prev == null
+                        ? prev
+                        : showArchived
+                          ? prev.map((x) =>
+                              x.id === b.id
+                                ? { ...x, archivedAt: new Date().toISOString() }
+                                : x,
+                            )
+                          : prev.filter((x) => x.id !== b.id),
+                    );
+                  }}
+                  onRestored={() => {
+                    // When restoring inside the archived view, drop the
+                    // archivedAt stamp so the card flips back to its
+                    // clickable shape immediately.
+                    setBoards((prev) =>
+                      prev == null
+                        ? prev
+                        : prev.map((x) =>
+                            x.id === b.id ? { ...x, archivedAt: null } : x,
+                          ),
+                    );
+                  }}
                 />
               ))}
               <button
@@ -501,55 +525,89 @@ export default function HomeApp() {
           }
         }}
         onCreated={(b) => {
-          // The creator is always the owner — NewBoardModal builds a summary
-          // without a role, so stamp it here or the kebab hides owner actions.
-          const owned: HomeBoardSummary = { ...b, role: 'owner' };
-          setBoards((prev) => (prev ? [owned, ...prev] : [owned]));
+          setBoards((prev) => (prev ? [b, ...prev] : [b]));
           setToast(`Board "${b.name}" created.`);
         }}
       />
-      {membersFor && me && (
-        <MembersModal
-          boardId={membersFor.id}
-          boardName={membersFor.name}
-          myRole={membersFor.role ?? 'viewer'}
-          myUserId={me.id}
-          onClose={() => setMembersFor(null)}
-          onToast={(m) => setToast(m)}
-        />
-      )}
-      {renameFor && (
-        <RenameBoardModal
-          boardId={renameFor.id}
-          currentName={renameFor.name}
-          onClose={() => setRenameFor(null)}
-          onRenamed={(name) => {
-            setBoards((prev) =>
-              prev
-                ? prev.map((b) =>
-                    b.id === renameFor.id ? { ...b, name } : b,
-                  )
-                : prev,
-            );
-            setToast(`Board renamed to "${name}".`);
-          }}
-        />
-      )}
-      {deleteFor && (
-        <DeleteBoardModal
-          boardId={deleteFor.id}
-          boardName={deleteFor.name}
-          onClose={() => setDeleteFor(null)}
-          onDeleted={() => {
-            const name = deleteFor.name;
-            setBoards((prev) =>
-              prev ? prev.filter((b) => b.id !== deleteFor.id) : prev,
-            );
-            setDeleteFor(null);
-            setToast(`Board "${name}" deleted.`);
-          }}
-        />
-      )}
+    </div>
+  );
+}
+
+/**
+ * Slim banner above the home shell prompting unverified users to confirm
+ * their email. Hidden once verified or for demo accounts with no email.
+ * The "Resend" action hits POST /api/auth/resend-verification — rate-limited
+ * server-side so a spam click can't flood Resend.
+ */
+function EmailVerificationBanner({
+  email,
+  verified,
+  onToast,
+}: {
+  email: string | undefined;
+  verified: boolean;
+  onToast: (msg: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  if (!email || verified) return null;
+  const onResend = async (): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/resend-verification`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        onToast('Verification email sent — check your inbox.');
+      } else if (res.status === 429) {
+        onToast('Slow down — try again in a minute.');
+      } else {
+        onToast('Could not send the email. Try again shortly.');
+      }
+    } catch {
+      onToast('Could not send the email. Check your connection.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      data-testid="foldo-home-verify-banner"
+      role="status"
+      style={{
+        background: '#fff5dc',
+        borderBottom: '1px solid #f0d782',
+        color: '#6b4d00',
+        padding: '10px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 16,
+        fontSize: 13.5,
+      }}
+    >
+      <span>
+        We sent a verification link to <strong>{email}</strong>. Confirm it to
+        unlock publishing User Tests.
+      </span>
+      <button
+        type="button"
+        data-testid="foldo-home-verify-resend"
+        onClick={onResend}
+        disabled={busy}
+        className="btn-ghost compact"
+        style={{
+          background: 'transparent',
+          border: '1px solid #d6b65a',
+          color: '#6b4d00',
+          padding: '6px 12px',
+          fontSize: 12.5,
+          opacity: busy ? 0.6 : 1,
+        }}
+      >
+        {busy ? 'Sending…' : 'Resend'}
+      </button>
     </div>
   );
 }

@@ -1,159 +1,158 @@
-import { useState, type FormEvent } from 'react';
+// `/reset?token=...` — second half of the password-reset flow. Receives the
+// token from the email link, asks the user for a new password, calls the
+// complete endpoint, persists the freshly-issued session token, and
+// redirects to /home.
+
+import { useEffect, useState, type FormEvent } from 'react';
 import SimplePage from './SimplePage';
-import { apiResetPassword } from './auth';
+import { API_BASE, storeAuth, type AuthUser } from './auth';
+/* A+W1 features — share the password validator with Forgot/Signup. */
+import { isValidPassword, MIN_PASSWORD_LENGTH } from './validation';
 
-const PASSWORD_MIN = 8;
-
-/** Reads `?token=` from the reset link and lets the user set a new password. */
 export default function Reset() {
-  const token =
-    typeof location !== 'undefined'
-      ? new URLSearchParams(location.search).get('token') ?? ''
-      : '';
-
+  const [token, setToken] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function onSubmit(e: FormEvent): Promise<void> {
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(location.search);
+      const t = params.get('token');
+      setToken(t && t.trim() ? t.trim() : null);
+    } catch {
+      setToken(null);
+    }
+  }, []);
+
+  const onSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
     if (submitting) return;
     setError(null);
-    if (password.length < PASSWORD_MIN) {
-      setError(`Password must be at least ${PASSWORD_MIN} characters`);
+    if (!token) {
+      setError('Reset link is missing its token. Open the link from your email again.');
+      return;
+    }
+    if (!isValidPassword(password)) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
     if (password !== confirm) {
-      setError("Those passwords don't match");
+      setError('The two passwords don’t match.');
       return;
     }
     setSubmitting(true);
     try {
-      await apiResetPassword({ token, password });
-      setDone(true);
+      const res = await fetch(`${API_BASE}/api/auth/password-reset/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, newPassword: password }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        token?: string;
+        user?: AuthUser;
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(body.error ?? `Reset failed (${res.status})`);
+        return;
+      }
+      if (body.token && body.user) {
+        storeAuth(body.token, body.user);
+        location.assign('/home');
+      } else {
+        setError('Server returned an unexpected response. Try logging in.');
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Reset failed');
+      setError(err instanceof Error ? err.message : 'Network error');
     } finally {
       setSubmitting(false);
     }
-  }
-
-  if (!token) {
-    return (
-      <SimplePage
-        title="Reset password"
-        chip="🐕 Help"
-        intro="This page needs a reset link."
-      >
-        <div
-          style={{
-            background: '#fff',
-            border: '1.5px solid #E6E3DE',
-            borderRadius: 14,
-            padding: '20px 22px',
-          }}
-        >
-          <strong>No reset token.</strong>
-          <p style={{ marginTop: 8, color: '#555', lineHeight: 1.55 }}>
-            Open the link from your password-reset email, or{' '}
-            <a href="/forgot">request a new one</a>.
-          </p>
-        </div>
-      </SimplePage>
-    );
-  }
-
-  if (done) {
-    return (
-      <SimplePage
-        title="Password reset"
-        chip="🐾 Done"
-        intro="Your password is updated."
-      >
-        <div
-          style={{
-            background: '#fff',
-            border: '1.5px solid #E6E3DE',
-            borderRadius: 14,
-            padding: '20px 22px',
-          }}
-        >
-          <strong>All set.</strong>
-          <p style={{ marginTop: 8, color: '#555', lineHeight: 1.55 }}>
-            You can now <a href="/login">log in</a> with your new password. We
-            signed out every other device, just in case.
-          </p>
-        </div>
-      </SimplePage>
-    );
-  }
+  };
 
   return (
     <SimplePage
-      title="Choose a new password"
-      chip="🐕 Help"
-      intro="Pick something at least 8 characters. This link works once."
+      title="Set a new password"
+      chip="🐕 Reset"
+      intro="Pick a fresh password. We'll log you in as soon as you save."
     >
-      <form onSubmit={onSubmit} style={{ maxWidth: 420 }}>
-        <label className="field-label" htmlFor="reset-password">New password</label>
-        <input
-          id="reset-password"
-          className="field-input"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="At least 8 characters"
-          autoComplete="new-password"
-          minLength={PASSWORD_MIN}
-          required
-          autoFocus
-          disabled={submitting}
-        />
-        <label
-          className="field-label"
-          htmlFor="reset-confirm"
-          style={{ marginTop: 14, display: 'block' }}
+      {!token ? (
+        <div
+          data-testid="foldo-reset-missing-token"
+          role="alert"
+          style={{
+            background: '#fff0f0',
+            border: '1px solid #ffd2d2',
+            padding: '14px 16px',
+            borderRadius: 10,
+            color: '#a02020',
+            maxWidth: 420,
+          }}
         >
-          Confirm password
-        </label>
-        <input
-          id="reset-confirm"
-          className="field-input"
-          type="password"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          placeholder="Type it again"
-          autoComplete="new-password"
-          required
-          disabled={submitting}
-        />
-        {error && (
-          <div
-            role="alert"
-            style={{
-              marginTop: 12,
-              padding: '10px 14px',
-              borderRadius: 10,
-              background: '#fff0f0',
-              border: '1px solid #ffd2d2',
-              color: '#a02020',
-              fontSize: 13.5,
-            }}
+          That link is missing its reset token. Open the email link again, or
+          start over from <a href="/forgot">/forgot</a>.
+        </div>
+      ) : (
+        <form onSubmit={onSubmit} style={{ maxWidth: 420 }}>
+          <label className="field-label" htmlFor="reset-password">New password</label>
+          <input
+            id="reset-password"
+            data-testid="foldo-reset-password"
+            className="field-input"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="At least 8 characters"
+            required
+            autoFocus
+            disabled={submitting}
+          />
+          <label
+            className="field-label"
+            htmlFor="reset-confirm"
+            style={{ marginTop: 14, display: 'block' }}
           >
-            {error}
-          </div>
-        )}
-        <button
-          type="submit"
-          className="btn-primary"
-          style={{ marginTop: 14, opacity: submitting ? 0.6 : 1 }}
-          disabled={submitting}
-        >
-          {submitting ? 'Saving…' : 'Set new password'}
-        </button>
-      </form>
+            Confirm password
+          </label>
+          <input
+            id="reset-confirm"
+            data-testid="foldo-reset-confirm"
+            className="field-input"
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            placeholder="Type it again"
+            required
+            disabled={submitting}
+          />
+          {error && (
+            <div
+              role="alert"
+              data-testid="foldo-reset-error"
+              style={{ marginTop: 12, color: '#a02020', fontSize: 13.5 }}
+            >
+              {error}
+            </div>
+          )}
+          {/* A+W1 features — explicit "Resetting…" label so the submit
+              state is unambiguous (previously "Saving…" matched Signup). */}
+          <button
+            type="submit"
+            data-testid="foldo-reset-submit"
+            className="btn-primary"
+            style={{
+              marginTop: 14,
+              opacity: submitting ? 0.6 : 1,
+              cursor: submitting ? 'not-allowed' : 'pointer',
+            }}
+            disabled={submitting}
+            aria-busy={submitting}
+          >
+            {submitting ? 'Resetting…' : 'Save new password'}
+          </button>
+        </form>
+      )}
     </SimplePage>
   );
 }

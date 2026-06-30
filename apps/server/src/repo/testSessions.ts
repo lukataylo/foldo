@@ -10,7 +10,7 @@ import type {
   TranscriptStatus,
 } from '@foldo/protocol';
 import { exec, query, queryOne } from '../db.ts';
-import { newId, nowIso, parseJson } from '../util.ts';
+import { newId, nowIso } from '../util.ts';
 import { getStorage } from '../storage/index.ts';
 
 interface TestSessionRow {
@@ -20,14 +20,15 @@ interface TestSessionRow {
   status: string;
   recording_mode: string;
   tester_label: string;
-  tester_meta_json: string | null;
+  // JSONB columns — pg returns them already parsed.
+  tester_meta_json: Record<string, unknown> | null;
   consent_at: string | null;
   recording_key: string | null;
   recording_duration_ms: number | null;
-  transcript_json: string | null;
+  transcript_json: TranscriptCue[] | null;
   transcript_status: string;
-  responses_json: string | null;
-  synthesis_json: string | null;
+  responses_json: TestResponseAnswer[] | null;
+  synthesis_json: TestSessionSynthesis | null;
   result_frame_id: string | null;
   started_at: string;
   completed_at: string | null;
@@ -40,7 +41,7 @@ interface TestTaskResultRow {
   outcome: string;
   duration_ms: number;
   recording_offset_ms: number;
-  events_json: string | null;
+  events_json: unknown | null;
 }
 
 function rowToTaskResult(r: TestTaskResultRow): TestTaskResult {
@@ -62,24 +63,16 @@ function rowToSession(
     status: r.status as TestSessionStatus,
     recordingMode: r.recording_mode as RecordingMode,
     testerLabel: r.tester_label,
-    testerMeta: r.tester_meta_json
-      ? parseJson<Record<string, unknown>>(r.tester_meta_json, {})
-      : undefined,
+    testerMeta: r.tester_meta_json ?? undefined,
     consentAt: r.consent_at ?? undefined,
     recordingUrl: r.recording_key
       ? getStorage().pathFor(r.recording_key)
       : undefined,
     recordingDurationMs: r.recording_duration_ms ?? undefined,
-    transcript: r.transcript_json
-      ? parseJson<TranscriptCue[]>(r.transcript_json, [])
-      : undefined,
+    transcript: r.transcript_json ?? undefined,
     transcriptStatus: r.transcript_status as TranscriptStatus,
-    responses: r.responses_json
-      ? parseJson<TestResponseAnswer[]>(r.responses_json, [])
-      : undefined,
-    synthesis: r.synthesis_json
-      ? parseJson<TestSessionSynthesis | undefined>(r.synthesis_json, undefined)
-      : undefined,
+    responses: r.responses_json ?? undefined,
+    synthesis: r.synthesis_json ?? undefined,
     taskResults,
     resultFrameId: r.result_frame_id ?? undefined,
     startedAt: r.started_at,
@@ -198,27 +191,24 @@ export async function listSessionsForTest(
     `SELECT * FROM test_sessions WHERE test_id = $1 ORDER BY started_at DESC`,
     [testId],
   );
-  const sessions: TestSession[] = [];
-  for (const r of rows) {
-    sessions.push(rowToSession(r, await listTaskResults(r.id)));
-  }
-  return sessions;
-}
-
-/**
- * Raw storage keys of every recording belonging to a test's sessions. Used
- * by the test-delete path to clean up orphan recording blobs (DB cascade
- * drops the rows but never touches blob storage).
- */
-export async function listRecordingKeysForTest(
-  testId: string,
-): Promise<string[]> {
-  const rows = await query<{ recording_key: string }>(
-    `SELECT recording_key FROM test_sessions
-      WHERE test_id = $1 AND recording_key IS NOT NULL`,
-    [testId],
+  if (rows.length === 0) return [];
+  // Batch-fetch every task result for these sessions in a single query rather
+  // than one `listTaskResults(sessionId)` per session (previous code was an
+  // N+1: 50 sessions → 51 queries). Group in app, then build each session.
+  const sessionIds = rows.map((r) => r.id);
+  const resultRows = await query<TestTaskResultRow>(
+    `SELECT * FROM test_task_results
+      WHERE session_id = ANY($1::text[])
+      ORDER BY recording_offset_ms`,
+    [sessionIds],
   );
-  return rows.map((r) => r.recording_key);
+  const resultsBySession = new Map<string, TestTaskResult[]>();
+  for (const r of resultRows) {
+    const bucket = resultsBySession.get(r.session_id);
+    if (bucket) bucket.push(rowToTaskResult(r));
+    else resultsBySession.set(r.session_id, [rowToTaskResult(r)]);
+  }
+  return rows.map((r) => rowToSession(r, resultsBySession.get(r.id) ?? []));
 }
 
 export interface CompleteSessionInput {
@@ -298,6 +288,38 @@ export async function sweepAbandonedSessions(
      WHERE status IN ('started','recording')
        AND started_at < $1`,
     [cutoff],
+  );
+}
+
+/**
+ * Every test_session row belonging to a test owned by `userId`. Used by the
+ * GDPR data-export endpoint — test sessions don't carry a direct user link,
+ * so ownership is inherited via `tests.created_by_user_id`.
+ */
+export async function listSessionsForOwner(userId: string): Promise<TestSession[]> {
+  const rows = await query<TestSessionRow>(
+    `SELECT ts.* FROM test_sessions ts
+       JOIN tests t ON t.id = ts.test_id
+      WHERE t.created_by_user_id = $1
+      ORDER BY ts.started_at DESC`,
+    [userId],
+  );
+  if (rows.length === 0) return [];
+  return rows.map((r) => rowToSession(r, []));
+}
+
+/**
+ * Repoint every test that was created by `fromUserId` at `toUserId` — so
+ * deleted users' tests collapse into the anonymous sentinel. Returns the
+ * number of rows reassigned.
+ */
+export async function reassignTestCreator(
+  fromUserId: string,
+  toUserId: string,
+): Promise<number> {
+  return exec(
+    `UPDATE tests SET created_by_user_id = $2 WHERE created_by_user_id = $1`,
+    [fromUserId, toUserId],
   );
 }
 

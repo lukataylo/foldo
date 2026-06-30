@@ -2,37 +2,35 @@ import { useState } from 'react';
 import type { Branch, Frame } from '@foldo/protocol';
 import { boardStore } from '../state/BoardStore';
 import { deleteFrame as apiDeleteFrame } from '../api/frames';
-import { mutate } from '../lib/mutate';
 import { useFrameDrag } from './useFrameDrag';
 
 interface Props {
   frame: Frame;
   branch: Branch;
+  /** Current canvas zoom, needed to convert screen-pixel drags to world units. */
+  zoom?: number;
   /** When true, header acts as a drag handle and exposes the actions menu. */
   canEdit?: boolean;
 }
 
-export function FrameMeta({ frame, branch, canEdit = true }: Props) {
+export function FrameMeta({ frame, branch, zoom = 1, canEdit = true }: Props) {
   const isAgent = branch.authoredBy === 'agent';
   const isCapture = !!frame.capturedFromUrl;
 
-  const { handlers } = useFrameDrag({ frame, enabled: canEdit });
+  const { handlers } = useFrameDrag({ frame, zoom, enabled: canEdit });
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function onConfirmDelete(): Promise<void> {
-    const prev = boardStore.getSnapshot().frames.get(frame.id);
-    await mutate({
-      optimistic: () => boardStore.removeFrame(frame.id),
-      commit: () => apiDeleteFrame(frame.id),
-      // Re-insert the frame if the server rejected the delete.
-      rollback: () => {
-        if (prev) boardStore.upsertFrame(prev);
-      },
+    boardStore.removeFrame(frame.id);
+    try {
+      await apiDeleteFrame(frame.id);
+    } catch (err) {
+      // best-effort: re-fetch board on failure; for now log + reinsert
       // eslint-disable-next-line no-console
-      onError: (err) => console.error('delete frame failed', err),
-    });
+      console.error('delete frame failed', err);
+    }
   }
 
   return (
@@ -76,6 +74,10 @@ export function FrameMeta({ frame, branch, canEdit = true }: Props) {
 
       {canEdit && (
         <div data-no-drag className="relative ml-auto shrink-0">
+          {/* A+W1 touch: framemeta-kebab is always visible on touch devices via
+              the @media(hover:none) rule below; on hover-capable devices it
+              keeps the existing hover-only opacity ramp via the framemeta-actions
+              container above. The button itself is now 44x44. */}
           <button
             type="button"
             aria-label="Frame actions"
@@ -84,10 +86,16 @@ export function FrameMeta({ frame, branch, canEdit = true }: Props) {
               setMenuOpen((v) => !v);
               setConfirmDelete(false);
             }}
-            className="flex h-5 w-5 items-center justify-center rounded hover:bg-white/10"
+            className="foldo-framemeta-kebab flex h-11 w-11 items-center justify-center rounded hover:bg-white/10"
           >
             <KebabIcon />
           </button>
+          {/* A+W1 touch: keep the kebab visible on touch screens (no hover). */}
+          <style>{`
+            @media (hover: none) {
+              .foldo-framemeta-kebab { opacity: 1 !important; }
+            }
+          `}</style>
           {menuOpen && (
             <div
               role="menu"

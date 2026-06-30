@@ -26,7 +26,15 @@ COPY apps/sample-app ./apps/sample-app
 
 RUN npm --workspace @foldo/sample-app run build
 
-# --- Runtime: serve with vite preview --------------------------------------
+# --- Runtime: serve dist/ with `serve` (production-grade static) -----------
+# Replaces `vite preview` (dev-grade) with the `serve` package
+# (https://www.npmjs.com/package/serve) for production static serving:
+# - gzip/brotli compression of text assets out of the box
+# - HTTP/1.1 keep-alive, range requests
+# - cache headers driven by apps/sample-app/serve.json (long-lived for
+#   hashed assets, no-cache for index.html so deploys are picked up
+#   immediately)
+# - `--single` falls back to index.html for unknown routes (SPA history mode)
 FROM node:20-slim AS runtime
 
 ENV NODE_ENV=production
@@ -34,17 +42,17 @@ ENV PORT=5174
 
 WORKDIR /app
 
-COPY --from=builder /app/package.json /app/package-lock.json ./
-COPY --from=builder /app/apps/sample-app/package.json ./apps/sample-app/
-COPY --from=builder /app/apps/sample-app/vite.config.ts ./apps/sample-app/
-COPY --from=builder /app/apps/sample-app/dist ./apps/sample-app/dist
-# Hoisted to root /app/node_modules by npm workspaces.
-COPY --from=builder /app/node_modules ./node_modules
+# IMPORTANT: do NOT COPY the full workspace node_modules — see apps/web/Dockerfile
+# for the full story. Install `serve` directly so the runtime image stays
+# small enough to start on Railway's hobby tier without getting OOM-killed.
+RUN npm install --global --no-audit --no-fund --omit=optional serve@14.2.4
+
+COPY --from=builder /app/apps/sample-app/dist ./dist
+COPY --from=builder /app/apps/sample-app/serve.json ./dist/serve.json
 
 EXPOSE 5174
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://localhost:'+(process.env.PORT||5174)+'/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
-WORKDIR /app/apps/sample-app
-CMD ["sh", "-c", "npx vite preview --port ${PORT:-5174} --host 0.0.0.0"]
+CMD ["sh", "-c", "serve dist --listen tcp://0.0.0.0:${PORT:-5174} --single --no-clipboard --no-port-switching"]

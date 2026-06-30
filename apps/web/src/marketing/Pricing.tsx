@@ -1,4 +1,4 @@
-import { CheckCircle, INK, MarketingLayout, PILLOW, PromptCaret, SOFT_GREY, YELLOW } from './shared';
+import { CheckCircle, INK, MarketingLayout, MarketingPicture, PILLOW, PromptCaret, SOFT_GREY, YELLOW } from './shared';
 
 interface Tier {
   name: string;
@@ -7,6 +7,16 @@ interface Tier {
   cadence: string;
   cta: string;
   ctaHref: string;
+  /**
+   * When true the CTA is rendered as a disabled "Coming soon" pill instead
+   * of an active link. We gate every paid plan here until Stripe is wired
+   * end-to-end so a curious visitor doesn't click an Upgrade button that
+   * 404s or — worse — hits a half-implemented checkout. Free tiers stay
+   * fully live (signup + demo work today).
+   */
+  ctaDisabled?: boolean;
+  /** Optional label shown in the "Coming soon" badge next to a gated CTA. */
+  ctaPill?: string;
   featured?: boolean;
   features: string[];
 }
@@ -35,6 +45,10 @@ const TIERS: Tier[] = [
     cadence: 'per editor / month',
     cta: 'Start the pack',
     ctaHref: '/signup?plan=pack',
+    // A+ W2: gated until billing wiring lands — see PR notes. The disabled
+    // pill avoids dead-end clicks the audit flagged on every paid tier.
+    ctaDisabled: true,
+    ctaPill: 'Coming soon',
     featured: true,
     features: [
       'Everything in Solo Pup',
@@ -51,6 +65,9 @@ const TIERS: Tier[] = [
     tagline: 'For orgs whose security team has opinions and an SSO checklist.',
     price: "Let's talk",
     cadence: 'per seat / month',
+    // Top Dog routes to /demo which IS implemented (demo request route +
+    // server-side persistence), so the CTA stays active. Only the paid
+    // self-serve checkout flows are gated.
     cta: 'Book a demo',
     ctaHref: '/demo',
     features: [
@@ -175,13 +192,71 @@ export default function Pricing() {
                   / {t.cadence}
                 </span>
               </div>
-              <a
-                href={t.ctaHref}
-                className={t.featured ? 'btn-yellow' : 'btn-primary'}
-                style={{ marginTop: 18, justifyContent: 'center', width: '100%' }}
-              >
-                {t.featured ? <PromptCaret /> : null} {t.cta}
-              </a>
+              {t.ctaDisabled ? (
+                <div
+                  data-testid="foldo-pricing-cta-disabled"
+                  style={{
+                    marginTop: 18,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                  }}
+                >
+                  <button
+                    type="button"
+                    disabled
+                    aria-disabled="true"
+                    title="Billing isn't wired up yet — leave us your email on /demo or watch the changelog."
+                    className={t.featured ? 'btn-yellow' : 'btn-primary'}
+                    style={{
+                      width: '100%',
+                      justifyContent: 'center',
+                      opacity: 0.55,
+                      cursor: 'not-allowed',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    {t.featured ? <PromptCaret /> : null} {t.cta}
+                  </button>
+                  <span
+                    data-testid="foldo-pricing-cta-pill"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: t.featured ? '#1f1f1f' : '#fff',
+                      color: t.featured ? YELLOW : INK,
+                      border: `1px solid ${t.featured ? '#333' : SOFT_GREY}`,
+                      borderRadius: 999,
+                      padding: '4px 10px',
+                      fontSize: 11.5,
+                      fontWeight: 600,
+                      letterSpacing: '0.02em',
+                    }}
+                  >
+                    <span
+                      aria-hidden
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background: YELLOW,
+                      }}
+                    />
+                    {t.ctaPill ?? 'Coming soon'}
+                  </span>
+                </div>
+              ) : (
+                <a
+                  href={t.ctaHref}
+                  className={t.featured ? 'btn-yellow' : 'btn-primary'}
+                  style={{ marginTop: 18, justifyContent: 'center', width: '100%' }}
+                >
+                  {t.featured ? <PromptCaret /> : null} {t.cta}
+                </a>
+              )}
               <hr style={{ margin: '24px 0', border: 'none', borderTop: `1px solid ${t.featured ? '#333' : SOFT_GREY}` }} />
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10 }}>
                 {t.features.map((f) => (
@@ -218,7 +293,7 @@ export default function Pricing() {
           }}
         >
           <div style={{ display: 'flex', gap: 18, alignItems: 'center' }}>
-            <img
+            <MarketingPicture
               src="/marketing/step-4-verify.png"
               alt="Foldo verifying"
               style={{ width: 110, height: 'auto', flex: 'none' }}

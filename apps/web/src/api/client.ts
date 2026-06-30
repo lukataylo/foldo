@@ -2,13 +2,23 @@
 // Demo auth: the "token" is the userId; the server accepts it as `Bearer <userId>`.
 
 import type { ApiError } from '@foldo/protocol';
-import { handleExpiredSession } from '../lib/session';
 
 export const API_BASE =
   (typeof window !== 'undefined' &&
     (window as unknown as { __FOLDO_API__?: string }).__FOLDO_API__) ||
   (import.meta.env.VITE_API_URL as string | undefined) ||
   'http://localhost:4000';
+
+/**
+ * Resolve a server-issued URL against the API origin. The server returns
+ * paths relative to ITSELF (`/api/uploads/…`, `/api/recordings/…`); the web
+ * app is served from a different origin, so a bare relative src would 404
+ * against the web host. Absolute http(s)/data/blob URLs pass through.
+ */
+export function resolveApiUrl(url: string): string {
+  if (/^(https?:)?\/\//i.test(url) || /^(data|blob):/i.test(url)) return url;
+  return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+}
 
 let authToken: string | null = null;
 let authUserId: string | null = null;
@@ -67,12 +77,6 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     signal: opts.signal,
   });
   if (!res.ok) {
-    // A 401 on an authenticated request means the stored session is dead —
-    // clear it and bounce to /login rather than leaving the app stuck
-    // showing logged-in chrome. Auth endpoints (login etc.) 401 legitimately.
-    if (res.status === 401 && !path.includes('/api/auth/')) {
-      handleExpiredSession();
-    }
     let bodyJson: ApiError = { error: res.statusText, code: 'http_error' };
     try {
       bodyJson = (await res.json()) as ApiError;

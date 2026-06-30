@@ -12,15 +12,11 @@ apps/*/data/*.db
 apps/*/data/*.db-journal
 apps/extension/dist/
 .foldo-storage/
-.foldo-mail/
-.claude/
+.foldo-email-outbox/
 
 # Playwright
 test-results/
 playwright-report/
-
-# Generated DOM/screenshot captures (scripts/capture-dom.mjs)
-dom-capture/
 
 # Editor lock files
 *~lock~

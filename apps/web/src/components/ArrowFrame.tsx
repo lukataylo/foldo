@@ -1,18 +1,17 @@
-import type { HTMLAttributes } from 'react';
 import type { ArrowFrameContent, Branch, Frame } from '@foldo/protocol';
-import { FrameShell } from './FrameShell';
+import { FrameMeta } from './FrameMeta';
 
 interface Props {
   frame: Frame;
   branch: Branch;
-  wrapperProps?: HTMLAttributes<HTMLDivElement>;
+  zoom?: number;
 }
 
 /**
  * Renders a straight arrow as an SVG. `from`/`to` are world coordinates
  * relative to the frame's `position` (the top-left of the bounding box).
  */
-export function ArrowFrame({ frame, branch, wrapperProps }: Props) {
+export function ArrowFrame({ frame, branch, zoom = 1 }: Props) {
   const c = frame.content as ArrowFrameContent;
   const stroke = c.color ?? '#111111';
   const thickness = c.thickness ?? 2.5;
@@ -39,12 +38,17 @@ export function ArrowFrame({ frame, branch, wrapperProps }: Props) {
   const rightY = baseY + ux * halfBase;
 
   return (
-    <FrameShell
-      frame={frame}
-      branch={branch}
-      wrapperProps={wrapperProps}
-      style={{ pointerEvents: 'none' }}
+    <div
+      className="absolute"
+      style={{
+        left: frame.position.x,
+        top: frame.position.y,
+        width: w,
+        height: h,
+        pointerEvents: 'none',
+      }}
     >
+      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
       <svg
         width={w}
         height={h}
@@ -65,7 +69,7 @@ export function ArrowFrame({ frame, branch, wrapperProps }: Props) {
           fill={stroke}
         />
       </svg>
-    </FrameShell>
+    </div>
   );
 }
 

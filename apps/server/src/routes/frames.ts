@@ -15,54 +15,43 @@ import {
   moveFrame,
   updateFrame,
 } from '../repo/frames.ts';
-import { canEditBoard } from '../repo/members.ts';
-import { getStorage } from '../storage/index.ts';
+import { getBoardById } from '../repo/boards.ts';
+import { upsertSource } from '../repo/sources.ts';
 import { hub } from '../ws/hub.ts';
+import { withTransaction } from '../db.ts';
+import { userMutationLimit } from '../rateLimit.ts';
 import { newId, nowIso } from '../util.ts';
 
 /**
- * If a frame's content references a blob we own (an uploaded image), return
- * the storage key so the caller can delete it and avoid an orphan blob.
- * Returns null for frames whose content lives entirely in Postgres.
+ * Cap a single user's frame-creation rate. 100/min is generous enough for
+ * a human dragging a stack of stickies onto the canvas in rapid succession
+ * but a script trying to flood the board hits the wall fast. Applied as a
+ * Fastify preHandler so the rejection comes BEFORE the DB write — no half-
+ * inserted rows on burst.
  */
-function storageKeyForFrame(frame: Frame): string | null {
-  const content = frame.content;
-  if (content.kind === 'image' && typeof content.url === 'string') {
-    const m = /^\/api\/uploads\/(.+)$/.exec(content.url);
-    if (m) {
-      const tail = decodeURIComponent(m[1]);
-      if (tail && !tail.includes('..')) return `uploads/${tail}`;
-    }
-  }
-  return null;
-}
+const frameCreateLimit = userMutationLimit({
+  bucket: 'frames-create',
+  max: 100,
+  windowMs: 60_000,
+});
 
-async function requireEditor(
-  userId: string,
-  boardId: string,
-): Promise<void> {
-  if (!(await canEditBoard(boardId, userId))) {
-    const err = new Error('Not a member of this board') as Error & {
-      statusCode?: number;
-    };
-    err.statusCode = 403;
-    throw err;
-  }
-}
 
 /**
  * Compute per-line authorship for a markdown frame. Lines whose text differs
  * from the previous version are stamped with `editorUserId` and the current
- * timestamp. Untouched lines keep their existing attribution. Sparse object
- *, only edited lines carry an entry.
+ * timestamp. Untouched lines keep their existing attribution. Sparse object —
+ * only edited lines carry an entry.
  *
  * Returns a new MarkdownFrameContent with `lineAuthors`, `lastEditedAt`, and
  * `lastEditedBy` set. Body / docPath / title / kind passed through.
+ *
+ * Exported for unit tests in `__tests__/stampMarkdownAuthorship.test.ts`.
  */
-function stampMarkdownAuthorship(
+export function stampMarkdownAuthorship(
   prev: MarkdownFrameContent,
   next: MarkdownFrameContent,
   editorUserId: string,
+  nowFn: () => string = nowIso,
 ): MarkdownFrameContent {
   const prevBody = prev.body ?? '';
   const nextBody = next.body ?? '';
@@ -73,15 +62,16 @@ function stampMarkdownAuthorship(
   const nextLines = nextBody.split('\n');
   const prevAuthors = next.lineAuthors ?? prev.lineAuthors ?? {};
   const lineAuthors: Record<string, { authorUserId: string; editedAt: string }> = {};
-  const ts = nowIso();
+  const ts = nowFn();
 
   for (let i = 0; i < nextLines.length; i++) {
     const before = prevLines[i];
     const after = nextLines[i];
     if (before !== after) {
       lineAuthors[String(i)] = { authorUserId: editorUserId, editedAt: ts };
-    } else if (prevAuthors[String(i)]) {
-      lineAuthors[String(i)] = prevAuthors[String(i)];
+    } else {
+      const prev = prevAuthors[String(i)];
+      if (prev) lineAuthors[String(i)] = prev;
     }
   }
   return {
@@ -93,13 +83,16 @@ function stampMarkdownAuthorship(
 }
 
 export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: CreateFrameRequest }>('/api/frames', async (req, reply) => {
+  app.post<{ Body: CreateFrameRequest }>(
+    '/api/frames',
+    { preHandler: frameCreateLimit },
+    async (req, reply) => {
     const me = requireUser(req);
     const body = req.body;
     if (!body || !body.boardId || !body.branchId || !body.content) {
       return reply.code(400).send({ error: 'Invalid frame body', code: 'BAD_REQUEST' });
     }
-    await requireEditor(me.id, body.boardId);
+    await app.requireEditor(req, body.boardId);
     const now = nowIso();
     const frame: Frame = {
       id: newId('f'),
@@ -119,7 +112,8 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
     await insertFrame(frame);
     hub.broadcast(frame.boardId, { type: 'frame.added', frame });
     return reply.send(frame);
-  });
+    },
+  );
 
   app.patch<{ Params: { id: string }; Body: UpdateFrameRequest }>(
     '/api/frames/:id',
@@ -127,7 +121,7 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
       const me = requireUser(req);
       const existing = await getFrameById(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
-      await requireEditor(me.id, existing.boardId);
+      await app.requireEditor(req, existing.boardId);
       const body = req.body ?? {};
       let merged: Frame['content'] | undefined;
       if (body.content) {
@@ -145,16 +139,48 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
           ) as Frame['content'];
         }
       }
-      const next = await updateFrame(req.params.id, {
-        position: body.position,
-        size: body.size,
-        content: merged,
-        z: body.z,
-        hidden: body.hidden,
-        locked: body.locked,
-        style: body.style,
+      // Wrap the frame update + the sources mirror in a single transaction so
+      // a failure between them can't leave the two tables drifted (this is the
+      // bug class behind the "save doesn't save" issue: frames.content_json
+      // and sources.body must stay in lock-step for markdown).
+      const patchedMd =
+        body.content?.kind === 'markdown' ? body.content : undefined;
+      const board = patchedMd ? await getBoardById(existing.boardId) : null;
+      const next = await withTransaction(async (tx) => {
+        const updated = await updateFrame(
+          req.params.id,
+          {
+            position: body.position,
+            size: body.size,
+            content: merged,
+          },
+          tx,
+        );
+        if (!updated) return null;
+        if (
+          updated.content.kind === 'markdown' &&
+          existing.content.kind === 'markdown' &&
+          typeof patchedMd?.body === 'string' &&
+          patchedMd.body !== existing.content.body &&
+          board
+        ) {
+          await upsertSource(
+            {
+              repoSlug: board.repoSlug,
+              commitSha: updated.commitSha,
+              path: updated.content.docPath,
+              body: updated.content.body ?? '',
+              contentType: 'markdown',
+              updatedAt: nowIso(),
+            },
+            tx,
+          );
+        }
+        return updated;
       });
       if (!next) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
+      // Broadcast AFTER commit — never tell other clients about a write that
+      // might roll back.
       hub.broadcast(next.boardId, { type: 'frame.updated', frame: next });
       return reply.send(next);
     },
@@ -168,10 +194,27 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
       if (!body?.position) {
         return reply.code(400).send({ error: 'Missing position', code: 'BAD_REQUEST' });
       }
+      // A+ W1: validate + clamp coordinates server-side. Without this, a
+      // misbehaving client (or a fuzzer) can ship NaN/Infinity, which the DB
+      // CHECK `frames_position_finite` rejects with a 500-grade error, or
+      // ship coordinates so far off-canvas the frame becomes unreachable
+      // through the UI. We clamp to [-CANVAS_RANGE, +CANVAS_RANGE] and
+      // return the *actual* persisted frame so the client picks up the
+      // coercion immediately.
+      const { x, y } = body.position;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return reply.code(400).send({
+          error: 'position.x and position.y must be finite numbers',
+          code: 'BAD_REQUEST',
+        });
+      }
+      const CANVAS_RANGE = 100_000;
+      const clampedX = Math.max(-CANVAS_RANGE, Math.min(CANVAS_RANGE, x));
+      const clampedY = Math.max(-CANVAS_RANGE, Math.min(CANVAS_RANGE, y));
       const existing = await getFrameById(req.params.id);
       if (!existing) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
-      await requireEditor(me.id, existing.boardId);
-      const next = await moveFrame(req.params.id, body.position);
+      await app.requireEditor(req, existing.boardId);
+      const next = await moveFrame(req.params.id, { x: clampedX, y: clampedY });
       if (!next) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
       hub.broadcast(next.boardId, {
         type: 'frame.moved',
@@ -179,6 +222,8 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
         x: next.position.x,
         y: next.position.y,
       });
+      // Return the updated frame so the client sees the persisted (possibly
+      // clamped) coordinates instead of the values it sent.
       return reply.send(next);
     },
   );
@@ -187,18 +232,8 @@ export async function registerFrameRoutes(app: FastifyInstance): Promise<void> {
     const me = requireUser(req);
     const existing = await getFrameById(req.params.id);
     if (!existing) return reply.code(404).send({ error: 'Frame not found', code: 'NOT_FOUND' });
-    await requireEditor(me.id, existing.boardId);
+    await app.requireEditor(req, existing.boardId);
     await deleteFrame(existing.id);
-    // Best-effort orphan-blob cleanup: an image frame owns its uploaded
-    // bytes, so dropping the row would otherwise leak the storage object.
-    const key = storageKeyForFrame(existing);
-    if (key) {
-      try {
-        await getStorage().remove(key);
-      } catch (err) {
-        req.log.warn({ err, key }, 'failed to remove frame blob');
-      }
-    }
     hub.broadcast(existing.boardId, { type: 'frame.deleted', frameId: existing.id });
     return reply.send({ ok: true } satisfies SuccessResponse);
   });

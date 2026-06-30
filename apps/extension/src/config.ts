@@ -4,9 +4,10 @@
 export const DEFAULTS = {
   cloudUrl: 'http://localhost:4000',
   webUrl: 'http://localhost:5173',
-  /** No default token — the user must paste their Foldo session token. */
-  bearerToken: '',
-  boardId: '',
+  bearerToken: 'demo-user',
+  boardId: 'board-acme-landing',
+  /** The userId attributed to captures. For demo, the token doubles as the id. */
+  capturedByUserId: 'demo-user',
 } as const;
 
 export const STORAGE_KEYS = {

@@ -1,7 +1,6 @@
 import type { ComponentType } from 'react';
 import { FoldoMark, INK, PILLOW } from '../marketing/shared';
 import type { HomeBoardSummary } from './api';
-import type { Scope } from './HomeApp';
 import { IconClock, IconFiles, IconGear, IconStar } from './icons';
 
 type View = 'all' | 'recents' | 'starred';
@@ -15,31 +14,18 @@ const NAV: { id: View; label: string; Icon: ComponentType<{ size?: number }> }[]
 interface SidebarProps {
   view: View;
   onView: (v: View) => void;
-  scope: Scope;
-  onScope: (s: Scope) => void;
   starredCount: number;
   boards: HomeBoardSummary[] | null;
 }
 
-export function Sidebar({
-  view,
-  onView,
-  scope,
-  onScope,
-  starredCount,
-  boards,
-}: SidebarProps) {
-  // Membership counts. "Teams" aren't a real entity in Foldo's data model —
-  // only board memberships with owner/editor/viewer roles exist — so the
-  // sidebar reflects that truthfully instead of faking team rows.
-  const all = boards ?? [];
-  const ownedCount = all.filter((b) => b.role === 'owner').length;
-  const sharedCount = all.filter((b) => b.role !== 'owner').length;
-
-  const scopeRows: { id: Scope; label: string; count: number; dot: string }[] = [
-    { id: 'owned', label: 'Owned by me', count: ownedCount, dot: PILLOW },
-    { id: 'shared', label: 'Shared with me', count: sharedCount, dot: '#5db0ff' },
-  ];
+export function Sidebar({ view, onView, starredCount, boards }: SidebarProps) {
+  // Group boards by team prefix (e.g. "acme/landing" → "acme").
+  const teams = new Map<string, number>();
+  for (const b of boards ?? []) {
+    const prefix = b.repoSlug.split('/')[0] || '·';
+    teams.set(prefix, (teams.get(prefix) ?? 0) + 1);
+  }
+  const teamList = [...teams.entries()].sort((a, b) => b[1] - a[1]);
 
   return (
     <aside
@@ -90,30 +76,34 @@ export function Sidebar({
         ))}
       </nav>
 
-      <div className="home-section-label">MEMBERSHIP</div>
-      <button
-        type="button"
-        onClick={() => onScope('everything')}
-        className={`home-sidebar-link${scope === 'everything' ? ' is-active' : ''}`}
-        style={{ width: '100%', textAlign: 'left', border: 0, background: 'transparent' }}
-      >
-        <span className="dot" style={{ width: 8, height: 8, borderRadius: '50%', background: '#bbb', flex: 'none' }} />
-        <span style={{ flex: 1 }}>Everything</span>
-        <span style={{ color: '#888', fontSize: 11.5 }}>{all.length}</span>
-      </button>
-      {scopeRows.map((r) => (
-        <button
-          key={r.id}
-          type="button"
-          onClick={() => onScope(r.id)}
-          className={`home-sidebar-link${scope === r.id ? ' is-active' : ''}`}
-          style={{ width: '100%', textAlign: 'left', border: 0, background: 'transparent' }}
-        >
-          <span className="dot" style={{ width: 8, height: 8, borderRadius: '50%', background: r.dot, flex: 'none' }} />
-          <span style={{ flex: 1 }}>{r.label}</span>
-          <span style={{ color: '#888', fontSize: 11.5 }}>{r.count}</span>
-        </button>
-      ))}
+      {teamList.length > 0 && (
+        <>
+          <div className="home-section-label">TEAMS</div>
+          {teamList.map(([team, count]) => (
+            <div key={team} className="home-team">
+              <span className="dot" style={{ background: pickTeamColor(team) }} />
+              <span style={{ flex: 1 }}>{team}</span>
+              <span style={{ color: '#888', fontSize: 11.5 }}>{count}</span>
+            </div>
+          ))}
+        </>
+      )}
+
+      <div className="home-section-label">SHARED</div>
+      <div className="home-team" style={{ color: '#777', fontSize: 13 }}>
+        <span className="dot" style={{ background: PILLOW }} />
+        <span style={{ flex: 1 }}>With me</span>
+        <span style={{ color: '#888', fontSize: 11.5 }}>
+          {(boards ?? []).filter((b) => b.role !== 'owner').length}
+        </span>
+      </div>
+      <div className="home-team" style={{ color: '#777', fontSize: 13 }}>
+        <span className="dot" />
+        <span style={{ flex: 1 }}>By me</span>
+        <span style={{ color: '#888', fontSize: 11.5 }}>
+          {(boards ?? []).filter((b) => b.role === 'owner').length}
+        </span>
+      </div>
 
       <div style={{ marginTop: 'auto', paddingTop: 24 }}>
         <a
@@ -137,4 +127,11 @@ export function Sidebar({
       </div>
     </aside>
   );
+}
+
+function pickTeamColor(team: string): string {
+  const palette = ['#ff7849', '#5db0ff', '#b08cff', '#7fd49a', '#f5b86b', '#ff8ec2'];
+  let h = 0;
+  for (const ch of team) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return palette[h % palette.length];
 }

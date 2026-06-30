@@ -1,80 +1,270 @@
-// The on-canvas frame list, isolated from App's viewport re-renders.
+// FrameLayer — the 7-way frame rendering loop, extracted from App.tsx so it
+// has its own store subscription scope. App.tsx still re-renders on every
+// store change (cursor moves, dispatch progress, etc.) but the inner frame
+// tree only re-renders when its own inputs change (frames, branches, board,
+// or one of the passed-in props).
 //
-// App re-renders on every camera RAF tick (popover positioning, follow-me).
-// If the frame list lived inline in App, each tick would recreate every
-// frame element + a fresh `wrapperProps` object, defeating the per-frame
-// React.memo. FrameLayer is memo'd with no props and reads frames straight
-// from the board store, so a camera tick never reaches it. Each frame is a
-// memo'd <FrameHost> keyed by id, so a single frame's mutation (drag, edit)
-// re-renders only that frame.
+// Also wraps each frame in a per-frame ErrorBoundary so a single bad frame
+// (e.g. malformed content_json from a bad WS message) doesn't blank the whole
+// canvas. Completes the Phase-0 deferred per-frame boundary work.
 
-import { memo, useMemo, type HTMLAttributes } from 'react';
-import type { Branch, Frame } from '@foldo/protocol';
-import type { FrameKindPlugin } from '@foldo/plugin-api';
+import { memo, useMemo } from 'react';
+import type {
+  Board,
+  Branch,
+  Comment,
+  Frame,
+  TestSessionIssue,
+} from '@foldo/protocol';
 import { useBoardSelector } from '../state/useBoardStore';
-import { registry } from '../plugins/registry';
+import { AppFrame } from './AppFrame';
+import { ArrowFrame } from './ArrowFrame';
+import { ImageFrame } from './ImageFrame';
+import { MarkdownFrame } from './MarkdownFrame';
+import { StickyFrame } from './StickyFrame';
+import { TestSessionFrame } from './TestSessionFrame';
+import { TestSummaryFrame } from './TestSummaryFrame';
+import { ErrorBoundary } from './ErrorBoundary';
+import type { SelectedElement, Tool } from '../types';
 
-const LOCKED_STYLE: HTMLAttributes<HTMLDivElement>['style'] = {
-  pointerEvents: 'none',
-  opacity: 0.85,
-};
+const MemoAppFrame = memo(AppFrame);
+const MemoMarkdownFrame = memo(MarkdownFrame);
+const MemoStickyFrame = memo(StickyFrame);
+const MemoArrowFrame = memo(ArrowFrame);
+const MemoImageFrame = memo(ImageFrame);
+const MemoTestSummaryFrame = memo(TestSummaryFrame);
+const MemoTestSessionFrame = memo(TestSessionFrame);
 
-const FrameHost = memo(function FrameHost({
-  frame,
-  branch,
-  plugin,
-}: {
-  frame: Frame;
-  branch: Branch;
-  plugin: FrameKindPlugin;
-}) {
-  // Stable per-frame host attrs. Rebuilt only when this frame's identity or
-  // lock state changes — not on every parent render.
-  const wrapperProps = useMemo<HTMLAttributes<HTMLDivElement>>(
-    () => ({
-      'data-frame-id': frame.id,
-      'data-frame-kind': frame.kind,
-      ...(frame.locked ? { style: LOCKED_STYLE } : null),
-    }),
-    [frame.id, frame.kind, frame.locked],
-  );
-  const Render = plugin.Render;
-  return <Render frame={frame} branch={branch} wrapperProps={wrapperProps} />;
-});
+interface Props {
+  tool: Tool;
+  selectedElement: SelectedElement | null;
+  zoom: number;
+  /** Pre-grouped per-frame comments computed once in App. */
+  commentsByFrame: Map<string, Comment[]>;
+  /** Frame ids currently in (or near) the viewport. */
+  inViewportSet: ReadonlySet<string>;
+  onSelectElement: (sel: SelectedElement | null) => void;
+  onDropPin: (frameId: string, x: number, y: number) => void;
+  onCommentClick: (frameId: string, comment: Comment) => void;
+  onMakeEditFromIssue: (frame: Frame, issue: TestSessionIssue) => void;
+  /**
+   * App-level callback for selecting a markdown line. Wired here (not inlined)
+   * so FrameLayer doesn't need to know about App's selection state.
+   */
+  onSelectMdLine: (
+    frameId: string,
+    sectionId: string,
+    lineIndex: number,
+    label: string,
+  ) => void;
+}
 
-export const FrameLayer = memo(function FrameLayer() {
-  const frames = useBoardSelector((s) => s.frames);
-  const branches = useBoardSelector((s) => s.branches);
+export const FrameLayer = memo(function FrameLayer({
+  tool,
+  selectedElement,
+  zoom,
+  commentsByFrame,
+  inViewportSet,
+  onSelectElement,
+  onDropPin,
+  onCommentClick,
+  onMakeEditFromIssue,
+  onSelectMdLine,
+}: Props) {
+  // Store reads live here, not in App, so an unrelated store patch (cursor
+  // move, presence update, dispatch status) doesn't re-render the frame tree.
+  const framesMap = useBoardSelector((s) => s.frames);
+  const branchesMap = useBoardSelector((s) => s.branches);
+  const board = useBoardSelector((s) => s.board);
 
-  const items = useMemo(() => {
-    const out: Array<{ frame: Frame; branch: Branch; plugin: FrameKindPlugin }> =
-      [];
-    for (const frame of frames.values()) {
-      if (frame.hidden) continue;
-      const branch = branches.get(frame.branchId);
-      if (!branch) continue;
-      const plugin = registry.getFrameKind(frame.kind);
-      if (!plugin) {
-        console.warn(
-          `[foldo] no plugin registered for frame kind "${frame.kind}"`,
-        );
-        continue;
-      }
-      out.push({ frame, branch, plugin });
-    }
-    return out;
-  }, [frames, branches]);
+  // Derive the ordered list from the Map. Map iteration is insertion-order,
+  // which matches what the seed produces and what callers expect.
+  const frames = useMemo(() => Array.from(framesMap.values()), [framesMap]);
 
   return (
-    <>
-      {items.map(({ frame, branch, plugin }) => (
-        <FrameHost
-          key={frame.id}
-          frame={frame}
-          branch={branch}
-          plugin={plugin}
-        />
-      ))}
-    </>
+    // Wrapping span so e2e tests can locate the live frame layer + count
+    // children. `display:contents` keeps the original layout (FrameLayer used
+    // to render a fragment) so absolute-positioned frames anchor against the
+    // Canvas's transformed parent, not this wrapper.
+    <span
+      data-testid="foldo-canvas-frames"
+      data-foldo-frame-count={frames.length}
+      style={{ display: 'contents' }}
+    >
+      {frames.map((f) => {
+        const branch = branchesMap.get(f.branchId);
+        if (!branch) return null;
+        const comments = commentsByFrame.get(f.id) ?? [];
+        const inViewport = inViewportSet.has(f.id);
+        return (
+          <ErrorBoundary
+            key={f.id}
+            label={`frame ${f.id}`}
+            fallback={(err, retry) => (
+              <FrameErrorBadge frame={f} err={err} retry={retry} />
+            )}
+          >
+            <span
+              data-testid="foldo-canvas-frame"
+              data-foldo-frame-id={f.id}
+              data-foldo-frame-kind={f.kind}
+              style={{ display: 'contents' }}
+            >
+              {renderFrame({
+                f,
+                branch,
+                board,
+                comments,
+                inViewport,
+                tool,
+                selectedElement,
+                zoom,
+                onSelectElement,
+                onDropPin,
+                onCommentClick,
+                onMakeEditFromIssue,
+                onSelectMdLine,
+              })}
+            </span>
+          </ErrorBoundary>
+        );
+      })}
+    </span>
   );
 });
+
+// Per-frame switch extracted out of the loop so the JSX above stays readable.
+// Returns null for frame kinds we don't render (defensive — TypeScript already
+// enforces exhaustiveness via the FrameKind union).
+function renderFrame(args: {
+  f: Frame;
+  branch: Branch;
+  board: Board | null;
+  comments: Comment[];
+  inViewport: boolean;
+  tool: Tool;
+  selectedElement: SelectedElement | null;
+  zoom: number;
+  onSelectElement: Props['onSelectElement'];
+  onDropPin: Props['onDropPin'];
+  onCommentClick: Props['onCommentClick'];
+  onMakeEditFromIssue: Props['onMakeEditFromIssue'];
+  onSelectMdLine: Props['onSelectMdLine'];
+}): React.ReactNode {
+  const {
+    f,
+    branch,
+    board,
+    comments,
+    inViewport,
+    tool,
+    selectedElement,
+    zoom,
+    onSelectElement,
+    onDropPin,
+    onCommentClick,
+    onMakeEditFromIssue,
+    onSelectMdLine,
+  } = args;
+
+  switch (f.kind) {
+    case 'app':
+      return (
+        <MemoAppFrame
+          frame={f}
+          branch={branch}
+          comments={comments}
+          tool={tool}
+          selectedElement={selectedElement}
+          onSelectElement={onSelectElement}
+          onDropPin={onDropPin}
+          onCommentClick={onCommentClick}
+          inViewport={inViewport}
+          zoom={zoom}
+        />
+      );
+    case 'sticky':
+      return <MemoStickyFrame frame={f} branch={branch} zoom={zoom} />;
+    case 'arrow':
+      return <MemoArrowFrame frame={f} branch={branch} zoom={zoom} />;
+    case 'image':
+      return (
+        <MemoImageFrame
+          frame={f}
+          branch={branch}
+          zoom={zoom}
+          tool={tool}
+          comments={comments}
+          onDropPin={onDropPin}
+          onCommentClick={onCommentClick}
+        />
+      );
+    case 'test_summary':
+      return <MemoTestSummaryFrame frame={f} branch={branch} zoom={zoom} />;
+    case 'test_session':
+      return (
+        <MemoTestSessionFrame
+          frame={f}
+          branch={branch}
+          zoom={zoom}
+          onMakeEditFromIssue={onMakeEditFromIssue}
+        />
+      );
+    case 'markdown':
+      return (
+        <MemoMarkdownFrame
+          frame={f}
+          branch={branch}
+          board={board}
+          comments={comments}
+          tool={tool}
+          inViewport={inViewport}
+          zoom={zoom}
+          onSelectMdLine={onSelectMdLine}
+          onCommentClick={onCommentClick}
+          onDropPin={onDropPin}
+        />
+      );
+    default:
+      // Exhaustive: every FrameKind has a case above. If a new kind is added
+      // without a case, TS narrowing leaves `f` as `never` here.
+      return null;
+  }
+}
+
+// Tiny inline fallback shown in place of a frame that threw during render.
+// Keeps its bounding box so the rest of the canvas layout isn't disturbed.
+function FrameErrorBadge({
+  frame,
+  err,
+  retry,
+}: {
+  frame: Frame;
+  err: Error;
+  retry: () => void;
+}) {
+  return (
+    <div
+      className="absolute flex flex-col items-start justify-center rounded-md border border-warn/40 bg-warn/10 p-3 text-[11px] text-warn"
+      style={{
+        left: frame.position.x,
+        top: frame.position.y,
+        width: frame.size.width,
+        height: frame.size.height,
+      }}
+      role="alert"
+    >
+      <span className="font-semibold">Frame failed to render</span>
+      <span className="mt-0.5 truncate text-[10.5px] opacity-80" title={err.message}>
+        {err.message}
+      </span>
+      <button
+        onClick={retry}
+        className="mt-2 rounded border border-warn/40 px-2 py-0.5 text-[10.5px] hover:bg-warn/15"
+      >
+        Try again
+      </button>
+    </div>
+  );
+}
+

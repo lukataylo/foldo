@@ -1,35 +1,47 @@
-import type { HTMLAttributes } from 'react';
 import type { Branch, Comment, Frame, ImageFrameContent } from '@foldo/protocol';
-import { FrameShell } from './FrameShell';
+import { resolveApiUrl } from '../api/client';
+import { FrameMeta } from './FrameMeta';
 import { CommentPin } from './CommentPin';
 import { useFrameDrag } from './useFrameDrag';
-import { frameStyleToCss } from '../plugins/frameStyle';
 import type { Tool } from '../types';
 
 interface Props {
   frame: Frame;
   branch: Branch;
+  zoom?: number;
   tool?: Tool;
   comments?: Comment[];
   onDropPin?: (frameId: string, xRel: number, yRel: number) => void;
   onCommentClick?: (frameId: string, comment: Comment) => void;
-  wrapperProps?: HTMLAttributes<HTMLDivElement>;
 }
 
 export function ImageFrame({
   frame,
   branch,
+  zoom = 1,
   tool = 'select',
   comments = [],
   onDropPin,
   onCommentClick,
-  wrapperProps,
 }: Props) {
   const c = frame.content as ImageFrameContent;
-  const src = c.url ?? c.dataUrl ?? '';
-  const { handlers: dragHandlers } = useFrameDrag({ frame });
+  // Upload URLs are relative to the API origin (`/api/uploads/…`), not the
+  // web host — resolve them before handing to <img>.
+  const src = c.url ? resolveApiUrl(c.url) : (c.dataUrl ?? '');
+  const { handlers: dragHandlers } = useFrameDrag({ frame, zoom });
   return (
-    <FrameShell frame={frame} branch={branch} wrapperProps={wrapperProps}>
+    <div
+      data-testid="foldo-canvas-frame-image"
+      data-frame-id={frame.id}
+      className="absolute"
+      style={{
+        left: frame.position.x,
+        top: frame.position.y,
+        width: frame.size.width,
+        height: frame.size.height,
+      }}
+    >
+      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
       <div
         {...dragHandlers}
         className="relative"
@@ -45,7 +57,6 @@ export function ImageFrame({
           pointerEvents: 'auto',
           cursor: 'grab',
           userSelect: 'none',
-          ...frameStyleToCss(frame.style),
         }}
       >
         {src ? (
@@ -115,6 +126,6 @@ export function ImageFrame({
             />
           ))}
       </div>
-    </FrameShell>
+    </div>
   );
 }

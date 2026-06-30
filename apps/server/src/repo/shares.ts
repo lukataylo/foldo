@@ -17,7 +17,7 @@ function newShareToken(): string {
   const bytes = randomBytes(10);
   let out = '';
   for (let i = 0; i < bytes.length; i++) {
-    out += ALPHABET[bytes[i] % ALPHABET.length];
+    out += ALPHABET[(bytes[i] ?? 0) % ALPHABET.length];
   }
   return out;
 }

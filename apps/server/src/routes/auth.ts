@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
+import type { User } from '@foldo/protocol';
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import {
   getUserByEmail,
   getUserById,
   getUserPasswordHash,
-  isEmailVerified,
   listUsers,
   markEmailVerified,
   setUserPasswordHash,
@@ -21,55 +21,171 @@ import {
   listApiTokensForUser,
   listSessionsForUser,
 } from '../repo/sessions.ts';
-import {
-  consumeAuthActionToken,
-  consumePendingTokensForUser,
-  createAuthActionToken,
-} from '../repo/authActionTokens.ts';
 import { addBoardMember } from '../repo/members.ts';
 import { DEMO_BOARD_ID } from '../seed.ts';
 import { extractBearerToken, requireUser } from '../auth.ts';
 import { rateLimitPreHandler } from '../rateLimit.ts';
 import { nowIso } from '../util.ts';
 import {
-  isDevMailTransport,
-  lastEmailTo,
-  passwordResetEmail,
-  sendEmail,
-  verifyEmailEmail,
-} from '../email/index.ts';
+  consumePasswordResetToken,
+  mintPasswordResetToken,
+} from '../repo/passwordResets.ts';
+import {
+  consumeEmailVerificationToken,
+  mintEmailVerificationToken,
+} from '../repo/emailVerifications.ts';
+import { getEmailSender } from '../email/index.ts';
 
-const scrypt = promisify(scryptCb) as (
-  pw: string,
+interface ScryptParams {
+  /** CPU/memory cost factor — must be a power of 2. */
+  N: number;
+  /** Block size. 8 is the well-tested default. */
+  r: number;
+  /** Parallelization. 1 is the well-tested default. */
+  p: number;
+}
+
+/**
+ * Async scrypt that lets us pass cost params. Node's promisified scrypt
+ * doesn't expose the options arg cleanly, so we wrap the callback form.
+ */
+function scryptAsync(
+  password: string,
   salt: Buffer,
   keylen: number,
-) => Promise<Buffer>;
+  params: ScryptParams,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scryptCb(
+      password,
+      salt,
+      keylen,
+      {
+        cost: params.N,
+        blockSize: params.r,
+        parallelization: params.p,
+        // The memory needed for scrypt is roughly 128 * N * r bytes; for our
+        // N=32768, r=8 that's exactly 32 MiB — the openssl default maxmem.
+        // Bump the ceiling so we don't error at the limit and so we have
+        // headroom to raise N again later without another code change.
+        maxmem: 128 * 1024 * 1024,
+      },
+      (err, derived) => {
+        if (err) return reject(err);
+        resolve(derived as Buffer);
+      },
+    );
+  });
+}
+// promisify(scryptCb) reference kept around so it isn't tree-shaken before
+// the rewrite lands in any open feature branches.
+void promisify;
 
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 200;
 const SCRYPT_KEYLEN = 64;
 
+/**
+ * Current cost params. N=2^15 puts a single hash at ~150ms on a modern
+ * laptop — slow enough to make offline brute-force expensive, fast enough
+ * that interactive login feels instant.
+ */
+const CURRENT_PARAMS: ScryptParams = { N: 32768, r: 8, p: 1 };
+
+/**
+ * Defaults that were in effect when the legacy (paramless) format was
+ * written. Node's scrypt defaults are N=16384, r=8, p=1.
+ */
+const LEGACY_PARAMS: ScryptParams = { N: 16384, r: 8, p: 1 };
+
 const PALETTE = ['#ff7849', '#5db0ff', '#b08cff', '#7fd49a', '#f5b86b', '#ff8ec2'];
 
+/**
+ * Hash format `scrypt:N=N,r=R,p=P:<salt-hex>:<key-hex>`. Encoding the cost
+ * params alongside the hash means we can bump them safely later — verify still
+ * works against old hashes, and the next successful login rotates the hash to
+ * the new params (see `verifyPassword`'s `needsRehash`).
+ *
+ * Legacy hashes use the 3-part `scrypt:<salt>:<key>` and are verified with
+ * `LEGACY_PARAMS`; they're rotated lazily on next login.
+ */
 async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
-  const key = await scrypt(password, salt, SCRYPT_KEYLEN);
-  return `scrypt:${salt.toString('hex')}:${key.toString('hex')}`;
+  const key = await scryptAsync(password, salt, SCRYPT_KEYLEN, CURRENT_PARAMS);
+  return `scrypt:N=${CURRENT_PARAMS.N},r=${CURRENT_PARAMS.r},p=${CURRENT_PARAMS.p}:${salt.toString('hex')}:${key.toString('hex')}`;
 }
 
-async function verifyPassword(stored: string, password: string): Promise<boolean> {
+/**
+ * Discriminated result of {@link verifyPassword}.
+ *
+ * Historically this returned `{ ok: boolean, needsRehash: boolean }`, but a
+ * boolean success flag muddled the "ok with a flag" and "rejected for reason X"
+ * branches at every call site. We now mirror the public `{ error, code }` REST
+ * shape so the call sites read like normal error handling — `if (!result.ok)`
+ * still works for the happy-path guard, and on failure the `code` is a stable
+ * machine-readable reason ('HASH_MALFORMED', 'HASH_MISMATCH', 'SCRYPT_FAILED')
+ * we can log/branch on without inferring it from the boolean alone.
+ */
+type VerifyResult =
+  | { ok: true; needsRehash: boolean }
+  | { ok: false; error: string; code: 'HASH_MALFORMED' | 'HASH_MISMATCH' | 'SCRYPT_FAILED' };
+
+function parseParams(spec: string): ScryptParams | null {
+  // spec is like "N=32768,r=8,p=1"
+  let N = 0, r = 0, p = 0;
+  for (const kv of spec.split(',')) {
+    const [k, v] = kv.split('=');
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (k === 'N') N = n;
+    else if (k === 'r') r = n;
+    else if (k === 'p') p = n;
+  }
+  if (!N || !r || !p) return null;
+  return { N, r, p };
+}
+
+async function verifyPassword(stored: string, password: string): Promise<VerifyResult> {
   const parts = stored.split(':');
-  if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
-  const salt = Buffer.from(parts[1], 'hex');
-  const expected = Buffer.from(parts[2], 'hex');
+  let params: ScryptParams | null = null;
+  let saltHex: string | undefined;
+  let keyHex: string | undefined;
+  let isLegacy = false;
+  if (parts[0] === 'scrypt' && parts.length === 4) {
+    params = parseParams(parts[1] ?? '');
+    saltHex = parts[2];
+    keyHex = parts[3];
+  } else if (parts[0] === 'scrypt' && parts.length === 3) {
+    params = LEGACY_PARAMS;
+    saltHex = parts[1];
+    keyHex = parts[2];
+    isLegacy = true;
+  }
+  if (!params || !saltHex || !keyHex) {
+    return { ok: false, error: 'Stored hash is malformed', code: 'HASH_MALFORMED' };
+  }
+  const salt = Buffer.from(saltHex, 'hex');
+  const expected = Buffer.from(keyHex, 'hex');
   let actual: Buffer;
   try {
-    actual = await scrypt(password, salt, expected.length);
+    actual = await scryptAsync(password, salt, expected.length, params);
   } catch {
-    return false;
+    return { ok: false, error: 'scrypt failed', code: 'SCRYPT_FAILED' };
   }
-  if (actual.length !== expected.length) return false;
-  return timingSafeEqual(actual, expected);
+  if (actual.length !== expected.length) {
+    return { ok: false, error: 'Password does not match', code: 'HASH_MISMATCH' };
+  }
+  if (!timingSafeEqual(actual, expected)) {
+    return { ok: false, error: 'Password does not match', code: 'HASH_MISMATCH' };
+  }
+  // A successful verify against a legacy hash, OR against any params weaker
+  // than CURRENT_PARAMS, signals the route to re-hash on this login.
+  const needsRehash =
+    isLegacy ||
+    params.N < CURRENT_PARAMS.N ||
+    params.r < CURRENT_PARAMS.r ||
+    params.p < CURRENT_PARAMS.p;
+  return { ok: true, needsRehash };
 }
 
 function newSessionToken(): string {
@@ -80,48 +196,66 @@ function newUserId(): string {
   return `u-${randomBytes(8).toString('hex')}`;
 }
 
-/** Opaque, high-entropy token for password-reset / email-verify links. */
-function newActionToken(): string {
-  return randomBytes(32).toString('hex');
-}
-
-const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
-const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
 /**
- * Mint a fresh email-verification token for a user and send the email. Any
- * older pending verification tokens are invalidated first so only the latest
- * link works. Best-effort: a mail failure is logged, never thrown to callers.
+ * Mint a fresh email-verification token for the given user and send the
+ * email via the configured EmailSender. Used on signup and from the
+ * resend endpoint. Errors are caught + logged so a transient send failure
+ * doesn't break the parent request.
  */
-async function issueVerificationEmail(
-  userId: string,
+async function sendVerificationEmail(
+  user: User,
   email: string,
+  log: { info: Function; warn: Function; error: Function },
 ): Promise<void> {
   try {
-    await consumePendingTokensForUser(userId, 'email_verify');
-    const token = newActionToken();
-    await createAuthActionToken({
-      token,
-      userId,
-      kind: 'email_verify',
-      expiresAt: new Date(Date.now() + EMAIL_VERIFY_TTL_MS),
+    const { token, expiresAt } = await mintEmailVerificationToken(user.id, email);
+    const origin =
+      process.env.FOLDO_PUBLIC_WEB_ORIGIN ?? 'http://localhost:5173';
+    const verifyUrl = `${origin}/verify?token=${encodeURIComponent(token)}`;
+    const ttlHrs = Math.max(
+      1,
+      Math.round((expiresAt.getTime() - Date.now()) / 3600_000),
+    );
+    await getEmailSender().send({
+      to: email,
+      subject: 'Verify your Foldo email',
+      kind: 'email-verification',
+      text:
+        `Hi ${user.name},\n\n` +
+        `Welcome to Foldo. Confirm this email by opening the link below. It expires in ${ttlHrs} hours.\n\n` +
+        `${verifyUrl}\n\n` +
+        `If you didn't sign up, ignore this email.\n`,
+      html:
+        `<p>Hi ${escapeHtml(user.name)},</p>` +
+        `<p>Welcome to Foldo. Confirm this email by opening the link below. It expires in ${ttlHrs} hours.</p>` +
+        `<p><a href="${verifyUrl}">${verifyUrl}</a></p>` +
+        `<p>If you didn't sign up, ignore this email.</p>`,
     });
-    const msg = verifyEmailEmail(token);
-    await sendEmail({ to: email, subject: msg.subject, html: msg.html });
+    log.info({ userId: user.id }, 'verification email sent');
   } catch (err) {
-    console.warn('[auth] could not send verification email:', String(err));
+    log.error({ err, userId: user.id }, 'verification email send failed');
   }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function deriveInitial(name: string): string {
   const trimmed = name.trim();
-  return trimmed.length > 0 ? trimmed[0].toUpperCase() : '?';
+  const first = trimmed[0];
+  return first ? first.toUpperCase() : '?';
 }
 
 function pickColor(seed: string): string {
   let h = 0;
   for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return PALETTE[h % PALETTE.length];
+  return PALETTE[h % PALETTE.length] ?? PALETTE[0]!;
 }
 
 interface SignupBody {
@@ -156,9 +290,11 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Body: SignupBody }>(
     '/api/auth/signup',
-    { preHandler: rateLimitPreHandler('auth-signup', 8, 60_000) },
+    { preHandler: rateLimitPreHandler('auth-signup', 5, 60_000) },
     async (req, reply) => {
-    const email = (req.body?.email ?? '').trim();
+    // Normalize to lowercase so the stored value matches what the
+    // `lower(email)` unique index enforces and what lookups compare against.
+    const email = (req.body?.email ?? '').trim().toLowerCase();
     const password = req.body?.password ?? '';
     const name = (req.body?.name ?? '').trim();
 
@@ -205,23 +341,23 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     const token = newSessionToken();
     await createSession(token, id, req.headers['user-agent']);
 
-    // Soft email verification: send a verify link, but don't block login.
-    await issueVerificationEmail(id, email);
-
     const user = await getUserById(id);
-    return reply.send({
-      token,
-      user,
-      emailVerified: false,
-      createdAt: nowIso(),
-    });
-  });
+    if (user) {
+      // Mint + send the verification email. Don't await — the signup
+      // response shouldn't be held up by the SMTP round-trip, and the
+      // helper handles its own errors so a transient send failure doesn't
+      // 500 the signup.
+      void sendVerificationEmail(user, email, req.log);
+    }
+    return reply.send({ token, user, createdAt: nowIso() });
+    },
+  );
 
   app.post<{ Body: LoginBody }>(
     '/api/auth/login',
-    { preHandler: rateLimitPreHandler('auth-login', 12, 60_000) },
+    { preHandler: rateLimitPreHandler('auth-login', 5, 60_000) },
     async (req, reply) => {
-    const email = (req.body?.email ?? '').trim();
+    const email = (req.body?.email ?? '').trim().toLowerCase();
     const password = req.body?.password ?? '';
     if (!email || !password) {
       return reply.code(400).send({ error: 'Email and password required', code: 'BAD_REQUEST' });
@@ -235,16 +371,29 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     if (!hash) {
       return reply.code(401).send({ error: 'Invalid email or password', code: 'INVALID_CREDENTIALS' });
     }
-    const ok = await verifyPassword(hash, password);
-    if (!ok) {
+    const result = await verifyPassword(hash, password);
+    if (!result.ok) {
       return reply.code(401).send({ error: 'Invalid email or password', code: 'INVALID_CREDENTIALS' });
+    }
+    // Lazy rehash: any successful login against a hash with weaker-than-
+    // CURRENT_PARAMS gets rotated to the current params transparently. This
+    // is how we move the install off legacy/3-part hashes without a
+    // forced-password-reset event.
+    if (result.needsRehash) {
+      try {
+        const fresh = await hashPassword(password);
+        await setUserPasswordHash(user.id, fresh);
+        req.log.info({ userId: user.id }, 'rotated password hash to current params');
+      } catch (err) {
+        req.log.warn({ err, userId: user.id }, 'password rehash on login failed');
+      }
     }
 
     const token = newSessionToken();
     await createSession(token, user.id, req.headers['user-agent']);
-    const emailVerified = await isEmailVerified(user.id);
-    return reply.send({ token, user, emailVerified });
-  });
+    return reply.send({ token, user });
+    },
+  );
 
   app.post('/api/auth/logout', async (req, reply) => {
     const token = extractBearerToken(req);
@@ -252,155 +401,178 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ ok: true });
   });
 
-  // ---------- password reset ----------
-
-  // ALWAYS returns 200 with the same shape, whether or not the email maps to
-  // an account — so the endpoint can't be used to enumerate registered users.
-  // The token + email work is fire-and-forget (not awaited) so response
-  // timing doesn't differ between a hit and a miss — closing a timing oracle.
+  // ---- Password reset: request a token + send the email ----
+  // Public endpoint. ALWAYS returns 200 — never leaks whether the email
+  // exists. Rate-limited per IP because token generation is cheap enough
+  // that a flood is annoying. The actual delivery is via EmailSender;
+  // dev/CI stub writes to .foldo-email-outbox/.
   app.post<{ Body: { email?: string } }>(
-    '/api/auth/request-password-reset',
-    { preHandler: rateLimitPreHandler('auth-request-reset', 5, 60_000) },
+    '/api/auth/password-reset/request',
+    { preHandler: rateLimitPreHandler('auth-pw-reset-req', 5, 60_000) },
     async (req, reply) => {
-      const email = (req.body?.email ?? '').trim();
-      if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        // Deliberately NOT awaited — see comment above.
-        void (async () => {
-          try {
-            const user = await getUserByEmail(email);
-            if (!user) return;
-            // Only accounts that actually have a password can be reset
-            // (demo / agent accounts have none).
-            const hash = await getUserPasswordHash(user.id);
-            if (!hash) return;
-            await consumePendingTokensForUser(user.id, 'password_reset');
-            const token = newActionToken();
-            await createAuthActionToken({
-              token,
-              userId: user.id,
-              kind: 'password_reset',
-              expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
-            });
-            const msg = passwordResetEmail(token);
-            await sendEmail({ to: email, subject: msg.subject, html: msg.html });
-          } catch (err) {
-            console.warn('[auth] password-reset email failed:', String(err));
-          }
-        })();
+      const email = (req.body?.email ?? '').trim().toLowerCase();
+      // Always reply success — no account-enumeration leak.
+      const ack = { ok: true } as const;
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return reply.send(ack);
       }
-      return reply.send({
-        ok: true,
-        message:
-          'If an account exists for that email, a reset link is on its way.',
-      });
+      const user = await getUserByEmail(email);
+      if (!user) {
+        // Quiet warn, not a failure — useful telemetry without leaking the
+        // signal to the caller.
+        req.log.info({ email }, 'password-reset requested for unknown email');
+        return reply.send(ack);
+      }
+      try {
+        const { token, expiresAt } = await mintPasswordResetToken(user.id);
+        const origin =
+          process.env.FOLDO_PUBLIC_WEB_ORIGIN ?? 'http://localhost:5173';
+        const resetUrl = `${origin}/reset?token=${encodeURIComponent(token)}`;
+        const ttlMin = Math.max(
+          1,
+          Math.round((expiresAt.getTime() - Date.now()) / 60_000),
+        );
+        await getEmailSender().send({
+          to: user.email ?? email,
+          subject: 'Reset your Foldo password',
+          kind: 'password-reset',
+          text:
+            `Hi ${user.name},\n\n` +
+            `Click the link below to choose a new password. It expires in ${ttlMin} minutes.\n\n` +
+            `${resetUrl}\n\n` +
+            `If you didn't request this, ignore this email — your existing password still works.\n`,
+          html:
+            `<p>Hi ${escapeHtml(user.name)},</p>` +
+            `<p>Click the link below to choose a new password. It expires in ${ttlMin} minutes.</p>` +
+            `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
+            `<p>If you didn't request this, ignore this email — your existing password still works.</p>`,
+        });
+        req.log.info({ userId: user.id }, 'password-reset email sent');
+      } catch (err) {
+        req.log.error({ err, userId: user.id }, 'password-reset send failed');
+      }
+      return reply.send(ack);
     },
   );
 
-  app.post<{ Body: { token?: string; password?: string } }>(
-    '/api/auth/reset-password',
-    { preHandler: rateLimitPreHandler('auth-reset-password', 10, 60_000) },
+  // ---- Password reset: consume the token + set the new password ----
+  // Public endpoint. Returns the freshly-issued session token + user so the
+  // client can log the user in immediately without a second login form.
+  // EVERY other session for this user is revoked — the assumption is that
+  // a password reset is triggered because the old password may have leaked.
+  app.post<{ Body: { token?: string; newPassword?: string } }>(
+    '/api/auth/password-reset/complete',
+    // 5 attempts per 15 minutes per IP. Matches the login limit so a bot
+    // can't pivot from "spray logins" to "spray reset-token completions"
+    // — they're equally cheap to abuse if uncapped. The previous 10/min
+    // was generous enough that a bot could try ~150 tokens before tripping.
+    { preHandler: rateLimitPreHandler('auth-pw-reset-cmp', 5, 15 * 60_000) },
     async (req, reply) => {
       const token = (req.body?.token ?? '').trim();
-      const password = req.body?.password ?? '';
+      const newPassword = req.body?.newPassword ?? '';
       if (!token) {
         return reply
           .code(400)
           .send({ error: 'Reset token required', code: 'BAD_REQUEST' });
       }
-      if (password.length < PASSWORD_MIN || password.length > PASSWORD_MAX) {
+      if (newPassword.length < PASSWORD_MIN || newPassword.length > PASSWORD_MAX) {
         return reply.code(400).send({
           error: `Password must be ${PASSWORD_MIN}–${PASSWORD_MAX} characters`,
           code: 'BAD_REQUEST',
         });
       }
-      const row = await consumeAuthActionToken(token, 'password_reset');
-      if (!row) {
+      const consumed = await consumePasswordResetToken(token);
+      if (!consumed) {
         return reply.code(400).send({
-          error: 'This reset link is invalid or has expired. Request a new one.',
+          error: 'Reset link is invalid or has expired',
           code: 'INVALID_TOKEN',
         });
       }
-      const newHash = await hashPassword(password);
-      await setUserPasswordHash(row.user_id, newHash);
-      // Revoke every existing session — a reset means the prior password
-      // (and any session minted with it) is no longer trusted.
-      const revoked = await deleteAllSessionsForUserExcept(row.user_id, '');
-      return reply.send({ ok: true, revokedSessions: revoked });
+      const user = await getUserById(consumed.userId);
+      if (!user) {
+        return reply.code(400).send({
+          error: 'Reset link is invalid or has expired',
+          code: 'INVALID_TOKEN',
+        });
+      }
+      const hash = await hashPassword(newPassword);
+      await setUserPasswordHash(user.id, hash);
+      // Mint a fresh session for the requester, then invalidate every other
+      // session belonging to this user.
+      const sessionToken = newSessionToken();
+      await createSession(sessionToken, user.id, req.headers['user-agent']);
+      const revoked = await deleteAllSessionsForUserExcept(user.id, sessionToken);
+      req.log.info(
+        { userId: user.id, revokedSessions: revoked },
+        'password reset completed',
+      );
+      return reply.send({ token: sessionToken, user });
     },
   );
 
-  // ---------- email verification ----------
-
+  // ---- Email verification: consume the token ----
+  // Public endpoint. We accept either GET (link in email) or POST (the SPA
+  // when it intercepts /verify?token=...). Either way: validate, stamp
+  // users.email_verified_at, return 200. Always returns a JSON body so the
+  // SPA can show a success state.
+  const verifyHandler = async (
+    req: import('fastify').FastifyRequest,
+    reply: import('fastify').FastifyReply,
+    rawToken: string | undefined,
+  ): Promise<void> => {
+    const token = (rawToken ?? '').trim();
+    if (!token) {
+      reply.code(400).send({
+        error: 'Verification token required',
+        code: 'BAD_REQUEST',
+      });
+      return;
+    }
+    const consumed = await consumeEmailVerificationToken(token);
+    if (!consumed) {
+      reply.code(400).send({
+        error: 'Verification link is invalid or has expired',
+        code: 'INVALID_TOKEN',
+      });
+      return;
+    }
+    await markEmailVerified(consumed.userId);
+    req.log.info(
+      { userId: consumed.userId, email: consumed.email },
+      'email verified',
+    );
+    reply.send({ ok: true, email: consumed.email });
+  };
+  app.get<{ Querystring: { token?: string } }>(
+    '/api/auth/verify-email',
+    { preHandler: rateLimitPreHandler('auth-verify', 20, 60_000) },
+    async (req, reply) => verifyHandler(req, reply, req.query.token),
+  );
   app.post<{ Body: { token?: string } }>(
     '/api/auth/verify-email',
-    { preHandler: rateLimitPreHandler('auth-verify-email', 20, 60_000) },
-    async (req, reply) => {
-      const token = (req.body?.token ?? '').trim();
-      if (!token) {
-        return reply
-          .code(400)
-          .send({ error: 'Verification token required', code: 'BAD_REQUEST' });
-      }
-      const row = await consumeAuthActionToken(token, 'email_verify');
-      if (!row) {
-        return reply.code(400).send({
-          error:
-            'This verification link is invalid or has expired. Request a new one.',
-          code: 'INVALID_TOKEN',
-        });
-      }
-      await markEmailVerified(row.user_id);
-      return reply.send({ ok: true });
-    },
+    { preHandler: rateLimitPreHandler('auth-verify', 20, 60_000) },
+    async (req, reply) => verifyHandler(req, reply, req.body?.token),
   );
 
+  // ---- Resend the verification email ----
+  // Authenticated — only the user themselves can request a resend.
+  // Idempotent on the verified case (no-op + 200). Rate-limited per user.
   app.post(
     '/api/auth/resend-verification',
-    { preHandler: rateLimitPreHandler('auth-resend-verification', 4, 60_000) },
+    { preHandler: rateLimitPreHandler('auth-verify-resend', 3, 60_000) },
     async (req, reply) => {
-    const me = requireUser(req);
-    if (await isEmailVerified(me.id)) {
-      return reply.send({ ok: true, alreadyVerified: true });
-    }
-    if (!me.email) {
-      return reply
-        .code(400)
-        .send({ error: 'This account has no email address', code: 'NO_EMAIL' });
-    }
-    await issueVerificationEmail(me.id, me.email);
-    return reply.send({ ok: true });
-  });
-
-  // Authenticated identity + verification status, so the client can decide
-  // whether to show the "verify your email" banner.
-  app.get('/api/auth/me', async (req, reply) => {
-    const me = requireUser(req);
-    return reply.send({ user: me, emailVerified: await isEmailVerified(me.id) });
-  });
-
-  // ---------- dev-only mail inspection ----------
-  //
-  // Returns the most recent email sent to an address so E2E specs can extract
-  // reset / verification links. 404 in production — never exposes mail there.
-  app.get<{ Querystring: { to?: string } }>(
-    '/api/dev/last-email',
-    async (req, reply) => {
-      if (process.env.NODE_ENV === 'production' || !isDevMailTransport()) {
-        return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' });
+      const me = requireUser(req);
+      if (me.emailVerifiedAt) {
+        return reply.send({ ok: true, alreadyVerified: true });
       }
-      const to = (req.query?.to ?? '').trim();
-      if (!to) {
-        return reply
-          .code(400)
-          .send({ error: 'Query param "to" required', code: 'BAD_REQUEST' });
+      if (!me.email) {
+        return reply.code(400).send({
+          error: 'This account has no email on file',
+          code: 'NO_EMAIL',
+        });
       }
-      const email = lastEmailTo(to);
-      if (!email) {
-        return reply
-          .code(404)
-          .send({ error: 'No email for that address', code: 'NOT_FOUND' });
-      }
-      return reply.send({ email });
+      await sendVerificationEmail(me, me.email, req.log);
+      return reply.send({ ok: true });
     },
   );
 
@@ -444,6 +616,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Body: ChangePasswordBody }>(
     '/api/auth/change-password',
+    { preHandler: rateLimitPreHandler('auth-change-pw', 10, 60_000) },
     async (req, reply) => {
       const me = requireUser(req);
       const currentPassword = req.body?.currentPassword ?? '';
@@ -467,7 +640,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           code: 'NO_PASSWORD',
         });
       }
-      const ok = await verifyPassword(hash, currentPassword);
+      const { ok } = await verifyPassword(hash, currentPassword);
       if (!ok) {
         return reply
           .code(401)

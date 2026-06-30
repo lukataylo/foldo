@@ -1,16 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type HTMLAttributes } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Branch, Frame, StickyFrameContent } from '@foldo/protocol';
-import { FrameShell } from './FrameShell';
+import { FrameMeta } from './FrameMeta';
 import { updateFrame as apiUpdateFrame } from '../api/frames';
 import { boardStore } from '../state/BoardStore';
-import { mutate } from '../lib/mutate';
-import { frameStyleToCss } from '../plugins/frameStyle';
 
 interface Props {
   frame: Frame;
   branch: Branch;
-  /** Host-supplied data-* attrs + locked-state styling. Spread onto the root. */
-  wrapperProps?: HTMLAttributes<HTMLDivElement>;
+  zoom?: number;
 }
 
 const PALETTE: Record<string, { bg: string; ink: string; edge: string }> = {
@@ -21,9 +18,7 @@ const PALETTE: Record<string, { bg: string; ink: string; edge: string }> = {
   lilac: { bg: '#e0d3ff', ink: '#2e1668', edge: '#bba6e0' },
 };
 
-export function StickyFrame({ frame, branch, wrapperProps }: Props) {
-  // Safe: FrameLayer dispatches each frame to the plugin matching frame.kind,
-  // so a StickyFrame only ever receives sticky content.
+export function StickyFrame({ frame, branch, zoom = 1 }: Props) {
   const content = frame.content as StickyFrameContent;
   const palette = PALETTE[content.color ?? 'yellow'] ?? PALETTE.yellow;
   const [body, setBody] = useState(content.body ?? '');
@@ -37,22 +32,27 @@ export function StickyFrame({ frame, branch, wrapperProps }: Props) {
 
   const flush = useCallback(
     (next: string) => {
-      const prev = boardStore.getSnapshot().frames.get(frame.id) ?? frame;
       const nextContent: StickyFrameContent = { ...content, body: next };
-      void mutate({
-        optimistic: () =>
-          boardStore.upsertFrame({ ...frame, content: nextContent }),
-        commit: () => apiUpdateFrame(frame.id, { content: nextContent }),
-        rollback: () => boardStore.upsertFrame(prev),
+      boardStore.upsertFrame({ ...frame, content: nextContent });
+      apiUpdateFrame(frame.id, { content: nextContent }).catch((err) => {
         // eslint-disable-next-line no-console
-        onError: (err) => console.warn('[foldo] sticky update failed', err),
+        console.warn('[foldo] sticky update failed', err);
       });
     },
     [frame, content],
   );
 
   return (
-    <FrameShell frame={frame} branch={branch} wrapperProps={wrapperProps}>
+    <div
+      className="absolute"
+      style={{
+        left: frame.position.x,
+        top: frame.position.y,
+        width: frame.size.width,
+        height: frame.size.height,
+      }}
+    >
+      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
       <div
         style={{
           width: '100%',
@@ -69,9 +69,6 @@ export function StickyFrame({ frame, branch, wrapperProps }: Props) {
           fontSize: 15,
           lineHeight: 1.45,
           overflow: 'hidden',
-          // Design-plugin overrides — applied last so they win over the
-          // sticky's intrinsic palette/font.
-          ...frameStyleToCss(frame.style),
         }}
       >
         <textarea
@@ -104,6 +101,6 @@ export function StickyFrame({ frame, branch, wrapperProps }: Props) {
           }}
         />
       </div>
-    </FrameShell>
+    </div>
   );
 }

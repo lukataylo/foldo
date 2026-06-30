@@ -39,15 +39,11 @@ export function CommentPopover({
   const [bodyDraft, setBodyDraft] = useState(comment.text);
   const composeRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Sync the draft from the incoming comment. Two cases matter:
-  //   - Opening the popover on an existing comment: take its text.
-  //   - The optimistic-to-server id swap right after a drop-pin: we MUST NOT
-  //     stomp the user's in-flight typing. While `composing` is true, the
-  //     textarea is the source of truth.
+  // Reset the draft if a different comment is loaded into the same popover
+  // instance (e.g. after an optimistic id → server id swap on drop-pin).
   useEffect(() => {
-    if (composing) return;
     setBodyDraft(comment.text);
-  }, [comment.id, comment.text, composing]);
+  }, [comment.id, comment.text]);
 
   // Auto-focus the compose textarea when the popover opens for a new pin.
   useEffect(() => {
@@ -75,11 +71,12 @@ export function CommentPopover({
   };
 
   // Clamp the popover position to the viewport so it doesn't clip off-screen.
-  const W = 320; // matches w-80
-  const H = 280; // approximate; popover grows with replies
-  const margin = 12;
+  /* A+W1 touch: on viewports <=500px the popover narrows to fit with margin. */
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+  const W = vw <= 500 ? Math.max(260, vw - 24) : 320; // matches w-80 fallback
+  const H = 280; // approximate; popover grows with replies
+  const margin = 12;
   let left = screenPosition.x + 12;
   let top = screenPosition.y - 8;
   if (left + W + margin > vw) left = Math.max(margin, screenPosition.x - W - margin);
@@ -89,8 +86,12 @@ export function CommentPopover({
 
   return (
     <div
-      className="fade-in pointer-events-auto absolute z-[60] w-80 rounded-xl border border-hairline bg-panel shadow-panel"
-      style={{ left, top }}
+      data-testid="foldo-comment-popover"
+      data-foldo-comment-id={comment.id}
+      className="fade-in pointer-events-auto absolute z-[60] rounded-xl border border-hairline bg-panel shadow-panel"
+      /* A+W1 touch: width follows the W computed above so narrow viewports get
+         a fitted popover instead of clipping off-screen. */
+      style={{ left, top, width: W }}
     >
       <div className="flex items-center justify-between border-b border-hairlineSoft px-3 py-2.5">
         <div className="flex items-center gap-2">
@@ -111,7 +112,9 @@ export function CommentPopover({
         </div>
         <button
           onClick={onClose}
-          className="touch-target flex h-6 w-6 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+          /* A+W1 touch: 44x44 close button (was 24x24). */
+          className="flex h-11 w-11 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+          aria-label="Close comment"
         >
           <svg width="11" height="11" viewBox="0 0 16 16">
             <path
@@ -126,6 +129,7 @@ export function CommentPopover({
       <div className="px-3 py-2.5">
         {composing ? (
           <textarea
+            data-testid="foldo-comment-text-input"
             ref={composeRef}
             value={bodyDraft}
             onChange={(e) => setBodyDraft(e.target.value)}
@@ -142,10 +146,14 @@ export function CommentPopover({
             }}
             rows={3}
             placeholder="Type your comment…"
-            className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2 py-1.5 text-[12.5px] leading-relaxed text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
+            /* A+W1 touch: 16px text-base so iOS doesn't auto-zoom on focus. */
+            className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2 py-1.5 text-[16px] leading-relaxed text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
           />
         ) : (
-          <div className="text-[12.5px] leading-relaxed text-ink">
+          <div
+            data-testid="foldo-comment-text"
+            className="text-[12.5px] leading-relaxed text-ink"
+          >
             {comment.text}
           </div>
         )}
@@ -190,12 +198,14 @@ export function CommentPopover({
         {replyOpen && (
           <div className="mt-2">
             <textarea
+              data-testid="foldo-comment-reply-input"
               autoFocus
               value={replyText}
               onChange={(e) => setReplyText(e.target.value)}
               rows={2}
               placeholder="Reply…"
-              className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2 py-1.5 text-[12px] text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
+              /* A+W1 touch: 16px to skip iOS auto-zoom on focus. */
+              className="w-full resize-none rounded-md border border-hairlineSoft bg-canvas px-2 py-1.5 text-[16px] text-ink placeholder:text-inkFaint focus:border-accent/60 focus:outline-none"
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                   e.preventDefault();
@@ -212,6 +222,7 @@ export function CommentPopover({
                 Cancel
               </button>
               <button
+                data-testid="foldo-comment-reply-submit"
                 disabled={submitting || !replyText.trim()}
                 onClick={() => void submitReply()}
                 className="rounded-md bg-accent/15 px-2 py-1 text-[11.5px] font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
@@ -224,12 +235,14 @@ export function CommentPopover({
       </div>
       <div className="flex items-center justify-between border-t border-hairlineSoft px-3 py-2">
         <button
+          data-testid="foldo-comment-reply"
           onClick={() => setReplyOpen((o) => !o)}
           className="text-[11.5px] text-inkMute hover:text-ink"
         >
           Reply
         </button>
         <button
+          data-testid="foldo-comment-resolve"
           onClick={onResolve}
           className="text-[11.5px] text-inkMute hover:text-ink"
         >
@@ -237,6 +250,7 @@ export function CommentPopover({
         </button>
         {canDelete && onDelete && (
           <button
+            data-testid="foldo-comment-delete"
             onClick={() => {
               if (confirm('Delete this comment?')) void onDelete();
             }}
@@ -245,12 +259,33 @@ export function CommentPopover({
             Delete
           </button>
         )}
-        <button
-          onClick={onMakeEdit}
-          className="flex items-center gap-1.5 rounded-md bg-accent/15 px-2 py-1 text-[11.5px] font-medium text-accent hover:bg-accent/25"
-        >
-          <Sparkle /> Make this an edit
-        </button>
+        {/* A+W1 features — disable when the comment has no element target
+            and no markdown anchor; the handler in useCommentHandlers also
+            short-circuits with a toast for keyboard / programmatic callers. */}
+        {(() => {
+          const canMakeEdit = !!(comment.target?.elementLabel || comment.anchor);
+          return (
+            <button
+              data-testid="foldo-comment-make-edit"
+              data-foldo-can-make-edit={canMakeEdit ? 'yes' : 'no'}
+              onClick={onMakeEdit}
+              disabled={!canMakeEdit}
+              title={
+                canMakeEdit
+                  ? 'Turn this comment into a Claude Code edit'
+                  : 'Pin the comment to an element or a markdown line to make it editable.'
+              }
+              className={
+                'flex items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-medium ' +
+                (canMakeEdit
+                  ? 'bg-accent/15 text-accent hover:bg-accent/25'
+                  : 'cursor-not-allowed bg-white/5 text-inkFaint')
+              }
+            >
+              <Sparkle /> Make this an edit
+            </button>
+          );
+        })()}
       </div>
     </div>
   );

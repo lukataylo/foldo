@@ -1,5 +1,4 @@
 import { API_BASE, readToken, type AuthUser } from '../marketing/auth';
-import { handleExpiredSession } from '../lib/session';
 
 export interface HomeBoardSummary {
   id: string;
@@ -7,6 +6,12 @@ export interface HomeBoardSummary {
   repoSlug: string;
   devUrl?: string;
   createdAt: string;
+  /**
+   * ISO timestamp when the board was soft-deleted via DELETE /api/boards/:id.
+   * NULL for live boards. The home grid only sees archived boards when the
+   * "Show archived" toggle calls /api/home?includeArchived=true.
+   */
+  archivedAt?: string | null;
   /** Membership role: 'owner' lets you delete/share, 'editor' can write, 'viewer' read-only. */
   role?: 'owner' | 'editor' | 'viewer';
   branchCount: number;
@@ -29,16 +34,13 @@ export interface SessionSummary {
   current: boolean;
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   const token = readToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    // A dead session → clear it and redirect to /login (the home dashboard
-    // only ever calls authenticated endpoints, so any 401 here is that).
-    if (res.status === 401) handleExpiredSession();
     let msg = `Request failed (${res.status})`;
     try {
       const data = (await res.json()) as { error?: string };
@@ -56,10 +58,35 @@ export async function fetchMe(): Promise<MeResponse> {
   return asJson<MeResponse>(res);
 }
 
-export async function fetchHomeBoards(): Promise<HomeBoardSummary[]> {
-  const res = await fetch(`${API_BASE}/api/home`, { headers: authHeaders() });
+export async function fetchHomeBoards(opts?: {
+  includeArchived?: boolean;
+}): Promise<HomeBoardSummary[]> {
+  const qs = opts?.includeArchived ? '?includeArchived=true' : '';
+  const res = await fetch(`${API_BASE}/api/home${qs}`, { headers: authHeaders() });
   const data = await asJson<{ boards: HomeBoardSummary[] }>(res);
   return data.boards;
+}
+
+/**
+ * Soft-delete a board on the server. Caller should optimistically remove
+ * the card from the active list. Restorable via restoreBoard() while the
+ * archived view is visible.
+ */
+export async function archiveBoard(boardId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+  await asJson<{ ok: boolean }>(res);
+}
+
+/** Inverse of archiveBoard — un-soft-delete on the server. */
+export async function restoreBoard(boardId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/restore`,
+    { method: 'POST', headers: authHeaders() },
+  );
+  await asJson<{ ok: boolean }>(res);
 }
 
 export async function updateProfile(patch: {
@@ -183,118 +210,30 @@ export async function revokeBoardShare(
   await asJson<{ ok: boolean }>(res);
 }
 
-// ---------- Board rename / delete ----------
+// ---------- Account export + delete (GDPR) ----------
 
-export async function renameBoard(
-  boardId: string,
-  name: string,
-): Promise<HomeBoardSummary['name']> {
-  const res = await fetch(
-    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ name }),
-    },
-  );
-  const data = await asJson<{ board: { name: string } }>(res);
-  return data.board.name;
+/**
+ * Trigger /api/me/export and return the parsed JSON body. Callers usually
+ * wrap this in a Blob + anchor click to trigger a browser download.
+ */
+export async function exportMyData(): Promise<unknown> {
+  const res = await fetch(`${API_BASE}/api/me/export`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  return asJson<unknown>(res);
 }
 
-export async function deleteBoard(boardId: string): Promise<void> {
-  const res = await fetch(
-    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}`,
-    { method: 'DELETE', headers: authHeaders() },
-  );
+/**
+ * Permanently soft-delete the current account. Caller MUST clear local auth
+ * state on success — the server kills every session as part of the flow, so
+ * any cached token is dead the moment this returns.
+ */
+export async function deleteMyAccount(currentPassword: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/me/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ currentPassword }),
+  });
   await asJson<{ ok: boolean }>(res);
-}
-
-// ---------- Board members ----------
-
-export type BoardRole = 'owner' | 'editor' | 'viewer';
-
-export interface BoardMember {
-  userId: string;
-  name: string;
-  initial: string;
-  color: string;
-  email?: string;
-  kind: 'human' | 'agent';
-  role: BoardRole;
-  joinedAt: string;
-}
-
-export async function listBoardMembers(
-  boardId: string,
-): Promise<BoardMember[]> {
-  const res = await fetch(
-    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/members`,
-    { headers: authHeaders() },
-  );
-  const data = await asJson<{ members: BoardMember[] }>(res);
-  return data.members;
-}
-
-export async function inviteBoardMember(
-  boardId: string,
-  email: string,
-  role: 'editor' | 'viewer',
-): Promise<BoardMember> {
-  const res = await fetch(
-    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/members`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ email, role }),
-    },
-  );
-  const data = await asJson<{ member: BoardMember }>(res);
-  return data.member;
-}
-
-export async function changeMemberRole(
-  boardId: string,
-  userId: string,
-  role: BoardRole,
-): Promise<void> {
-  const res = await fetch(
-    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/members/${encodeURIComponent(userId)}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ role }),
-    },
-  );
-  await asJson<{ ok: boolean }>(res);
-}
-
-export async function removeBoardMember(
-  boardId: string,
-  userId: string,
-): Promise<void> {
-  const res = await fetch(
-    `${API_BASE}/api/boards/${encodeURIComponent(boardId)}/members/${encodeURIComponent(userId)}`,
-    { method: 'DELETE', headers: authHeaders() },
-  );
-  await asJson<{ ok: boolean }>(res);
-}
-
-// ---------- Comment search ----------
-
-export interface CommentSearchResult {
-  id: string;
-  boardId: string;
-  text: string;
-}
-
-export async function searchComments(
-  q: string,
-  signal?: AbortSignal,
-): Promise<CommentSearchResult[]> {
-  const res = await fetch(
-    `${API_BASE}/api/boards/search/comments?q=${encodeURIComponent(q)}`,
-    { headers: authHeaders(), signal },
-  );
-  const data = await asJson<{ results: CommentSearchResult[] }>(res);
-  return data.results;
 }

@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
 import type {
-  AppFrameContent,
   Branch,
   CreateCaptureRequest,
   CreateCaptureResponse,
@@ -12,20 +11,8 @@ import { getBranchById, upsertBranch } from '../repo/branches.ts';
 import { canEditBoard } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { newCommitSha, newId, nowIso } from '../util.ts';
-import { getStorage } from '../storage/index.ts';
 
 const CAPTURES_BRANCH_ID = 'captures';
-
-/**
- * Extension of AppFrameContent carrying capture-specific metadata that lives
- * local to this route. We don't need a protocol bump because these fields are
- * stored in `content_json` as free extras and any reader that doesn't know
- * about them will simply ignore them.
- */
-interface CaptureAppFrameContent extends AppFrameContent {
-  /** Storage key of the persisted DOM snapshot (.html), if one was supplied. */
-  domSnapshotKey?: string;
-}
 
 async function ensureCapturesBranch(boardId: string, userId: string): Promise<Branch> {
   const existing = await getBranchById(CAPTURES_BRANCH_ID);
@@ -81,53 +68,72 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
       (m, f) => Math.max(m, f.position.y + f.size.height),
       0,
     );
-    const newY = captureSiblings.length === 0 ? maxY + 120 : captureSiblings[0].position.y;
-
-    // Persist the DOM snapshot to object storage when supplied. The key is
-    // deterministic per frame so it can be re-requested without a DB look-up.
-    // Storage already recognises .html → text/html in contentTypeForKey().
-    const frameId = newId('f');
-    let domSnapshotKey: string | undefined;
-    if (body.domSnapshot) {
-      try {
-        const snapshotBuf = Buffer.from(body.domSnapshot, 'utf-8');
-        const key = `captures/${frameId}/dom-snapshot.html`;
-        await getStorage().put(key, snapshotBuf, 'text/html');
-        domSnapshotKey = key;
-      } catch (err) {
-        // Storage failures must not block the capture — log and continue.
-        req.log.warn({ err }, '[captures] failed to persist DOM snapshot');
-      }
-    }
-
-    const content: CaptureAppFrameContent = {
-      kind: 'app',
-      variant: 'baseline',
-      route: body.url,
-      viewport: body.viewport,
-      stateLabel: 'Captured',
-      iframeUrl: body.url,
-      ...(domSnapshotKey ? { domSnapshotKey } : {}),
-    };
+    const firstSibling = captureSiblings[0];
+    const newY = firstSibling ? firstSibling.position.y : maxY + 120;
 
     const now = nowIso();
-    const frame: Frame = {
-      id: frameId,
-      boardId: body.boardId,
-      kind: 'app',
-      branchId: CAPTURES_BRANCH_ID,
-      commitSha: newCommitSha(),
-      commitMessage: `captured: ${body.title}`,
-      age: 'just now',
-      position: { x: newX, y: newY },
-      size: { width: 920, height: 700 },
-      content,
-      capturedFromUrl: body.url,
-      createdAt: now,
-      updatedAt: now,
-    };
+    // Two shapes of capture body, distinguished by whether the caller (the
+    // shotter or the extension) supplied an actual PNG.
+    //   - With `screenshot` → render as an image frame so the user sees a
+    //     pixel-accurate freeze of the page (the shotter's path).
+    //   - Without → fall back to an iframe-mounted app frame pointing at the
+    //     live URL (the extension's existing path, kept for back-compat).
+    const hasScreenshot = typeof body.screenshot === 'string' && body.screenshot.length > 0;
+    const frame: Frame = hasScreenshot
+      ? {
+          id: newId('f'),
+          boardId: body.boardId,
+          kind: 'image',
+          branchId: CAPTURES_BRANCH_ID,
+          commitSha: newCommitSha(),
+          commitMessage: `captured: ${body.title}`,
+          age: 'just now',
+          position: { x: newX, y: newY },
+          size: { width: body.viewport.width, height: body.viewport.height },
+          content: {
+            kind: 'image',
+            dataUrl: ensureDataUrl(body.screenshot!),
+            alt: body.title,
+            caption: body.title,
+          },
+          capturedFromUrl: body.url,
+          createdAt: now,
+          updatedAt: now,
+        }
+      : {
+          id: newId('f'),
+          boardId: body.boardId,
+          kind: 'app',
+          branchId: CAPTURES_BRANCH_ID,
+          commitSha: newCommitSha(),
+          commitMessage: `captured: ${body.title}`,
+          age: 'just now',
+          position: { x: newX, y: newY },
+          size: { width: 920, height: 700 },
+          content: {
+            kind: 'app',
+            variant: 'baseline',
+            route: body.url,
+            viewport: body.viewport,
+            stateLabel: 'Captured',
+            iframeUrl: body.url,
+          },
+          capturedFromUrl: body.url,
+          createdAt: now,
+          updatedAt: now,
+        };
     await insertFrame(frame);
     hub.broadcast(frame.boardId, { type: 'frame.added', frame });
     return reply.send({ frame } satisfies CreateCaptureResponse);
   });
+}
+
+/**
+ * Callers can either send a bare base64 PNG (`iVBORw0KG…`) or a fully-formed
+ * `data:image/png;base64,…` URL. Normalise to the latter so the canvas's
+ * <img src> picks it up either way.
+ */
+function ensureDataUrl(raw: string): string {
+  if (raw.startsWith('data:')) return raw;
+  return `data:image/png;base64,${raw}`;
 }

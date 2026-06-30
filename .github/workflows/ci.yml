@@ -1,0 +1,178 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-flight runs for the same PR/ref so a quick second push doesn't
+# leave two runners burning quota on the now-stale commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      - run: npm run typecheck --workspaces --if-present
+
+  unit:
+    name: unit (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      # The vitest script is added in 3-5; until then this job will pass with
+      # "no tests" because vitest has no --passWithNoTests issue at root level.
+      - run: npm test --if-present
+
+  bundle-size:
+    # Build the marketing+app SPA and assert the JS bundle stays under the
+    # raw+gzip budgets in scripts/check-bundle-size.mjs. Today's totals are
+    # well under the (intentionally generous) budget — the gate exists so
+    # a future "oops we shipped 4 MB of unused d3" change shows up in PR
+    # CI instead of in production tab-times. See docs/PERF-BUDGETS.md.
+    name: bundle-size (web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      - run: npm run build --workspace @foldo/web
+      - run: node scripts/check-bundle-size.mjs
+
+  audit:
+    # Runs `npm audit` against prod deps only (so dev-only CVEs in vite et al
+    # don't block PRs). Currently gated at `critical` — bump to `high` once
+    # the existing moderate qs CVE is patched upstream. TODO: tighten to
+    # `--audit-level=high` (then `moderate`) as the tree cleans up.
+    name: audit (npm prod deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      - name: npm audit (prod, critical+)
+        run: npm audit --omit=dev --audit-level=critical
+
+  format:
+    # Prettier in --check mode. Does NOT reformat; only fails if a file would
+    # change. Repo-wide reformat is intentionally out of scope for this PR —
+    # we install the tooling and start gating new code.
+    name: format (prettier --check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      - name: prettier --check
+        run: npx prettier --check "**/*.{ts,tsx,js,mjs,json,md,yml,yaml}" --ignore-path .gitignore --ignore-path .prettierignore
+
+  secrets:
+    # Gitleaks scan for committed secrets. Free for public repos. Add
+    # .gitleaksignore (in the repo root) to allow-list specific known-safe
+    # fingerprints if a future scan trips on innocuous matches.
+    name: secrets (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Gitleaks scans the full history by default. Fetch it.
+          fetch-depth: 0
+      - name: gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE is only required for private orgs. This repo is
+          # public so we leave it unset — the action is free for OSS.
+
+  e2e:
+    name: e2e (playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: foldo
+          POSTGRES_USER: foldo
+          POSTGRES_DB: foldo
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U foldo -d foldo"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgres://foldo:foldo@localhost:5432/foldo
+      NODE_ENV: test
+      # tests bind to default dev ports; the dev script boots web+sample+server.
+      PORT: '4000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --fund=false
+      - name: install playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: boot dev servers
+        # Run in the background; the wait step below blocks until they're up.
+        run: npm run dev > /tmp/dev.log 2>&1 &
+      - name: wait for servers
+        run: |
+          for i in $(seq 1 60); do
+            if curl -s -o /dev/null http://localhost:4000/health \
+              && curl -s -o /dev/null http://localhost:5173/ \
+              && curl -s -o /dev/null http://localhost:5174/; then
+              echo "servers up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "servers never came up"
+          tail -200 /tmp/dev.log
+          exit 1
+      - run: npx playwright test --reporter=line
+      - name: upload playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+      - name: upload playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+      - name: upload dev log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-log
+          path: /tmp/dev.log

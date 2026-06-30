@@ -1,5 +1,5 @@
 import type { SourceFile } from '@foldo/protocol';
-import { queryOne, exec } from '../db.ts';
+import { queryOne, exec, type SqlRunner } from '../db.ts';
 import { nowIso } from '../util.ts';
 
 interface SourceRow {
@@ -34,7 +34,10 @@ export async function getSource(
   return r ? rowToSource(r) : null;
 }
 
-export async function upsertSource(s: SourceFile): Promise<SourceFile> {
+export async function upsertSource(
+  s: SourceFile,
+  runner?: SqlRunner,
+): Promise<SourceFile> {
   await exec(
     `INSERT INTO sources (repo_slug, commit_sha, path, body, content_type, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6)
@@ -43,6 +46,7 @@ export async function upsertSource(s: SourceFile): Promise<SourceFile> {
        content_type = EXCLUDED.content_type,
        updated_at = EXCLUDED.updated_at`,
     [s.repoSlug, s.commitSha, s.path, s.body, s.contentType, s.updatedAt ?? nowIso()],
+    runner,
   );
   return s;
 }

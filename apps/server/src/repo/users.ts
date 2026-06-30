@@ -1,6 +1,16 @@
 import type { User } from '@foldo/protocol';
+import { createHash } from 'node:crypto';
 import { query, queryOne, exec } from '../db.ts';
 import { nowIso } from '../util.ts';
+
+/**
+ * Stable id for the "deleted user" sentinel. When a real user soft-deletes,
+ * we reassign their comments + sessions to this account so board history
+ * stays intact but the original identity is gone. The row is minted lazily
+ * on first delete via `ensureDeletedSentinelUser()`.
+ */
+export const DELETED_USER_ID = 'u-deleted';
+export const DELETED_USER_NAME = 'deleted user';
 
 interface UserRow {
   id: string;
@@ -20,29 +30,17 @@ function rowToUser(r: UserRow): User {
     initial: r.initial,
     color: r.color,
     email: r.email ?? undefined,
+    emailVerifiedAt: r.email_verified_at ?? undefined,
     kind: r.kind,
   };
 }
 
-/**
- * Whether a user has confirmed their email address. Surfaced separately from
- * the `User` shape (which is shared protocol) so the client can show the
- * "verify your email" banner. Returns false for users without the column set.
- */
-export async function isEmailVerified(id: string): Promise<boolean> {
-  const r = await queryOne<{ email_verified_at: string | null }>(
-    `SELECT email_verified_at FROM users WHERE id = $1`,
-    [id],
-  );
-  return Boolean(r?.email_verified_at);
-}
-
-/** Stamp `email_verified_at = now()` for a user. Idempotent. */
-export async function markEmailVerified(id: string): Promise<void> {
+/** Stamp the user's email_verified_at to now. Idempotent — safe to call twice. */
+export async function markEmailVerified(userId: string): Promise<void> {
   await exec(
-    `UPDATE users SET email_verified_at = now()
-      WHERE id = $1 AND email_verified_at IS NULL`,
-    [id],
+    `UPDATE users SET email_verified_at = COALESCE(email_verified_at, now())
+      WHERE id = $1`,
+    [userId],
   );
 }
 
@@ -102,8 +100,6 @@ export async function updateUserProfile(
   if (patch.email !== undefined) {
     sets.push(`email = $${i++}`);
     args.push(patch.email);
-    // Changing the email address invalidates any prior verification.
-    sets.push(`email_verified_at = NULL`);
   }
   if (patch.color !== undefined) {
     sets.push(`color = $${i++}`);
@@ -128,4 +124,68 @@ export async function upsertUser(u: User): Promise<User> {
     [u.id, u.name, u.initial, u.color, u.email ?? null, u.kind, nowIso()],
   );
   return u;
+}
+
+/**
+ * Lazily mint the `u-deleted` sentinel row. Called from `softDeleteUser` so
+ * the first real account-deletion seeds it; subsequent deletes are no-ops.
+ * Idempotent: ON CONFLICT(id) DO NOTHING.
+ */
+export async function ensureDeletedSentinelUser(): Promise<void> {
+  await exec(
+    `INSERT INTO users (id, name, initial, color, email, kind, created_at)
+     VALUES ($1, $2, '?', '#999', NULL, 'human', $3)
+     ON CONFLICT(id) DO NOTHING`,
+    [DELETED_USER_ID, DELETED_USER_NAME, nowIso()],
+  );
+}
+
+/**
+ * GDPR soft-delete: anonymise the user row so the unique email index frees up
+ * (so the same person can sign back up later) and the password hash is gone.
+ *
+ *  - `email` → NULL (releases the lower(email) unique index)
+ *  - `email_hash` → sha256(originalEmail) — kept so abuse / fraud audits can
+ *    still recognise a previously-known address without storing the plaintext
+ *  - `password_hash` → NULL (account can no longer log in)
+ *  - `name` → "deleted user"
+ *  - `email_verified_at` → NULL
+ *
+ * Returns the sha256 hash that was stored (callers may log it, never the
+ * plaintext email).
+ */
+export async function softDeleteUser(userId: string): Promise<string | null> {
+  const row = await queryOne<{ email: string | null }>(
+    `SELECT email FROM users WHERE id = $1`,
+    [userId],
+  );
+  if (!row) return null;
+  const emailHash = row.email
+    ? createHash('sha256').update(row.email.trim().toLowerCase()).digest('hex')
+    : null;
+  await exec(
+    `UPDATE users
+        SET name = $1,
+            initial = '?',
+            email = NULL,
+            email_hash = $2,
+            password_hash = NULL,
+            email_verified_at = NULL
+      WHERE id = $3`,
+    [DELETED_USER_NAME, emailHash, userId],
+  );
+  return emailHash;
+}
+
+/**
+ * Read the stored email hash (set by `softDeleteUser`). Useful for audits;
+ * the column lives outside the User wire type because the value is
+ * write-only — the app never exposes it to the client.
+ */
+export async function getUserEmailHash(userId: string): Promise<string | null> {
+  const r = await queryOne<{ email_hash: string | null }>(
+    `SELECT email_hash FROM users WHERE id = $1`,
+    [userId],
+  );
+  return r?.email_hash ?? null;
 }

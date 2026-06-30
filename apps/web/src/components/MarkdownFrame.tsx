@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Board,
   Branch,
@@ -6,15 +6,13 @@ import type {
   Frame,
   MarkdownFrameContent,
 } from '@foldo/protocol';
-import { FrameShell } from './FrameShell';
+import { FrameMeta } from './FrameMeta';
 import { CommentPin } from './CommentPin';
 import { MarkdownView, parseMarkdown } from './Markdown';
 import { getSource } from '../api/sources';
 import { updateFrame as apiUpdateFrame } from '../api/frames';
 import { boardStore } from '../state/BoardStore';
 import { useBoardSelector } from '../state/useBoardStore';
-import { mutate } from '../lib/mutate';
-import { frameStyleToCss } from '../plugins/frameStyle';
 import type { Tool } from '../types';
 
 interface Props {
@@ -24,6 +22,7 @@ interface Props {
   comments: Comment[];
   tool: Tool;
   inViewport: boolean;
+  zoom?: number;
   onSelectMdLine: (
     frameId: string,
     sectionId: string,
@@ -32,7 +31,6 @@ interface Props {
   ) => void;
   onCommentClick: (frameId: string, comment: Comment) => void;
   onDropPin?: (frameId: string, xRel: number, yRel: number) => void;
-  wrapperProps?: HTMLAttributes<HTMLDivElement>;
 }
 
 export function MarkdownFrame({
@@ -42,10 +40,10 @@ export function MarkdownFrame({
   comments,
   tool,
   inViewport,
+  zoom = 1,
   onSelectMdLine,
   onCommentClick,
   onDropPin,
-  wrapperProps,
 }: Props) {
   const content = frame.content as MarkdownFrameContent;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -91,6 +89,13 @@ export function MarkdownFrame({
     };
   }, [inViewport, board, frame.commitSha, content.docPath, remoteBody]);
 
+  // If the frame is edited remotely (WS `frame.updated` from another user),
+  // its inline `content.body` changes. Invalidate our cached `remoteBody` so
+  // the lazy-fetch effect above pulls the fresh source.
+  useEffect(() => {
+    setRemoteBody(null);
+  }, [content.body, frame.updatedAt]);
+
   const body = remoteBody ?? content.body ?? '';
 
   const startEdit = (): void => {
@@ -106,36 +111,51 @@ export function MarkdownFrame({
   const saveEdit = async (): Promise<void> => {
     if (saving) return;
     setSaving(true);
-    const prev = boardStore.getSnapshot().frames.get(frame.id) ?? frame;
-    const nextContent: MarkdownFrameContent = { ...content, body: draft };
-    const updated = await mutate({
+    try {
+      const nextContent: MarkdownFrameContent = {
+        ...content,
+        body: draft,
+      };
       // Optimistic local update so the UX feels snappy.
-      optimistic: () =>
-        boardStore.upsertFrame({
-          ...frame,
-          content: nextContent,
-          updatedAt: new Date().toISOString(),
-        }),
-      commit: () => apiUpdateFrame(frame.id, { content: nextContent }),
-      // Restore the pre-edit frame if the server rejected the save, so the
-      // store never keeps a body the server never accepted.
-      rollback: () => boardStore.upsertFrame(prev),
-      // eslint-disable-next-line no-console
-      onError: (err) => console.warn('[foldo] save markdown failed', err),
-    });
-    if (updated) {
+      boardStore.upsertFrame({
+        ...frame,
+        content: nextContent,
+        updatedAt: new Date().toISOString(),
+      });
+      const updated = await apiUpdateFrame(frame.id, { content: nextContent });
       // Server returns the canonical frame with lineAuthors stamped.
       boardStore.upsertFrame(updated);
+      // MarkdownFrame renders `remoteBody` (lazy-fetched from /api/sources)
+      // in preference to `content.body`. Mirror the just-saved draft into
+      // remoteBody so the view reflects the edit immediately — otherwise the
+      // save succeeds but the canvas keeps showing the stale source.
+      setRemoteBody(draft);
       setEditing(false);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[foldo] save markdown failed', err);
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   return (
-    <FrameShell frame={frame} branch={branch} wrapperProps={wrapperProps}>
+    <div
+      data-testid="foldo-markdown-frame"
+      data-foldo-frame-id={frame.id}
+      data-foldo-doc-path={content.docPath}
+      className="absolute"
+      style={{
+        left: frame.position.x,
+        top: frame.position.y,
+        width: frame.size.width,
+        height: frame.size.height,
+      }}
+    >
+      <FrameMeta frame={frame} branch={branch} zoom={zoom} />
       <div
         className="relative h-full w-full overflow-hidden rounded-md border border-black/15 bg-markdown frame-shadow"
-        style={{ pointerEvents: 'auto', ...frameStyleToCss(frame.style) }}
+        style={{ pointerEvents: 'auto' }}
       >
         <DocHeader
           path={content.docPath}
@@ -152,6 +172,7 @@ export function MarkdownFrame({
         />
         <div
           ref={containerRef}
+          data-testid="foldo-markdown-body"
           data-canvas-scroll="true"
           className="h-[calc(100%-44px)] overflow-y-auto px-8 py-5"
           style={{
@@ -168,6 +189,7 @@ export function MarkdownFrame({
         >
           {editing ? (
             <textarea
+              data-testid="foldo-markdown-textarea"
               autoFocus
               spellCheck
               className="block h-full w-full resize-none rounded-md border border-black/10 bg-white px-3 py-2 font-mono text-[12.5px] leading-[1.6] text-[#2a2622] outline-none focus:border-accent/60"
@@ -238,8 +260,11 @@ export function MarkdownFrame({
           />
         )}
 
-        {/* free-floating pin overlay (xy-pin comments without a line anchor) */}
+        {/* free-floating pin overlay (xy-pin comments without a line anchor).
+            Skipped when the frame is off-viewport so we don't keep N pin nodes
+            + click handlers mounted for frames the user can't see. */}
         {!editing &&
+          inViewport &&
           comments
             .filter((c) => c.pin)
             .map((c) => (
@@ -251,7 +276,7 @@ export function MarkdownFrame({
               />
             ))}
       </div>
-    </FrameShell>
+    </div>
   );
 }
 
@@ -316,6 +341,7 @@ function DocHeader({
         {!editing ? (
           <button
             type="button"
+            data-testid="foldo-markdown-edit-button"
             data-no-edit
             onClick={onStartEdit}
             className="rounded-md border border-black/15 bg-white/60 px-2 py-0.5 text-[11px] font-medium text-[#5a4f3e] hover:bg-white"
@@ -326,6 +352,7 @@ function DocHeader({
           <>
             <button
               type="button"
+              data-testid="foldo-markdown-cancel-button"
               data-no-edit
               onClick={onCancel}
               disabled={saving}
@@ -335,6 +362,7 @@ function DocHeader({
             </button>
             <button
               type="button"
+              data-testid="foldo-markdown-save-button"
               data-no-edit
               onClick={onSave}
               disabled={saving}
@@ -381,6 +409,8 @@ function MarkdownAnchors({
           return (
             <button
               key={c.id}
+              data-testid="foldo-comment-anchor"
+              data-foldo-comment-id={c.id}
               onClick={(e) => {
                 e.stopPropagation();
                 onCommentClick(frame.id, c);

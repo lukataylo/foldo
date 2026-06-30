@@ -57,15 +57,51 @@ export function CaptureModal({
       return;
     }
     const log = (m: string) => setPhaseLog((l) => [...l, m]);
+    const shotter =
+      ((import.meta.env.VITE_SHOTTER_URL as string | undefined) ?? '').replace(/\/+$/, '');
+    // When VITE_SHOTTER_URL is set, the modal posts to the server-side
+    // shotter and ships the resulting PNG as `screenshot` so the new frame
+    // is an *image* (pixel-accurate freeze), not an iframe pointing at the
+    // live URL. Falls back to the extension simulation otherwise.
+    const useShotter = shotter.length > 0;
     setPhase('connecting');
-    log('Connecting to Foldo Chrome extension…');
-    await sleep(300);
+    log(
+      useShotter
+        ? `Calling shotter at ${shotter}…`
+        : 'Connecting to Foldo Chrome extension…',
+    );
+    await sleep(200);
     setPhase('injecting');
-    log('Extension active. Injecting capture script into tab.');
-    await sleep(400);
-    setPhase('recording');
-    log('Recording DOM snapshot + computed styles.');
-    await sleep(500);
+    log(
+      useShotter
+        ? 'Headless Chromium navigating to URL.'
+        : 'Extension active. Injecting capture script into tab.',
+    );
+    let screenshotB64: string | undefined;
+    if (useShotter) {
+      try {
+        const shotUrl =
+          `${shotter}/shot?url=${encodeURIComponent(url)}&w=${width}&h=${height}`;
+        const res = await fetch(shotUrl, { credentials: 'omit' });
+        if (!res.ok) {
+          throw new Error(`shotter ${res.status} ${res.statusText}`);
+        }
+        const blob = await res.blob();
+        screenshotB64 = await blobToBase64(blob);
+        log('PNG bytes received from shotter.');
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setPhase('error');
+        setErrMsg(`Shotter failed: ${msg}`);
+        log(`Failed: ${msg}`);
+        return;
+      }
+    } else {
+      await sleep(200);
+      setPhase('recording');
+      log('Recording DOM snapshot + computed styles.');
+      await sleep(400);
+    }
     setPhase('freezing');
     log('Freezing state. Uploading to Foldo cloud…');
     try {
@@ -75,10 +111,11 @@ export function CaptureModal({
         title: `Captured · ${pathname}`,
         capturedByUserId: meUserId,
         boardId,
+        ...(screenshotB64 ? { screenshot: screenshotB64 } : {}),
       });
       setPhase('done');
       log('Done. Frame added to canvas.');
-      await sleep(400);
+      await sleep(300);
       onComplete(frame);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -89,7 +126,10 @@ export function CaptureModal({
   };
 
   return (
-    <div className="pointer-events-auto absolute inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+    <div
+      data-testid="foldo-canvas-capture-modal"
+      className="pointer-events-auto absolute inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+    >
       <div className="w-[520px] overflow-hidden rounded-xl border border-hairline bg-panel shadow-panel">
         <div className="flex items-center justify-between border-b border-hairlineSoft px-4 py-3">
           <div className="flex items-center gap-2 text-ink">
@@ -103,9 +143,10 @@ export function CaptureModal({
           </div>
           <button
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
+            aria-label="Close capture modal"
+            className="flex h-11 w-11 items-center justify-center rounded-md text-inkMute hover:bg-white/5 hover:text-ink"
           >
-            <svg width="11" height="11" viewBox="0 0 16 16">
+            <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
               <path
                 d="M4 4l8 8M12 4l-8 8"
                 stroke="currentColor"
@@ -122,6 +163,7 @@ export function CaptureModal({
               URL
             </label>
             <input
+              data-testid="foldo-canvas-capture-url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               className="mt-1 w-full rounded-md border border-hairlineSoft bg-canvas px-2.5 py-1.5 font-mono text-[12px] text-ink focus:border-accent/60 focus:outline-none"
@@ -162,6 +204,7 @@ export function CaptureModal({
                 Cancel
               </button>
               <button
+                data-testid="foldo-canvas-capture-submit"
                 onClick={run}
                 disabled={!boardId || !meUserId}
                 className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accentSoft disabled:opacity-50"
@@ -248,6 +291,25 @@ function phaseTitle(p: Phase): string {
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Read a Blob into a base64 string (no `data:` prefix). The server
+ * normalises both forms but we keep the wire small by dropping the prefix.
+ */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== 'string') return reject(new Error('reader returned non-string'));
+      // `data:<mime>;base64,<payload>` → drop the prefix.
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('FileReader error'));
+    reader.readAsDataURL(blob);
+  });
 }
 
 function ExtensionIcon() {

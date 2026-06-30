@@ -2,88 +2,100 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error('DATABASE_URL is required (e.g. postgres://user:pass@host:5432/foldo)');
-}
-
-const needsSsl = /sslmode=require|render\.com|railway\.app|neon\.tech|supabase\.co/.test(connectionString);
-
-export const pool = new Pool({
-  connectionString,
-  ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
-  max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+// pg returns TIMESTAMPTZ as a JS Date by default, which would force every
+// rowTo*() in the repo layer to do `r.created_at.toISOString()` after we
+// migrate TEXT timestamps to TIMESTAMPTZ. Override the parser to leave it
+// as the raw ISO-ish string Postgres already produces (`2026-05-23 16:42:11.012+00`)
+// and normalise that to a real ISO 8601 string. Net effect: repo code stays
+// untouched, wire format stays identical, callers can still pass either a
+// Date or a string back in (pg coerces both for TIMESTAMPTZ params).
+pg.types.setTypeParser(1184, (raw: string) => {
+  // 1184 = TIMESTAMPTZ. Convert Postgres' "2026-05-23 16:42:11.012+00" to
+  // canonical "2026-05-23T16:42:11.012Z" so JS Date parsing is unambiguous
+  // and the wire shape matches the existing TEXT-stored values.
+  return new Date(raw).toISOString();
 });
 
-pool.on('error', (err) => {
-  // eslint-disable-next-line no-console
-  console.error('pg pool error:', err);
+// Lazy pool. Initialised on first use rather than at module load so importing
+// db.ts (or any repo file) in a unit-test context doesn't require a live
+// DATABASE_URL — only code paths that actually issue SQL do. The proxy
+// preserves the `pool.query(...)` / `pool.connect()` call sites everywhere.
+function buildPool(): pg.Pool {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      'DATABASE_URL is required (e.g. postgres://user:pass@host:5432/foldo)',
+    );
+  }
+  const needsSsl = /sslmode=require|render\.com|railway\.app|neon\.tech|supabase\.co/.test(
+    connectionString,
+  );
+  const p = new Pool({
+    connectionString,
+    ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
+    // A+ W1: default bumped 10 → 20 to absorb the concurrent WS hub + /api/home
+    // burst seen on multi-board sessions. Override via DATABASE_POOL_MAX env.
+    max: Number(process.env.DATABASE_POOL_MAX ?? 20),
+  });
+  p.on('error', (err) => {
+    // eslint-disable-next-line no-console
+    console.error('pg pool error:', err);
+  });
+  return p;
+}
+
+let _pool: pg.Pool | null = null;
+function getPool(): pg.Pool {
+  if (!_pool) _pool = buildPool();
+  return _pool;
+}
+
+/**
+ * Public pool handle. Wrapped in a Proxy so accessing `.query` / `.connect` /
+ * `.idleCount` etc. triggers lazy initialisation; existing call-sites that
+ * just do `pool.query(sql, params)` are unchanged.
+ */
+export const pool = new Proxy({} as pg.Pool, {
+  get(_t, prop) {
+    const real = getPool() as unknown as Record<string | symbol, unknown>;
+    const value = real[prop];
+    return typeof value === 'function' ? (value as Function).bind(real) : value;
+  },
 });
 
 /**
- * Anything that can run a query: the pool itself or a checked-out client
- * inside a transaction. Repo write functions accept an optional `Executor`
- * so callers can compose several writes in one `withTx`.
+ * Either the shared pool or a transactional client. Repo functions accept this
+ * as an optional argument so a route handler can do several writes inside a
+ * single `withTransaction(...)` block — pass the client through and they all
+ * run on the same connection.
  */
-export interface Executor {
-  query<T extends pg.QueryResultRow = pg.QueryResultRow>(
-    sql: string,
-    params?: unknown[],
-  ): Promise<pg.QueryResult<T>>;
-}
+export type SqlRunner = pg.Pool | pg.PoolClient;
 
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   sql: string,
   params?: unknown[],
-  client?: Executor,
+  runner: SqlRunner = pool,
 ): Promise<T[]> {
-  const res = await (client ?? pool).query<T>(sql, params as never);
+  const res = await runner.query<T>(sql, params as never);
   return res.rows;
 }
 
 export async function queryOne<T extends pg.QueryResultRow = pg.QueryResultRow>(
   sql: string,
   params?: unknown[],
-  client?: Executor,
+  runner: SqlRunner = pool,
 ): Promise<T | null> {
-  const rows = await query<T>(sql, params, client);
+  const rows = await query<T>(sql, params, runner);
   return rows[0] ?? null;
 }
 
 export async function exec(
   sql: string,
   params?: unknown[],
-  client?: Executor,
+  runner: SqlRunner = pool,
 ): Promise<number> {
-  const res = await (client ?? pool).query(sql, params as never);
+  const res = await runner.query(sql, params as never);
   return res.rowCount ?? 0;
-}
-
-/**
- * Run `fn` inside a single transaction: acquires a pooled client, BEGINs,
- * COMMITs on success, ROLLBACKs on throw, and always releases the client.
- * Pass the supplied client through to repo write functions to compose
- * multiple writes atomically.
- */
-export async function withTx<T>(
-  fn: (client: pg.PoolClient) => Promise<T>,
-): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      /* connection may already be dead; release will discard it */
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
 }
 
 const SCHEMA = `
@@ -96,8 +108,22 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   email_verified_at TIMESTAMPTZ,
   kind TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- sha256 of the original lowercase email, retained AFTER a GDPR soft-delete
+  -- so abuse / fraud audits can still recognise a previously-known address
+  -- without the plaintext sticking around. NULL on every live account.
+  email_hash TEXT
 );
+
+-- Additive migration: dev databases predating the email_hash column.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'email_hash'
+  ) THEN
+    ALTER TABLE users ADD COLUMN email_hash TEXT;
+  END IF;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_lower
   ON users (lower(email)) WHERE email IS NOT NULL;
@@ -107,11 +133,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 days'),
   user_agent TEXT,
   kind TEXT NOT NULL DEFAULT 'browser' CHECK (kind IN ('browser','api')),
   label TEXT
 );
--- Additive migration for pre-existing dev databases.
+-- Additive migrations for pre-existing dev databases. Each block is idempotent.
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -126,8 +153,22 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE sessions ADD COLUMN label TEXT;
   END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'sessions' AND column_name = 'expires_at'
+  ) THEN
+    -- 30-day sliding-window expiry. Backfill existing rows to last_seen + 30d
+    -- so already-active sessions get a sensible expiry rather than immediately
+    -- becoming invalid.
+    ALTER TABLE sessions ADD COLUMN expires_at TIMESTAMPTZ;
+    UPDATE sessions SET expires_at = last_seen_at + interval '30 days' WHERE expires_at IS NULL;
+    ALTER TABLE sessions ALTER COLUMN expires_at SET NOT NULL;
+    ALTER TABLE sessions ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');
+  END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+-- Lets the GC sweep find expired sessions cheaply.
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
 CREATE TABLE IF NOT EXISTS boards (
   id TEXT PRIMARY KEY,
@@ -246,6 +287,35 @@ CREATE TABLE IF NOT EXISTS board_members (
 );
 CREATE INDEX IF NOT EXISTS idx_board_members_user ON board_members(user_id);
 
+-- Single-use, time-boxed tokens that back the password-reset flow. We store
+-- only sha256(token) so a DB leak doesn't hand the attacker reset links.
+-- expires_at lets the cleanup sweep drop stale rows; used_at is set on
+-- successful reset so the same token can't be replayed.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_pw_reset_user ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_pw_reset_expires ON password_reset_tokens(expires_at);
+
+-- Email-verification tokens — same shape as password resets but with a much
+-- longer TTL (24h is the industry sweet spot — short enough to invalidate a
+-- forgotten signup, long enough that a user who checks email in the morning
+-- still has a working link).
+CREATE TABLE IF NOT EXISTS email_verifications (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_email_verif_user ON email_verifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_email_verif_expires ON email_verifications(expires_at);
+
 CREATE TABLE IF NOT EXISTS demo_requests (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -330,91 +400,468 @@ CREATE INDEX IF NOT EXISTS idx_test_task_results_session ON test_task_results(se
 
 CREATE INDEX IF NOT EXISTS idx_frames_board ON frames(board_id);
 CREATE INDEX IF NOT EXISTS idx_comments_frame ON comments(frame_id);
-CREATE INDEX IF NOT EXISTS idx_comments_board ON comments(board_id);
 CREATE INDEX IF NOT EXISTS idx_dispatches_board ON dispatches(board_id);
 
--- Layers / plugin metadata. z is the stacking order (higher = on top), hidden
--- toggles visibility from the layers panel, locked blocks pointer interactions,
--- style_json holds the design-plugin overrides (border, fill, font, layout).
--- All are optional; legacy frames default to z=0, hidden/locked=false.
-ALTER TABLE frames ADD COLUMN IF NOT EXISTS z INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE frames ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE frames ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE frames ADD COLUMN IF NOT EXISTS style_json TEXT;
-CREATE INDEX IF NOT EXISTS idx_frames_board_z ON frames(board_id, z);
+-- ============================================================================
+-- Indexes for queries that were running unindexed (Phase 0 audit findings).
+-- ============================================================================
+CREATE INDEX IF NOT EXISTS idx_branches_board ON branches(board_id);
+CREATE INDEX IF NOT EXISTS idx_commits_branch ON commits(branch_id);
+CREATE INDEX IF NOT EXISTS idx_frames_parent ON frames(parent_frame_id);
+CREATE INDEX IF NOT EXISTS idx_frames_board_kind ON frames(board_id, kind);
+CREATE INDEX IF NOT EXISTS idx_test_sessions_status ON test_sessions(status);
 
--- Single-use tokens for account-lifecycle emails: password reset and email
--- verification. Each token is consumed once (consumed_at set) and expires.
-CREATE TABLE IF NOT EXISTS auth_action_tokens (
-  token TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN ('password_reset','email_verify')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at TIMESTAMPTZ NOT NULL,
-  consumed_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user ON auth_action_tokens(user_id);
+-- ============================================================================
+-- Foreign-key constraints. Until now frames / comments / dispatches were
+-- referenced by id without a constraint, so deleting a board / frame left
+-- silent orphans the app code had to guard around. Each block cleans existing
+-- orphans first (cheap on a healthy DB, defensive on a drifted one) then adds
+-- the constraint. Guarded by pg_constraint lookups so it's idempotent across
+-- restarts.
+-- ============================================================================
+DO $$ BEGIN
+  -- branches.board_id → boards
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'branches_board_id_fkey') THEN
+    DELETE FROM branches WHERE board_id NOT IN (SELECT id FROM boards);
+    ALTER TABLE branches
+      ADD CONSTRAINT branches_board_id_fkey
+      FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE;
+  END IF;
+
+  -- commits.branch_id → branches
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'commits_branch_id_fkey') THEN
+    DELETE FROM commits WHERE branch_id NOT IN (SELECT id FROM branches);
+    ALTER TABLE commits
+      ADD CONSTRAINT commits_branch_id_fkey
+      FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE;
+  END IF;
+
+  -- frames.board_id → boards
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'frames_board_id_fkey') THEN
+    DELETE FROM frames WHERE board_id NOT IN (SELECT id FROM boards);
+    ALTER TABLE frames
+      ADD CONSTRAINT frames_board_id_fkey
+      FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE;
+  END IF;
+
+  -- frames.parent_frame_id → frames(id). SET NULL not CASCADE: deleting a
+  -- parent shouldn't transitively delete children — the children just become
+  -- root frames again.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'frames_parent_frame_id_fkey') THEN
+    UPDATE frames SET parent_frame_id = NULL
+      WHERE parent_frame_id IS NOT NULL
+        AND parent_frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE frames
+      ADD CONSTRAINT frames_parent_frame_id_fkey
+      FOREIGN KEY (parent_frame_id) REFERENCES frames(id) ON DELETE SET NULL;
+  END IF;
+
+  -- comments.board_id → boards
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_board_id_fkey') THEN
+    DELETE FROM comments WHERE board_id NOT IN (SELECT id FROM boards);
+    ALTER TABLE comments
+      ADD CONSTRAINT comments_board_id_fkey
+      FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE;
+  END IF;
+
+  -- comments.frame_id → frames
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_frame_id_fkey') THEN
+    DELETE FROM comments WHERE frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE comments
+      ADD CONSTRAINT comments_frame_id_fkey
+      FOREIGN KEY (frame_id) REFERENCES frames(id) ON DELETE CASCADE;
+  END IF;
+
+  -- dispatches.board_id → boards
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dispatches_board_id_fkey') THEN
+    DELETE FROM dispatches WHERE board_id NOT IN (SELECT id FROM boards);
+    ALTER TABLE dispatches
+      ADD CONSTRAINT dispatches_board_id_fkey
+      FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE;
+  END IF;
+
+  -- dispatches.frame_id → frames
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dispatches_frame_id_fkey') THEN
+    DELETE FROM dispatches WHERE frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE dispatches
+      ADD CONSTRAINT dispatches_frame_id_fkey
+      FOREIGN KEY (frame_id) REFERENCES frames(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+-- ============================================================================
+-- Semantic CHECK constraints + composite uniques. Each block is idempotent so
+-- replays at boot are safe. Each constraint is named so we can detect prior
+-- application via pg_constraint and skip the ADD.
+-- ============================================================================
+DO $$ BEGIN
+  -- A branch with an empty head_sha is meaningless; refuse it at the DB.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'branches_head_sha_not_empty') THEN
+    UPDATE branches SET head_sha = 'unknown' WHERE head_sha = '';
+    ALTER TABLE branches
+      ADD CONSTRAINT branches_head_sha_not_empty CHECK (head_sha <> '');
+  END IF;
+
+  -- Comment pin coords are relative-to-frame fractions, so they must be in
+  -- [0,1]. Catches misplaced absolute pixel values that would render off-frame.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_pin_x_range') THEN
+    UPDATE comments SET pin_x = LEAST(GREATEST(pin_x, 0), 1) WHERE pin_x IS NOT NULL;
+    ALTER TABLE comments
+      ADD CONSTRAINT comments_pin_x_range
+      CHECK (pin_x IS NULL OR (pin_x >= 0 AND pin_x <= 1));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_pin_y_range') THEN
+    UPDATE comments SET pin_y = LEAST(GREATEST(pin_y, 0), 1) WHERE pin_y IS NOT NULL;
+    ALTER TABLE comments
+      ADD CONSTRAINT comments_pin_y_range
+      CHECK (pin_y IS NULL OR (pin_y >= 0 AND pin_y <= 1));
+  END IF;
+
+  -- Recording durations are physical: a negative one is a bug.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'test_sessions_recording_duration_nonneg') THEN
+    UPDATE test_sessions SET recording_duration_ms = 0
+      WHERE recording_duration_ms IS NOT NULL AND recording_duration_ms < 0;
+    ALTER TABLE test_sessions
+      ADD CONSTRAINT test_sessions_recording_duration_nonneg
+      CHECK (recording_duration_ms IS NULL OR recording_duration_ms >= 0);
+  END IF;
+
+  -- DOUBLE PRECISION can hold NaN, which breaks layout math and renders
+  -- frames at unreachable positions. x = x is the canonical NaN check
+  -- (NaN is the only value not equal to itself).
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'frames_position_finite') THEN
+    UPDATE frames SET position_x = 0 WHERE NOT (position_x = position_x);
+    UPDATE frames SET position_y = 0 WHERE NOT (position_y = position_y);
+    ALTER TABLE frames
+      ADD CONSTRAINT frames_position_finite
+      CHECK (position_x = position_x AND position_y = position_y);
+  END IF;
+
+  -- Two branches called "main" on the same board would render as duplicate
+  -- rows on the canvas and break the lookup-by-name code paths.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'branches_board_name_unique') THEN
+    -- Clean up any pre-existing duplicate (board_id, name) pairs by suffixing
+    -- the older rows with a short of their id, so the constraint can be added.
+    UPDATE branches b SET name = name || '-' || substring(id from 1 for 6)
+     WHERE EXISTS (
+       SELECT 1 FROM branches b2
+        WHERE b2.board_id = b.board_id AND b2.name = b.name AND b2.id <> b.id
+     );
+    ALTER TABLE branches
+      ADD CONSTRAINT branches_board_name_unique UNIQUE (board_id, name);
+  END IF;
+
+  -- One task per (test, order_index) — the order is meant to be a sortable
+  -- key for the tester UI, duplicates produce a non-deterministic order.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'test_tasks_test_order_unique') THEN
+    -- Re-pack duplicates: any (test_id, order_index) collisions get their
+    -- order_index bumped to the next free slot.
+    WITH dups AS (
+      SELECT id, test_id, order_index,
+             ROW_NUMBER() OVER (PARTITION BY test_id, order_index ORDER BY id) AS rn
+        FROM test_tasks
+    )
+    UPDATE test_tasks t
+       SET order_index = t.order_index + d.rn - 1
+      FROM dups d
+     WHERE d.id = t.id AND d.rn > 1;
+    ALTER TABLE test_tasks
+      ADD CONSTRAINT test_tasks_test_order_unique UNIQUE (test_id, order_index);
+  END IF;
+END $$;
+
+-- ============================================================================
+-- Migrate the 13 TEXT-storing-JSON columns to JSONB. JSONB gives us native
+-- containment / indexability, SQL-level validation (a malformed write fails
+-- at the DB instead of being silently accepted), and removes the per-row
+-- JSON.parse cost on read. The pg driver returns JSONB columns as parsed
+-- objects, so repo readers drop their parseJson() shim — writers keep
+-- JSON.stringify() (pg accepts a string for a JSONB param and parses
+-- server-side).
+--
+-- Each ALTER is guarded by an information_schema check so reboots and CI are
+-- safe. Uses USING (col::jsonb) so existing TEXT data is parsed in place;
+-- if any row is invalid JSON, the migration fails loudly rather than
+-- silently dropping data.
+-- ============================================================================
+-- ============================================================================
+-- Standardize 19 TEXT-storing-ISO-timestamp columns to TIMESTAMPTZ. Without
+-- this we mix two timestamp types across the same DB — SQL date math fails,
+-- timezone bugs are latent, and indexes on (date, ...) sort lexicographically
+-- not chronologically. The pg driver's TIMESTAMPTZ parser is overridden at
+-- the top of this module to return an ISO string, so repo readers don't
+-- have to change.
+--
+-- Idempotent: only ALTER columns currently typed text (information_schema
+-- check). Existing TEXT values are cast with USING (col::timestamptz) which
+-- accepts the ISO strings the app has been writing.
+-- ============================================================================
+DO $$
+DECLARE
+  cols TEXT[][] := ARRAY[
+    ARRAY['users',         'created_at'],
+    ARRAY['boards',        'created_at'],
+    ARRAY['branches',      'created_at'],
+    ARRAY['branches',      'updated_at'],
+    ARRAY['commits',       'created_at'],
+    ARRAY['frames',        'created_at'],
+    ARRAY['frames',        'updated_at'],
+    ARRAY['comments',      'created_at'],
+    ARRAY['comments',      'updated_at'],
+    ARRAY['comments',      'resolved_at'],
+    ARRAY['dispatches',    'created_at'],
+    ARRAY['dispatches',    'started_at'],
+    ARRAY['dispatches',    'finished_at'],
+    ARRAY['sources',       'updated_at'],
+    ARRAY['tests',         'created_at'],
+    ARRAY['tests',         'updated_at'],
+    ARRAY['test_sessions', 'started_at'],
+    ARRAY['test_sessions', 'completed_at'],
+    ARRAY['test_sessions', 'consent_at']
+  ];
+  tname TEXT;
+  cname TEXT;
+  i INT;
+BEGIN
+  FOR i IN 1..array_upper(cols, 1) LOOP
+    tname := cols[i][1];
+    cname := cols[i][2];
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = tname AND column_name = cname AND data_type = 'text'
+    ) THEN
+      EXECUTE format('UPDATE %I SET %I = NULL WHERE %I = ''''', tname, cname, cname);
+      EXECUTE format(
+        'ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I::timestamptz',
+        tname, cname, cname
+      );
+    END IF;
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  -- (table, column, default-when-jsonb-or-NULL).
+  cols TEXT[][] := ARRAY[
+    ARRAY['frames',            'content_json',         NULL],
+    ARRAY['comments',          'target_json',          NULL],
+    ARRAY['comments',          'replies_json',         '[]'::text],
+    ARRAY['dispatches',        'target_json',          NULL],
+    ARRAY['dispatches',        'events_json',          '[]'::text],
+    ARRAY['tests',             'recording_modes_json', '["screen_voice","voice_only"]'::text],
+    ARRAY['tests',             'questionnaire_json',   NULL],
+    ARRAY['test_tasks',        'start_recipe_json',    NULL],
+    ARRAY['test_sessions',     'tester_meta_json',     NULL],
+    ARRAY['test_sessions',     'transcript_json',      NULL],
+    ARRAY['test_sessions',     'responses_json',       NULL],
+    ARRAY['test_sessions',     'synthesis_json',       NULL],
+    ARRAY['test_task_results', 'events_json',          NULL]
+  ];
+  tname TEXT;
+  cname TEXT;
+  dval  TEXT;
+  i INT;
+BEGIN
+  FOR i IN 1..array_upper(cols, 1) LOOP
+    tname := cols[i][1];
+    cname := cols[i][2];
+    dval  := cols[i][3];
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = tname AND column_name = cname AND data_type = 'text'
+    ) THEN
+      -- An empty string isn't valid JSON; normalise to NULL or the default
+      -- before the cast.
+      IF dval IS NULL THEN
+        EXECUTE format('UPDATE %I SET %I = NULL WHERE %I = ''''', tname, cname, cname);
+      ELSE
+        EXECUTE format('UPDATE %I SET %I = $1 WHERE %I = '''' OR %I IS NULL', tname, cname, cname, cname) USING dval;
+      END IF;
+      -- Drop the TEXT default first — DROP/ADD is the canonical way to swap
+      -- a default across an incompatible type. DEFAULT clauses need a SQL
+      -- literal expression, not a parameter, so we use format()'s %L.
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP DEFAULT', tname, cname);
+      EXECUTE format(
+        'ALTER TABLE %I ALTER COLUMN %I TYPE JSONB USING %I::jsonb',
+        tname, cname, cname
+      );
+      IF dval IS NOT NULL THEN
+        EXECUTE format(
+          'ALTER TABLE %I ALTER COLUMN %I SET DEFAULT %L::jsonb',
+          tname, cname, dval
+        );
+      END IF;
+    END IF;
+  END LOOP;
+END $$;
+
+-- ============================================================================
+-- BEGIN: A+ W1 perf indexes
+-- ----------------------------------------------------------------------------
+-- Phase 1 of the A+ plan: cover the last few sequential-scan-prone tables and
+-- add the two foreign keys whose absence has been leaving silent orphans. All
+-- blocks idempotent so reboots and CI runs stay clean.
+-- ============================================================================
+
+-- comments(board_id) — highest ROI in the audit. /api/home, board snapshot
+-- fetches, GC sweeps all filter comments by board_id and were doing a full
+-- scan on every call.
+CREATE INDEX IF NOT EXISTS idx_comments_board ON comments(board_id);
+
+-- frames(branch_id) — branch-scoped frame queries (branch panel, deletion
+-- cascade lookups). Audit name "idx_frames_branch" standardised here.
+CREATE INDEX IF NOT EXISTS idx_frames_branch ON frames(branch_id);
+
+-- frames(kind) — the composite (board_id, kind) index already exists; this
+-- single-column index covers kind-only filters used by GC / analytics.
+CREATE INDEX IF NOT EXISTS idx_frames_kind ON frames(kind);
+
+DO $$ BEGIN
+  -- dispatches.result_frame_id → frames(id). SET NULL because the dispatch
+  -- record itself is the audit log of the run; we just lose the link to the
+  -- output frame if the frame is hard-deleted.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dispatches_result_frame_id_fkey') THEN
+    UPDATE dispatches SET result_frame_id = NULL
+      WHERE result_frame_id IS NOT NULL
+        AND result_frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE dispatches
+      ADD CONSTRAINT dispatches_result_frame_id_fkey
+      FOREIGN KEY (result_frame_id) REFERENCES frames(id) ON DELETE SET NULL;
+  END IF;
+
+  -- tests.summary_frame_id → frames(id). SET NULL: deleting the synth-summary
+  -- frame should leave the test row alive (the test can re-synthesize).
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tests_summary_frame_id_fkey') THEN
+    UPDATE tests SET summary_frame_id = NULL
+      WHERE summary_frame_id IS NOT NULL
+        AND summary_frame_id NOT IN (SELECT id FROM frames);
+    ALTER TABLE tests
+      ADD CONSTRAINT tests_summary_frame_id_fkey
+      FOREIGN KEY (summary_frame_id) REFERENCES frames(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- test_sessions.responses_json should default to '[]'::jsonb so reads never
+-- have to coalesce NULL → []. The JSONB-migration loop above leaves the
+-- column without a default (its dval was NULL there); apply the new default
+-- now using the same DROP DEFAULT → SET DEFAULT pattern.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'test_sessions'
+       AND column_name = 'responses_json'
+       AND data_type = 'jsonb'
+  ) THEN
+    -- Normalise existing NULLs so the NOT NULL contract holds going forward
+    -- even if a future migration tightens nullability.
+    UPDATE test_sessions SET responses_json = '[]'::jsonb WHERE responses_json IS NULL;
+    EXECUTE format(
+      'ALTER TABLE %I ALTER COLUMN %I DROP DEFAULT',
+      'test_sessions', 'responses_json'
+    );
+    EXECUTE format(
+      'ALTER TABLE %I ALTER COLUMN %I SET DEFAULT %L::jsonb',
+      'test_sessions', 'responses_json', '[]'
+    );
+  END IF;
+END $$;
+-- ============================================================================
+-- END: A+ W1 perf indexes
+-- ============================================================================
+
+-- ============================================================================
+-- BEGIN: A+ W2 product gaps — board soft-delete (archive)
+-- ----------------------------------------------------------------------------
+-- Soft-delete column. A NULL value means "live"; a set timestamp means the
+-- board was archived (and is excluded from the standard list-boards path).
+-- Hard DELETE would cascade through frames, comments, dispatches, etc. — an
+-- accidental click would wipe weeks of work and break the GDPR contract that
+-- says the user is the one who decides when data goes. Soft-delete keeps the
+-- row recoverable via POST /api/boards/:id/restore.
+--
+-- A partial index on (archived_at IS NULL) lets the default "active boards"
+-- filter stay a cheap index scan.
+-- ============================================================================
+ALTER TABLE boards ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_boards_active
+  ON boards(created_at)
+  WHERE archived_at IS NULL;
+-- ============================================================================
+-- END: A+ W2 product gaps
+-- ============================================================================
 `;
 
-// Fixed advisory-lock key for schema migration. Any constant works as long
-// as it's stable across deploys; this is the low-order bits of "foldo".
-const SCHEMA_LOCK_KEY = 0x666f6c64;
+/**
+ * Constant lock id for the schema-init advisory lock. pg_advisory_lock takes
+ * a single bigint key; the value is arbitrary as long as every replica picks
+ * the same one. 7331 (leetspeak "lees") is the project convention — easy to
+ * grep for, doesn't collide with anything else we hold.
+ */
+const SCHEMA_INIT_LOCK_ID = 7331;
 
 /**
- * Apply the schema. Wrapped in a Postgres advisory lock so two instances
- * booting at once (Railway rolling deploy) serialise instead of deadlocking
- * each other on concurrent ALTER TABLE / CREATE INDEX. The lock is held on a
- * single dedicated connection for the migration's whole lifetime.
+ * Run the schema bootstrap. Wrapped in a Postgres advisory lock so when two
+ * replicas (or a rolling-deploy old+new pair) boot concurrently, only one
+ * actually runs the ALTER/CREATE statements. The second blocks until the
+ * lock releases and then re-runs the (now-idempotent) script — every block
+ * is guarded with `IF NOT EXISTS` / `pg_constraint` checks so the second
+ * pass is a near-noop.
+ *
+ * The lock is session-scoped; we explicitly unlock in a finally so a thrown
+ * migration doesn't leave the next boot hanging.
  */
 export async function initSchema(): Promise<void> {
   const client = await pool.connect();
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_KEY]);
+    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_ID]);
     try {
       await client.query(SCHEMA);
     } finally {
-      await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_KEY]);
+      try {
+        await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_ID]);
+      } catch {
+        // Best-effort: the lock auto-releases when the session ends, which
+        // happens immediately below on client.release(). Logging this would
+        // just be noise.
+      }
     }
   } finally {
     client.release();
   }
 }
 
-/**
- * DANGER — one-shot destructive reset. Drops and recreates the `public` schema
- * (wiping ALL data), gated on a reset `token`. The token is recorded in a
- * marker table so the reset runs at most once per unique token, even if the
- * FOLDO_RESET_DB env var lingers across restarts. Used once to recover a prod
- * DB created by an incompatible server version; initSchema() + seed() run
- * afterward to rebuild the tables.
- */
-export async function maybeResetSchema(token: string): Promise<boolean> {
-  const markerExists = await queryOne<{ x: number }>(
-    `SELECT 1 AS x FROM pg_tables WHERE schemaname='public' AND tablename='schema_reset_log'`,
-  ).catch(() => null);
-  if (markerExists) {
-    const seen = await queryOne<{ x: number }>(
-      `SELECT 1 AS x FROM schema_reset_log WHERE token = $1`,
-      [token],
-    ).catch(() => null);
-    if (seen) {
-      console.warn(`[reset] token ${token} already applied — skipping`);
-      return false;
-    }
-  }
-  console.warn(`[reset] DROP SCHEMA public CASCADE for reset token ${token}`);
-  await exec('DROP SCHEMA IF EXISTS public CASCADE');
-  await exec('CREATE SCHEMA public');
-  await exec(
-    'CREATE TABLE IF NOT EXISTS schema_reset_log (token TEXT PRIMARY KEY, applied_at TEXT NOT NULL)',
-  );
-  await exec(
-    'INSERT INTO schema_reset_log (token, applied_at) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-    [token, new Date().toISOString()],
-  );
-  return true;
-}
-
 export async function closePool(): Promise<void> {
   await pool.end();
+}
+
+/**
+ * Run `fn` inside a single SQL transaction. The connection is released back to
+ * the pool either way. Use whenever a request handler does two or more writes
+ * that should succeed-or-fail as a unit — historically `routes/frames.ts`
+ * updated `frames` and `sources` in separate `exec()` calls, and a failure
+ * between them left the two tables permanently out of sync.
+ *
+ * Inside `fn`, use `q.query(sql, params)` to run SQL on the transactional
+ * connection. Calling the top-level `query/exec` would grab a *different*
+ * connection from the pool and miss the BEGIN.
+ */
+export async function withTransaction<T>(
+  fn: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // already-aborted etc.
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }

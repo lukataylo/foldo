@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireUser } from '../auth.ts';
+import { assertEmailVerified, requireUser } from '../auth.ts';
 import { getBoardById } from '../repo/boards.ts';
 import { listBranchesForBoard } from '../repo/branches.ts';
 import { listFramesForBoard } from '../repo/frames.ts';
@@ -40,6 +40,23 @@ export async function registerShareRoutes(app: FastifyInstance): Promise<void> {
     '/api/boards/:id/shares',
     async (req, reply) => {
       const user = requireUser(req);
+      // Minting a public share link is a "make this visible to anyone with
+      // the URL" action — exactly the kind of thing a spam signup would do
+      // to weaponise the platform before we notice. Gate it on email
+      // verification (agents + demo accounts are exempted inside
+      // assertEmailVerified). Done BEFORE the board lookup so an unverified
+      // user can't even probe for board existence via this endpoint.
+      try {
+        assertEmailVerified(req);
+      } catch (err) {
+        const e = err as { statusCode?: number; code?: string; message?: string };
+        return reply
+          .code(e.statusCode ?? 403)
+          .send({
+            error: e.message ?? 'Verify your email first',
+            code: e.code ?? 'EMAIL_NOT_VERIFIED',
+          });
+      }
       const board = await getBoardById(req.params.id);
       if (!board || !(await canEditBoard(board.id, user.id))) {
         return reply
@@ -113,14 +130,21 @@ export async function registerShareRoutes(app: FastifyInstance): Promise<void> {
         listCommentsForBoard(board.id),
         listUsers(),
       ]);
-      return reply.send({
-        board,
-        branches,
-        frames,
-        comments,
-        users,
-        readOnly: true,
-      });
+      // A+ W1: 60s private cache. Public share snapshots don't change often;
+      // letting the viewer's browser short-circuit refreshes avoids hammering
+      // the listFrames/comments pipeline on tab-switch behaviour. `private`
+      // because a share token is per-user-link and we don't want shared CDN
+      // caches to fan it out across viewers.
+      return reply
+        .header('Cache-Control', 'max-age=60, private')
+        .send({
+          board,
+          branches,
+          frames,
+          comments,
+          users,
+          readOnly: true,
+        });
     },
   );
 }

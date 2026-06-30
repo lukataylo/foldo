@@ -17,7 +17,7 @@ import type {
   TestTaskInput,
   UpdateTestRequest,
 } from '@foldo/protocol';
-import { requireUser } from '../auth.ts';
+import { assertEmailVerified, requireUser } from '../auth.ts';
 import { getBoardById } from '../repo/boards.ts';
 import { canEditBoard, isMember } from '../repo/members.ts';
 import {
@@ -32,11 +32,7 @@ import {
   sessionCountsForTest,
   updateTest,
 } from '../repo/tests.ts';
-import {
-  listRecordingKeysForTest,
-  listSessionsForTest,
-} from '../repo/testSessions.ts';
-import { getStorage } from '../storage/index.ts';
+import { listSessionsForTest } from '../repo/testSessions.ts';
 import { probeFrameable } from '../probe.ts';
 import { hub } from '../ws/hub.ts';
 
@@ -350,6 +346,21 @@ export async function registerTestRoutes(app: FastifyInstance): Promise<void> {
           url && (mode === 'auto' || mode === 'iframe')
             ? await probeFrameable(url)
             : null;
+      } else if (
+        patch.targetMode !== undefined &&
+        patch.targetMode !== test.targetMode
+      ) {
+        // Mode actually flipped without a new URL (e.g. dom_snapshot →
+        // iframe). The cached probe result may be stale or never computed,
+        // so re-probe against the existing target — otherwise
+        // resolveDeliveryMode keeps serving the wrong delivery mode off a
+        // stale `frameable`. (No-op PATCHes that re-send the current mode
+        // skip the probe; it's a blocking external GET.)
+        const mode = patch.targetMode;
+        patch.frameable =
+          test.targetUrl && (mode === 'auto' || mode === 'iframe')
+            ? await probeFrameable(test.targetUrl)
+            : null;
       }
       if (body.recordingModes !== undefined) {
         const modes = sanitizeRecordingModes(body.recordingModes);
@@ -392,6 +403,31 @@ export async function registerTestRoutes(app: FastifyInstance): Promise<void> {
         patch.status = body.status;
       }
 
+      // Going live = the test becomes a publicly-shareable foldo.dev/t/:token
+      // link that pings real users. Require a verified email before allowing
+      // it so spam signups can't immediately weaponise the platform. Draft +
+      // closed are unrestricted (a test owner can still iterate locally).
+      //
+      // Done AFTER all body validation but BEFORE the updateTest write so a
+      // failed email-verify check can never half-apply the patch — previous
+      // ordering ran the assert inside the status branch but other patch
+      // fields (name, intro, …) had already been collected into `patch` and
+      // a thrown assert would just be a 403, leaving room for a future
+      // refactor to accidentally do partial writes.
+      if (patch.status === 'live' && test.status !== 'live') {
+        try {
+          assertEmailVerified(req);
+        } catch (err) {
+          const e = err as { statusCode?: number; code?: string; message?: string };
+          return reply
+            .code(e.statusCode ?? 403)
+            .send({
+              error: e.message ?? 'Verify your email first',
+              code: e.code ?? 'EMAIL_NOT_VERIFIED',
+            });
+        }
+      }
+
       const next = await updateTest(test.id, patch);
       if (!next) {
         return reply
@@ -414,20 +450,7 @@ export async function registerTestRoutes(app: FastifyInstance): Promise<void> {
           .code(404)
           .send({ error: 'Test not found', code: 'NOT_FOUND' });
       }
-      // Collect blob keys before the DB cascade wipes the session rows, so
-      // we can clean up orphan recordings + the DOM snapshot after delete.
-      const recordingKeys = await listRecordingKeysForTest(test.id);
       await deleteTest(test.id);
-      const storage = getStorage();
-      const blobKeys = [...recordingKeys];
-      if (test.domSnapshotKey) blobKeys.push(test.domSnapshotKey);
-      for (const key of blobKeys) {
-        try {
-          await storage.remove(key);
-        } catch (err) {
-          req.log.warn({ err, key }, 'failed to remove test blob');
-        }
-      }
       hub.broadcast(test.boardId, { type: 'test.deleted', testId: test.id });
       return reply.send({ ok: true });
     },

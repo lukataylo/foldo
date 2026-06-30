@@ -1,19 +1,12 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { Frame } from '@foldo/protocol';
 import { boardStore } from '../state/BoardStore';
-import { getZoom } from '../state/viewportStore';
 import { moveFrame as apiMoveFrame } from '../api/frames';
-
-// Click-vs-drag threshold. Higher on touch surfaces so a tap-to-focus on an
-// iPad doesn't accidentally start moving the frame a couple of pixels.
-const DRAG_THRESHOLD_PX =
-  typeof window !== 'undefined' &&
-  window.matchMedia?.('(pointer: coarse)').matches
-    ? 6
-    : 2;
 
 interface Options {
   frame: Frame;
+  /** Current canvas zoom, needed to convert screen-pixel drags to world units. */
+  zoom: number;
   /** When false the handlers no-op (e.g. read-only share viewer). */
   enabled?: boolean;
 }
@@ -35,7 +28,12 @@ interface Options {
  * comment pin, etc.) can opt out by carrying `data-no-drag` anywhere in
  * their ancestry up to the bound element.
  */
-export function useFrameDrag({ frame, enabled = true }: Options) {
+export function useFrameDrag({ frame, zoom, enabled = true }: Options) {
+  const zoomRef = useRef(zoom);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
   const dragRef = useRef<
     | {
         startClientX: number;
@@ -67,11 +65,9 @@ export function useFrameDrag({ frame, enabled = true }: Options) {
   function onPointerMove(e: React.PointerEvent<HTMLElement>): void {
     const d = dragRef.current;
     if (!d) return;
-    // Live zoom — read at move time, never subscribed (no re-render).
-    const zoom = getZoom();
-    const dx = (e.clientX - d.startClientX) / zoom;
-    const dy = (e.clientY - d.startClientY) / zoom;
-    if (!d.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX / zoom) return;
+    const dx = (e.clientX - d.startClientX) / zoomRef.current;
+    const dy = (e.clientY - d.startClientY) / zoomRef.current;
+    if (!d.moved && Math.hypot(dx, dy) < 2 / zoomRef.current) return;
     if (!d.moved) {
       // First real movement — prevent default so we don't double-trigger
       // (text selection, native image drag, etc.) on the rest of the drag.

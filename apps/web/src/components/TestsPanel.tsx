@@ -21,7 +21,8 @@ import {
   replaceTestTasks,
   updateTest,
 } from '../api/tests';
-import { API_BASE } from '../api/client';
+import { resolveApiUrl } from '../api/client';
+import { useBoardSelector } from '../state/useBoardStore';
 import { WaveformPlayer } from '../test/WaveformPlayer';
 
 interface Props {
@@ -145,8 +146,16 @@ export function TestsPanel({ open, boardId, onClose }: Props) {
     if (!open) return;
     setView('list');
     setSaveError(null);
+  }, [open]);
+
+  // Fetch on open, and refetch whenever a test.created/updated/deleted
+  // broadcast bumps testsRevision — so an open panel stays live with
+  // collaborator edits.
+  const testsRevision = useBoardSelector((s) => s.testsRevision);
+  useEffect(() => {
+    if (!open) return;
     void refresh();
-  }, [open, refresh]);
+  }, [open, testsRevision, refresh]);
 
   if (!open) return null;
 
@@ -933,7 +942,7 @@ function SessionCard({
   const taskTitle = (taskId: string, idx: number) =>
     tasks.find((t) => t.id === taskId)?.title ?? `Task ${idx + 1}`;
   const recordingSrc = session.recordingUrl
-    ? `${API_BASE}${session.recordingUrl}`
+    ? resolveApiUrl(session.recordingUrl)
     : null;
   const started = new Date(session.startedAt);
 

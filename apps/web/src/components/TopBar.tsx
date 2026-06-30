@@ -1,20 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Board, UserId, User } from '@foldo/protocol';
 import { PresenceAvatars } from '../multiplayer/PresenceAvatars';
 import { useBoardSelector } from '../state/useBoardStore';
-import { storageGetBool } from '../lib/storage';
+import { ShareManagementModal } from './ShareManagementModal';
 
 const HOME_URL = '/home';
-
-// Canonical demo personas shown in the "Demo as" picker (matches the demo
-// identity allow-list in useBoardBootstrap). Keeps real signups / E2E test
-// accounts out of the dropdown.
-const DEMO_PERSONA_IDS = ['u-you', 'u-anna', 'u-mateo', 'u-priya'];
-
-// One shared style for every top-bar control so the cluster reads as a single
-// consistent set (same height, padding, border, radius, type).
-const CTRL =
-  'inline-flex h-8 items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 text-[12px] text-ink transition-colors hover:bg-white/5';
 
 interface Props {
   board: Board | null;
@@ -42,17 +32,41 @@ export function TopBar({
   const [open, setOpen] = useState(false);
   const [userPickerOpen, setUserPickerOpen] = useState(false);
   const [shared, setShared] = useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [shareMgmtOpen, setShareMgmtOpen] = useState(false);
+  const shareMenuRef = useRef<HTMLDivElement | null>(null);
   const users = useBoardSelector((s) => s.users);
   const mcpConnected = useBoardSelector((s) => s.mcpConnected);
+  /* A+W1 features — pending test session count for the Tests button badge.
+     `activeTestSessions` is the canonical source (driven by WS
+     test.session.started / completed); rendered with a small absolute
+     overlay so we don't perturb the button's padding or font. */
+  const pendingTestSessions = useBoardSelector((s) => s.activeTestSessions.size);
   const me = meUserId ? users.get(meUserId) ?? null : null;
-  // "Demo as" only offers the canonical demo personas — not real signups or
-  // E2E test accounts that happen to be members of the board.
   const switchable: User[] = [];
-  for (const id of DEMO_PERSONA_IDS) {
-    const u = users.get(id);
-    if (u && u.kind === 'human') switchable.push(u);
-  }
+  for (const u of users.values()) if (u.kind === 'human') switchable.push(u);
   const repoName = board?.repoSlug ?? 'unloaded';
+
+  // Close the small share-menu dropdown on outside click / Esc — mirrors
+  // the kebab menu in BoardCard so the affordance feels the same across
+  // home + canvas.
+  useEffect(() => {
+    if (!shareMenuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) {
+        setShareMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShareMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [shareMenuOpen]);
 
   const onShare = async () => {
     try {
@@ -74,20 +88,23 @@ export function TopBar({
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between px-4 pt-3">
       {/* left: logo + repo selector */}
-      <div className="pointer-events-auto relative flex items-center gap-3 rounded-xl border border-hairlineSoft bg-panel px-2 py-1.5 shadow-panel">
+      {/* A+W1 touch: bumped py-1.5 → py-2 so the chrome reads ~40px tall on iPad. */}
+      <div className="pointer-events-auto relative flex items-center gap-3 rounded-xl border border-hairlineSoft bg-panel px-2 py-2 shadow-panel">
         <a href={HOME_URL} title="Back to home">
           <Logo />
         </a>
         <div className="h-4 w-px bg-hairline" />
         <button
           onClick={() => setOpen((o) => !o)}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] font-medium text-ink hover:bg-white/5"
+          /* A+W1 touch: py-1 → py-2 for fingertip targets. */
+          className="flex items-center gap-1.5 rounded-md px-2 py-2 text-[12.5px] font-medium text-ink hover:bg-white/5"
         >
           <RepoIcon />
-          <span>{repoName}</span>
+          <span data-testid="foldo-canvas-topbar-boardname">{repoName}</span>
           <Chevron />
         </button>
-        <StatusChip status={wsStatus} offline={offline} mcpConnected={mcpConnected} />
+        <ConnectionDot status={wsStatus} offline={offline} />
+        <McpChip connected={mcpConnected} />
         {open && (
           <div className="absolute left-2 top-12 w-60 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
             <a
@@ -108,15 +125,14 @@ export function TopBar({
         )}
       </div>
 
-      {/* right: view toggles, capture, share, avatars */}
+      {/* right: capture, share, avatars */}
       <div className="pointer-events-auto flex items-center gap-2">
-        <ViewToggles />
         {me && switchable.length > 1 && (
           <div className="relative">
             <button
               onClick={() => setUserPickerOpen((o) => !o)}
               title="Switch demo user (refresh required)"
-              className={CTRL}
+              className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2 py-1 text-[12px] text-ink hover:bg-white/5"
             >
               <span
                 className="flex h-4 w-4 items-center justify-center rounded-full text-[9.5px] font-semibold text-white"
@@ -161,109 +177,112 @@ export function TopBar({
             )}
           </div>
         )}
-        <button onClick={onCapture} className={CTRL}>
+        {/* A+W1 touch: py-1.5 → py-2 across the action chips for finger reach. */}
+        <button
+          data-testid="foldo-canvas-topbar-capture"
+          onClick={onCapture}
+          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink hover:bg-white/5"
+        >
           <ExtensionIcon /> Capture from URL
         </button>
+        {/* A+W1 features — testid + pending session badge. Position is
+            relative so the badge can absolutely-position over the corner;
+            the button's padding / sizing stays exactly as it was. */}
         <button
+          data-testid="foldo-topbar-tests"
           onClick={onOpenTests}
-          title="Create unmoderated UX test links"
-          className={CTRL}
+          title={
+            pendingTestSessions > 0
+              ? `Tests — ${pendingTestSessions} session${pendingTestSessions === 1 ? '' : 's'} in progress`
+              : 'Create unmoderated UX test links'
+          }
+          className="relative flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink hover:bg-white/5"
         >
           <FlaskIcon /> Tests
+          {pendingTestSessions > 0 && (
+            <span
+              data-testid="foldo-topbar-tests-badge"
+              aria-label={`${pendingTestSessions} pending sessions`}
+              style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                minWidth: 14,
+                height: 14,
+                padding: '0 3px',
+                borderRadius: 7,
+                background: '#FDB306',
+                color: '#1a1a1d',
+                fontSize: 9.5,
+                fontWeight: 700,
+                lineHeight: '14px',
+                textAlign: 'center',
+                boxShadow: '0 0 0 1.5px #1a1a1d',
+              }}
+            >
+              {pendingTestSessions > 9 ? '9+' : pendingTestSessions}
+            </span>
+          )}
         </button>
-        <button
-          onClick={onShare}
-          title="Copy this canvas URL to clipboard"
-          className={CTRL + (shared ? ' !border-ok/40 !bg-ok/15 !text-ok' : '')}
-        >
-          {shared ? 'Copied!' : 'Share'}
-        </button>
+        <div className="relative inline-flex" ref={shareMenuRef}>
+          <button
+            data-testid="foldo-canvas-topbar-share"
+            onClick={onShare}
+            title="Copy this canvas URL to clipboard"
+            className={
+              'rounded-l-lg border px-2.5 py-2 text-[12px] transition-colors ' +
+              (shared
+                ? 'border-ok/40 bg-ok/15 text-ok'
+                : 'border-hairlineSoft bg-panel text-ink hover:bg-white/5')
+            }
+          >
+            {shared ? 'Copied!' : 'Share'}
+          </button>
+          <button
+            data-testid="foldo-canvas-topbar-share-menu"
+            onClick={() => setShareMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={shareMenuOpen}
+            title="Manage share links"
+            className={
+              '-ml-px rounded-r-lg border border-l-0 px-1.5 py-2 text-[12px] transition-colors ' +
+              'border-hairlineSoft bg-panel text-ink hover:bg-white/5'
+            }
+          >
+            <Chevron />
+          </button>
+          {shareMenuOpen && (
+            <div className="absolute right-0 top-9 z-50 w-52 rounded-lg border border-hairline bg-panel p-1 shadow-panel">
+              <button
+                type="button"
+                data-testid="foldo-canvas-topbar-share-manage"
+                onClick={() => {
+                  setShareMenuOpen(false);
+                  setShareMgmtOpen(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink hover:bg-white/5"
+              >
+                Manage share links…
+              </button>
+              <div className="border-t border-hairlineSoft px-2 py-1 text-[10.5px] text-inkFaint">
+                Revoke any active links to this board.
+              </div>
+            </div>
+          )}
+        </div>
         <PresenceAvatars
           meUserId={meUserId}
           followingUserId={followingUserId}
           onFollow={onFollow}
         />
       </div>
+
+      <ShareManagementModal
+        open={shareMgmtOpen}
+        boardId={board?.id ?? null}
+        onClose={() => setShareMgmtOpen(false)}
+      />
     </div>
-  );
-}
-
-/**
- * Show/hide toggles for the Layers navigator (left) and Inspector (right).
- * State is mirrored from SidePanelHost via the `foldo:sidePanelChanged` event;
- * clicking dispatches `foldo:toggleSidePanel` which the host acts on.
- */
-function ViewToggles() {
-  const [openState, setOpenState] = useState(() => ({
-    layers: storageGetBool('foldo:sidepanel:layers', false),
-    design: storageGetBool('foldo:sidepanel:design', false),
-  }));
-  useEffect(() => {
-    const onChanged = (e: Event) => {
-      const d = (e as CustomEvent<{ id: string; open: boolean }>).detail;
-      if (!d) return;
-      if (d.id === 'layers' || d.id === 'design') {
-        setOpenState((p) => ({ ...p, [d.id]: d.open }));
-      }
-    };
-    window.addEventListener('foldo:sidePanelChanged', onChanged);
-    return () => window.removeEventListener('foldo:sidePanelChanged', onChanged);
-  }, []);
-  const toggle = (id: 'layers' | 'design') =>
-    window.dispatchEvent(new CustomEvent('foldo:toggleSidePanel', { detail: { id } }));
-  return (
-    <div className="inline-flex h-8 items-center gap-0.5 rounded-lg border border-hairlineSoft bg-panel px-1">
-      <ViewToggleButton label="Layers" active={openState.layers} onClick={() => toggle('layers')}>
-        <LayersIcon />
-      </ViewToggleButton>
-      <ViewToggleButton label="Inspector" active={openState.design} onClick={() => toggle('design')}>
-        <InspectIcon />
-      </ViewToggleButton>
-    </div>
-  );
-}
-
-function ViewToggleButton({
-  label,
-  active,
-  onClick,
-  children,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={`${active ? 'Hide' : 'Show'} ${label}`}
-      aria-label={`${active ? 'Hide' : 'Show'} ${label}`}
-      aria-pressed={active}
-      className={
-        'flex h-7 w-7 items-center justify-center rounded-md transition-colors ' +
-        (active ? 'bg-accent/15 text-accent' : 'text-inkMute hover:bg-white/5 hover:text-ink')
-      }
-    >
-      {children}
-    </button>
-  );
-}
-
-function LayersIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round">
-      <path d="M8 2.2 14 5.3 8 8.4 2 5.3z" />
-      <path d="M2.4 8.2 8 11.1l5.6-2.9M2.4 10.9 8 13.8l5.6-2.9" />
-    </svg>
-  );
-}
-function InspectIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round">
-      <path d="M2.6 2.6h4M2.6 2.6v4M13.4 2.6h-4M13.4 2.6v4M2.6 13.4h4M2.6 13.4v-4M13.4 13.4h-4M13.4 13.4v-4" />
-      <circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none" />
-    </svg>
   );
 }
 
@@ -283,49 +302,48 @@ function Logo() {
   );
 }
 
-/**
- * Single combined status indicator: one dot + "MCP" label. The dot reflects
- * the realtime connection — green only when the canvas WS is live AND a Claude
- * MCP agent is connected; amber while reconnecting; red/grey when offline or
- * MCP is absent (dispatches then run on the simulator). Replaces the old
- * separate WS dot + MCP chip so there is just one status element.
- */
-function StatusChip({
+function ConnectionDot({
   status,
   offline,
-  mcpConnected,
 }: {
   status: Props['wsStatus'];
   offline: boolean;
-  mcpConnected: boolean;
 }) {
-  let dot = '#7fd49a';
-  let title = mcpConnected
-    ? 'Live · MCP connected (real Claude)'
-    : 'Live · MCP offline — dispatches simulated';
+  let color = '#7fd49a';
+  let title = 'Live · connected';
   if (offline) {
-    dot = '#9a9a9a';
-    title = 'Offline demo · local mock data';
+    color = '#9a9a9a';
+    title = 'Offline demo · using local mock data';
   } else if (status === 'connecting' || status === 'reconnecting') {
-    dot = '#f5b86b';
+    color = '#f5b86b';
     title = 'Reconnecting…';
   } else if (status === 'closed') {
-    dot = '#9a9a9a';
+    color = '#9a9a9a';
     title = 'Disconnected';
   } else if (status === 'offline') {
-    dot = '#ef6f6f';
+    color = '#ef6f6f';
     title = 'Server unreachable';
-  } else if (!mcpConnected) {
-    dot = '#9a9a9a';
   }
   return (
-    <span
+    <div
       title={title}
-      className="ml-1 inline-flex items-center gap-1.5 rounded-md border border-hairlineSoft px-1.5 py-0.5 text-[10.5px] text-inkMute"
+      className="ml-1 h-2 w-2 rounded-full"
+      style={{ background: color, boxShadow: `0 0 6px ${color}` }}
+    />
+  );
+}
+
+function McpChip({ connected }: { connected: boolean }) {
+  const color = connected ? '#7fd49a' : '#9a9a9a';
+  const label = connected ? 'MCP live' : 'MCP offline · dispatches simulated';
+  return (
+    <span
+      title={label}
+      className="ml-1 inline-flex items-center gap-1 rounded-md border border-hairlineSoft px-1.5 py-0.5 text-[10.5px] text-inkMute"
     >
       <span
         className="h-1.5 w-1.5 rounded-full"
-        style={{ background: dot, boxShadow: `0 0 6px ${dot}` }}
+        style={{ background: color, boxShadow: `0 0 6px ${color}` }}
       />
       MCP
     </span>

@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { INK, PAPER, SOFT_GREY, YELLOW } from '../marketing/shared';
 import type { HomeBoardSummary } from './api';
 import {
+  archiveBoard,
   createBoardShare,
   listBoardShares,
+  restoreBoard,
   revokeBoardShare,
 } from './api';
 
@@ -13,12 +15,17 @@ interface BoardCardProps {
   onOpen: () => void;
   onToggleStar: () => void;
   onToast?: (msg: string) => void;
-  /** Open the Members modal for this board. */
-  onManageMembers?: () => void;
-  /** Open the rename modal for this board. */
-  onRename?: () => void;
-  /** Open the delete-confirm modal for this board. */
-  onDelete?: () => void;
+  /**
+   * Called when the user archives this board so the parent can drop it
+   * from the optimistic list. Skipped when omitted (archived view doesn't
+   * need it — the card stays put until Restore moves it back to active).
+   */
+  onArchived?: () => void;
+  /**
+   * Called when the user restores this archived board. Parent typically
+   * drops it from the archived list (it'll reappear on the next active fetch).
+   */
+  onRestored?: () => void;
 }
 
 const DEFAULT_COLORS = ['#9a9a9a', '#b08cff', '#5db0ff', '#f5b86b'];
@@ -29,14 +36,11 @@ export function BoardCard({
   onOpen,
   onToggleStar,
   onToast,
-  onManageMembers,
-  onRename,
-  onDelete,
+  onArchived,
+  onRestored,
 }: BoardCardProps) {
+  const isArchived = !!board.archivedAt;
   const colors = board.branchColors.length > 0 ? board.branchColors : DEFAULT_COLORS;
-  // Rename + delete are owner-only; the server enforces this too, but hiding
-  // the actions keeps non-owners from hitting a guaranteed 403.
-  const isOwner = board.role === 'owner';
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -88,6 +92,53 @@ export function BoardCard({
     }
   };
 
+  const handleArchive = async () => {
+    if (busy) return;
+    // A live confirm() — board archive nukes the card from the active list,
+    // even if the data is recoverable. Worth one extra click to avoid the
+    // "I clicked the wrong thing in a menu" follow-up.
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(`Archive "${board.name}"? You can restore it from the archived view.`)
+    ) {
+      setMenuOpen(false);
+      return;
+    }
+    setBusy(true);
+    try {
+      await archiveBoard(board.id);
+      toast(`Archived "${board.name}"`);
+      if (onArchived) onArchived();
+    } catch (err) {
+      toast(
+        err instanceof Error
+          ? `Couldn't archive: ${err.message}`
+          : `Couldn't archive board`,
+      );
+    } finally {
+      setBusy(false);
+      setMenuOpen(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await restoreBoard(board.id);
+      toast(`Restored "${board.name}"`);
+      if (onRestored) onRestored();
+    } catch (err) {
+      toast(
+        err instanceof Error
+          ? `Couldn't restore: ${err.message}`
+          : `Couldn't restore board`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleRevoke = async () => {
     if (busy) return;
     setBusy(true);
@@ -117,16 +168,20 @@ export function BoardCard({
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      className="home-card"
-      onClick={onOpen}
+      role={isArchived ? 'group' : 'button'}
+      tabIndex={isArchived ? -1 : 0}
+      className={`home-card${isArchived ? ' is-archived' : ''}`}
+      data-testid="foldo-home-boardcard"
+      data-archived={isArchived ? 'true' : 'false'}
+      onClick={isArchived ? undefined : onOpen}
       onKeyDown={(e) => {
+        if (isArchived) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onOpen();
         }
       }}
+      style={isArchived ? { cursor: 'default', opacity: 0.78 } : undefined}
     >
       <div className="thumb">
         <Thumb colors={colors} frameCount={board.frameCount} />
@@ -215,46 +270,19 @@ export function BoardCard({
               >
                 Revoke share link
               </button>
-              <button
-                role="menuitem"
-                type="button"
-                disabled={busy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen(false);
-                  onManageMembers?.();
-                }}
-              >
-                Members
-              </button>
-              {isOwner && (
-                <>
-                  <button
-                    role="menuitem"
-                    type="button"
-                    disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpen(false);
-                      onRename?.();
-                    }}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    role="menuitem"
-                    type="button"
-                    disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpen(false);
-                      onDelete?.();
-                    }}
-                    style={{ color: '#c0392b' }}
-                  >
-                    Delete board
-                  </button>
-                </>
+              {!isArchived && (
+                <button
+                  role="menuitem"
+                  type="button"
+                  data-testid="foldo-home-card-archive"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleArchive();
+                  }}
+                >
+                  Archive board
+                </button>
               )}
             </div>
           )}
@@ -281,6 +309,47 @@ export function BoardCard({
           <span aria-hidden style={{ color: '#ccc' }}>·</span>
           <span>{formatRelative(board.lastActivity ?? board.createdAt)}</span>
         </div>
+        {isArchived && (
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: '#a06a00',
+                background: '#fff3d0',
+                padding: '2px 8px',
+                borderRadius: 999,
+              }}
+            >
+              Archived
+            </span>
+            <button
+              type="button"
+              data-testid="foldo-home-card-restore"
+              disabled={busy}
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleRestore();
+              }}
+              style={{
+                marginLeft: 'auto',
+                background: '#fff',
+                border: `1.5px solid ${INK}`,
+                borderRadius: 8,
+                padding: '4px 10px',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: busy ? 'wait' : 'pointer',
+                color: INK,
+                opacity: busy ? 0.6 : 1,
+              }}
+            >
+              Restore
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -7,10 +7,22 @@ export interface SessionRow {
   user_id: string;
   created_at: string;
   last_seen_at: string;
+  expires_at: string;
   user_agent: string | null;
   kind: SessionKind;
   label: string | null;
 }
+
+/** Sliding-window TTL. Browser sessions get bumped by this on every touch. */
+const BROWSER_SESSION_TTL = "interval '30 days'";
+
+/**
+ * Cap stored User-Agent strings. Real browsers send ~150 bytes; abusive
+ * clients have been spotted sending KBs of junk that bloat the sessions
+ * table and slow `/api/me/sessions`. 1024 is plenty of headroom for any
+ * legitimate UA without giving the attacker free DB writes.
+ */
+const USER_AGENT_MAX = 1024;
 
 export async function createSession(
   token: string,
@@ -19,10 +31,11 @@ export async function createSession(
   kind: SessionKind = 'browser',
   label?: string,
 ): Promise<void> {
+  const ua = (userAgent ?? '').slice(0, USER_AGENT_MAX) || null;
   await exec(
     `INSERT INTO sessions (token, user_id, user_agent, kind, label)
      VALUES ($1, $2, $3, $4, $5)`,
-    [token, userId, userAgent ?? null, kind, label ?? null],
+    [token, userId, ua, kind, label ?? null],
   );
 }
 
@@ -44,15 +57,21 @@ export async function getApiTokenForUser(
 }
 
 export async function getUserIdForToken(token: string): Promise<string | null> {
+  // Single query that (a) verifies the session exists and isn't expired and
+  // (b) extends the sliding window. API tokens are explicitly excluded from
+  // the auto-extend so they have a fixed lifetime, browser sessions slide.
   const r = await queryOne<SessionRow>(
-    `SELECT * FROM sessions WHERE token = $1`,
+    `UPDATE sessions
+        SET last_seen_at = now(),
+            expires_at = CASE
+              WHEN kind = 'browser' THEN now() + ${BROWSER_SESSION_TTL}
+              ELSE expires_at
+            END
+      WHERE token = $1 AND expires_at > now()
+      RETURNING *`,
     [token],
   );
-  if (!r) return null;
-  exec(`UPDATE sessions SET last_seen_at = now() WHERE token = $1`, [token]).catch(
-    () => undefined,
-  );
-  return r.user_id;
+  return r ? r.user_id : null;
 }
 
 export async function deleteSession(token: string): Promise<void> {
@@ -91,4 +110,12 @@ export async function deleteSessionOwnedBy(
     userId,
     token,
   ]);
+}
+
+/**
+ * Delete every session whose `expires_at` has passed. Called from the GC
+ * sweep so expired rows don't accumulate forever. Returns the number deleted.
+ */
+export async function deleteExpiredSessions(): Promise<number> {
+  return exec(`DELETE FROM sessions WHERE expires_at <= now()`);
 }

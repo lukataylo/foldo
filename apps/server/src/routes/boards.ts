@@ -14,7 +14,7 @@ import {
   archiveBoard,
   getBoardById,
   getBoardByRepoSlug,
-  listBoards,
+  listBoardsForUser,
   restoreBoard,
   upsertBoard,
 } from '../repo/boards.ts';
@@ -26,13 +26,8 @@ import {
 } from '../repo/branches.ts';
 import { listFramesForBoard, listFramesForBoardPage } from '../repo/frames.ts';
 import { listCommentsForBoard } from '../repo/comments.ts';
-import { listUsers } from '../repo/users.ts';
-import {
-  addBoardMember,
-  canEditBoard,
-  isMember,
-  listBoardIdsForUser,
-} from '../repo/members.ts';
+import { listUsersForBoard } from '../repo/users.ts';
+import { addBoardMember, canEditBoard, isMember } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { isMcpConnected } from '../ws/mcp.ts';
 import { newCommitSha, newId, nowIso } from '../util.ts';
@@ -54,14 +49,12 @@ export async function registerBoardRoutes(app: FastifyInstance): Promise<void> {
     '/api/boards',
     async (req, reply) => {
       const me = requireUser(req);
-      const ids = new Set(await listBoardIdsForUser(me.id));
       // ?includeArchived=true flips the soft-delete filter so the home
       // grid's "Show archived" toggle can list everything the user used to
-      // see. Default path stays cheap (uses the partial index).
+      // see.
       const includeArchived = req.query.includeArchived === 'true';
-      const all = await listBoards({ includeArchived });
       return reply.send({
-        boards: all.filter((b) => ids.has(b.id)),
+        boards: await listBoardsForUser(me.id, { includeArchived }),
       } satisfies ListBoardsResponse);
     },
   );
@@ -77,7 +70,7 @@ export async function registerBoardRoutes(app: FastifyInstance): Promise<void> {
       listBranchesForBoard(board.id),
       listFramesForBoard(board.id),
       listCommentsForBoard(board.id),
-      listUsers(),
+      listUsersForBoard(board.id),
     ]);
     return reply.send({
       board,

@@ -58,6 +58,10 @@ export function useRoute(): {
       if (opts?.replace) history.replaceState({}, '', path);
       else history.pushState({}, '', path);
       setRoute(next);
+      // pushState/replaceState don't dispatch popstate, so URL observers
+      // outside this hook (e.g. the Layer Navigator's selection mirror)
+      // listen for this event instead of polling the URL on an interval.
+      window.dispatchEvent(new Event('foldo:routechange'));
     },
     [],
   );

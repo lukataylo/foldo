@@ -51,12 +51,32 @@ export function createCloudClient(
     return u.toString();
   })();
 
+  // Outbound queue for messages the cloud must not lose. A `claude` run can
+  // take minutes; if the WS flaps while it works, dropping the terminal
+  // dispatch.completed/failed on the floor wedges the server-side dispatch
+  // in "running" forever even though the commit already pushed.
+  const pendingSend: McpClientMessage[] = [];
+  const MAX_PENDING = 500;
+
+  function queueDurable(msg: McpClientMessage): void {
+    // hello/pong are connection-scoped chatter; everything else records
+    // work (dispatch lifecycle, captured frames) that must reach the cloud.
+    if (msg.type === 'mcp.hello' || msg.type === 'pong') return;
+    if (pendingSend.length >= MAX_PENDING) pendingSend.shift();
+    pendingSend.push(msg);
+    log(`queued ${msg.type} until reconnect (${pendingSend.length} pending)`);
+  }
+
   function safeSend(msg: McpClientMessage): void {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      queueDurable(msg);
+      return;
+    }
     try {
       ws.send(JSON.stringify(msg));
     } catch (err) {
       log(`ws send failed: ${(err as Error).message}`);
+      queueDurable(msg);
     }
   }
 
@@ -83,6 +103,14 @@ export function createCloudClient(
     switch (msg.type) {
       case 'mcp.welcome':
         log(`cloud welcomed mcp (board=${msg.boardId}, accepted=${msg.tokenAccepted})`);
+        // Flush anything that accumulated while disconnected — replayed in
+        // order, AFTER the hello/welcome handshake so the server has
+        // registered this socket.
+        if (msg.tokenAccepted && pendingSend.length > 0) {
+          const q = pendingSend.splice(0, pendingSend.length);
+          log(`flushing ${q.length} queued message(s)`);
+          for (const m of q) safeSend(m);
+        }
         break;
       case 'ping':
         safeSend({ type: 'pong', ts: msg.ts });
@@ -131,12 +159,36 @@ export function createCloudClient(
     // to look "stable", protects against tight flap loops where the
     // remote accepts then immediately closes.
     let stableTimer: NodeJS.Timeout | null = null;
+    // Protocol-level heartbeat: without it a half-open socket (laptop
+    // sleep, NAT idle-out) never surfaces as closed, dispatches route
+    // into a black hole, and the durable queue never flushes.
+    let heartbeatTimer: NodeJS.Timeout | null = null;
+    let alive = true;
+    socket.on('pong', () => {
+      alive = true;
+    });
     socket.on('open', () => {
       log('connected to cloud');
       sendHello();
       stableTimer = setTimeout(() => {
         reconnectDelay = 500;
       }, 3000);
+      alive = true;
+      heartbeatTimer = setInterval(() => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        if (!alive) {
+          log('heartbeat missed — terminating stale connection');
+          socket.terminate();
+          return;
+        }
+        alive = false;
+        try {
+          socket.ping();
+        } catch {
+          socket.terminate();
+        }
+      }, 30_000);
+      heartbeatTimer.unref?.();
     });
     socket.on('message', (data) => {
       handleServerMessage(data.toString('utf8'));
@@ -148,6 +200,10 @@ export function createCloudClient(
       if (stableTimer) {
         clearTimeout(stableTimer);
         stableTimer = null;
+      }
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
       }
       log('cloud connection closed');
       ws = null;

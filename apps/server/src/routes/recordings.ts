@@ -70,6 +70,43 @@ export async function registerRecordingRoutes(
         }
       }
 
+      // Streaming path (local disk): never buffer the whole file. A tester
+      // scrubbing a 200 MB webm issues dozens of range requests — buffering
+      // each one allocated the full file in RAM per request.
+      if (storage.head && storage.getStream) {
+        const meta = await storage.head(key);
+        if (!meta) {
+          return reply
+            .code(404)
+            .send({ error: 'Recording not found', code: 'NOT_FOUND' });
+        }
+        const total = meta.size;
+        const range = parseRange(
+          Array.isArray(req.headers.range)
+            ? req.headers.range[0]
+            : req.headers.range,
+          total,
+        );
+
+        reply
+          .header('Content-Type', meta.contentType)
+          .header('Cache-Control', 'private, max-age=3600')
+          .header('Accept-Ranges', 'bytes');
+
+        if (range) {
+          const { start, end } = range;
+          return reply
+            .code(206)
+            .header('Content-Range', `bytes ${start}-${end}/${total}`)
+            .header('Content-Length', String(end - start + 1))
+            .send(storage.getStream(key, range));
+        }
+
+        return reply
+          .header('Content-Length', String(total))
+          .send(storage.getStream(key));
+      }
+
       const obj = await storage.get(key);
       if (!obj) {
         return reply

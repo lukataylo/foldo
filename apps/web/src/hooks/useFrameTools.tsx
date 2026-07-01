@@ -67,12 +67,13 @@ export function useFrameTools({
   const imagePendingPosRef = useRef<{ x: number; y: number } | null>(null);
 
   // Sticky / arrow / image all need to land on *some* branch. Prefer the
-  // dedicated 'captures' branch (which the server seeds for the demo board);
+  // dedicated captures branch (board-scoped id, so match by name);
   // otherwise fall back to whatever the first branch is.
   const ensureCanvasBranch = useCallback((): Branch | null => {
     if (!board) return null;
-    const captures = branches.get('captures');
-    if (captures) return captures;
+    for (const b of branches.values()) {
+      if (b.name === 'captures') return b;
+    }
     const first = branches.values().next().value as Branch | undefined;
     return first ?? null;
   }, [board, branches]);
@@ -100,10 +101,11 @@ export function useFrameTools({
         } catch (err) {
           // eslint-disable-next-line no-console
           console.warn('[foldo] sticky create failed', err);
+          pushToast('Failed to create sticky note');
         }
       })();
     },
-    [board, ensureCanvasBranch, setTool],
+    [board, ensureCanvasBranch, setTool, pushToast],
   );
 
   const createArrowFrame = useCallback(
@@ -136,9 +138,10 @@ export function useFrameTools({
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[foldo] arrow create failed', err);
+        pushToast('Failed to create arrow');
       }
     },
-    [board, ensureCanvasBranch, setTool],
+    [board, ensureCanvasBranch, setTool, pushToast],
   );
 
   const createImageFrame = useCallback(
@@ -179,9 +182,10 @@ export function useFrameTools({
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[foldo] image create failed', err);
+        pushToast('Failed to create image frame');
       }
     },
-    [board, ensureCanvasBranch, setTool],
+    [board, ensureCanvasBranch, setTool, pushToast],
   );
 
   const openImagePickerAt = useCallback((pos: { x: number; y: number }): void => {

@@ -84,6 +84,21 @@ function newSessionToken(): string {
   return randomBytes(18).toString('base64url');
 }
 
+/**
+ * The raw storage key of a session's recording. The wire-type `TestSession`
+ * only carries the derived playback URL; transcription providers need the
+ * key itself so they can hand the object (or a presigned URL) to their API.
+ */
+export async function getSessionRecordingKey(
+  sessionId: string,
+): Promise<string | null> {
+  const r = await queryOne<{ recording_key: string | null }>(
+    `SELECT recording_key FROM test_sessions WHERE id = $1`,
+    [sessionId],
+  );
+  return r?.recording_key ?? null;
+}
+
 export interface NewSessionInput {
   testId: string;
   recordingMode: RecordingMode;

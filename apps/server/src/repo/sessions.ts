@@ -56,22 +56,37 @@ export async function getApiTokenForUser(
   );
 }
 
+/**
+ * How stale `last_seen_at` may get before we bother rewriting the row. The
+ * previous implementation UPDATEd the session on *every* authenticated
+ * request — cursor-heavy canvas use turned each read into a DB write and
+ * serialized parallel requests from one tab on the same row lock.
+ */
+const SESSION_TOUCH_THRESHOLD = "interval '5 minutes'";
+
 export async function getUserIdForToken(token: string): Promise<string | null> {
-  // Single query that (a) verifies the session exists and isn't expired and
-  // (b) extends the sliding window. API tokens are explicitly excluded from
-  // the auto-extend so they have a fixed lifetime, browser sessions slide.
-  const r = await queryOne<SessionRow>(
-    `UPDATE sessions
-        SET last_seen_at = now(),
-            expires_at = CASE
-              WHEN kind = 'browser' THEN now() + ${BROWSER_SESSION_TTL}
-              ELSE expires_at
-            END
-      WHERE token = $1 AND expires_at > now()
-      RETURNING *`,
+  // Hot path is a plain read; the sliding-window extend only writes when
+  // last_seen_at is older than the touch threshold. API tokens are excluded
+  // from the auto-extend so they keep a fixed lifetime.
+  const r = await queryOne<SessionRow & { needs_touch: boolean }>(
+    `SELECT *,
+            (kind = 'browser' AND last_seen_at < now() - ${SESSION_TOUCH_THRESHOLD})
+              AS needs_touch
+       FROM sessions
+      WHERE token = $1 AND expires_at > now()`,
     [token],
   );
-  return r ? r.user_id : null;
+  if (!r) return null;
+  if (r.needs_touch) {
+    await exec(
+      `UPDATE sessions
+          SET last_seen_at = now(),
+              expires_at = now() + ${BROWSER_SESSION_TTL}
+        WHERE token = $1`,
+      [token],
+    );
+  }
+  return r.user_id;
 }
 
 export async function deleteSession(token: string): Promise<void> {

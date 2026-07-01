@@ -17,14 +17,17 @@ import { upsertUser } from '../repo/users.ts';
  * Verify GitHub's HMAC-SHA256 webhook signature. GitHub sends the secret-key
  * HMAC of the raw body as `X-Hub-Signature-256: sha256=<hex>`.
  *
- * Returns true if the secret is unset (dev) or the signature matches.
+ * Returns true if the secret is unset (dev only) or the signature matches.
+ * In production a missing secret rejects every payload — an unsigned webhook
+ * endpoint lets anyone who can guess a repo slug create users, branches, and
+ * frames on that board.
  */
 function verifyGithubSignature(
   req: FastifyRequest,
   rawBody: string,
   secret: string | undefined,
 ): boolean {
-  if (!secret) return true; // dev mode, no secret configured
+  if (!secret) return process.env.NODE_ENV !== 'production';
   const header = req.headers['x-hub-signature-256'];
   if (!header || Array.isArray(header)) return false;
   const expected =

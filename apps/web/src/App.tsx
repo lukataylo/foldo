@@ -120,7 +120,6 @@ export default function App() {
   const comments_ = useBoardSelector((s) => s.comments);
   const branches_ = useBoardSelector((s) => s.branches);
   const users_ = useBoardSelector((s) => s.users);
-  const presence_ = useBoardSelector((s) => s.presence);
   const dispatches_ = useBoardSelector((s) => s.dispatches);
   const meUserId = useBoardSelector((s) => s.meUserId);
   const hydrated = useBoardSelector((s) => s.hydrated);
@@ -134,7 +133,6 @@ export default function App() {
     comments: comments_,
     branches: branches_,
     users: users_,
-    presence: presence_,
     dispatches: dispatches_,
     meUserId,
     hydrated,
@@ -477,10 +475,18 @@ export default function App() {
     };
   }, [viewport.x, viewport.y, viewport.zoom, wsRef]);
 
-  // Follow-me: react to the followed user's viewport updates
-  const followedViewport = followingUserId
-    ? (snap.presence.get(followingUserId)?.viewport ?? null)
-    : null;
+  // Follow-me: react to the followed user's viewport updates. This is the
+  // ONLY presence read at the App root — subscribing to the whole presence
+  // Map here re-rendered the entire App tree (TopBar, Canvas, both rails)
+  // on every remote cursor tick, up to ~30Hz per remote user. The viewport
+  // object is reference-stable across cursor moves (presence.cursor spreads
+  // the user but keeps `viewport` untouched), so this selector only fires
+  // on actual presence.viewport messages for the followed user.
+  const followedViewport = useBoardSelector((s) =>
+    followingUserId
+      ? (s.presence.get(followingUserId)?.viewport ?? null)
+      : null,
+  );
   useEffect(() => {
     if (!followingUserId || !followedViewport) return;
     const v = followedViewport;
@@ -759,6 +765,7 @@ export default function App() {
         <CommentPopover
           comment={popoverComment}
           screenPosition={popoverScreenPos}
+          frameKind={frames_.get(popoverComment.frameId)?.kind}
           composing={commentPopover.composing}
           onUpdateText={async (text) => {
             const previous = popoverComment;

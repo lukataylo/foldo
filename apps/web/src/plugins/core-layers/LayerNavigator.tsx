@@ -373,14 +373,14 @@ export function LayerNavigator(): JSX.Element {
       setCanvasSelectedFrameId(readSelectedFrameIdFromUrl());
     };
     window.addEventListener('popstate', sync);
-    // pushState doesn't dispatch popstate; the canvas's navigate() uses
-    // pushState. A short interval is the lowest-risk way to keep this in
-    // sync without monkey-patching history globally. 200ms is below the
-    // perceptual threshold for "selection moved".
-    const t = window.setInterval(sync, 200);
+    // pushState doesn't dispatch popstate, but the router's navigate()
+    // dispatches `foldo:routechange` after every history write — listen for
+    // that instead of the old 200ms URL-polling interval (which regex-parsed
+    // location.pathname 5×/sec for the lifetime of the panel).
+    window.addEventListener('foldo:routechange', sync as EventListener);
     return () => {
       window.removeEventListener('popstate', sync);
-      window.clearInterval(t);
+      window.removeEventListener('foldo:routechange', sync as EventListener);
     };
   }, []);
 
@@ -635,8 +635,13 @@ export function LayerNavigator(): JSX.Element {
     [flagRowError],
   );
 
-  const onDelete = useCallback(async (): Promise<void> => {
-    const ids = effectiveSelection;
+  // `idsOverride` lets callers scope the delete explicitly. The context menu
+  // needs it: it sets the selection to the right-clicked row and deletes in
+  // the same tick, but this callback still closes over the PREVIOUS render's
+  // effectiveSelection — so a previously-selected frame A would be deleted
+  // along with right-clicked frame B.
+  const onDelete = useCallback(async (idsOverride?: string[]): Promise<void> => {
+    const ids = idsOverride ?? effectiveSelection;
     if (ids.length === 0) {
       notify('Pick a frame in the tree first, then delete.');
       return;
@@ -1224,7 +1229,7 @@ export function LayerNavigator(): JSX.Element {
             if (!f) return;
             setFocusedFrameId(id);
             setSelectedFrameIds(new Set([id]));
-            void onDelete();
+            void onDelete([id]);
           }}
           onCopyLink={(id) => void onCopyFrameLink(id)}
           onClose={closeContextMenu}

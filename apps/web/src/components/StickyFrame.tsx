@@ -32,14 +32,32 @@ export function StickyFrame({ frame, branch, zoom = 1 }: Props) {
 
   const flush = useCallback(
     (next: string) => {
-      const nextContent: StickyFrameContent = { ...content, body: next };
-      boardStore.upsertFrame({ ...frame, content: nextContent });
+      // Build from the live store entry, not the captured prop — the frame
+      // may have moved (drag or a WS frame.moved) in the 600ms since the
+      // keystroke armed the debounce, and spreading the stale prop would
+      // write the old position back into the store.
+      const current = boardStore.getSnapshot().frames.get(frame.id) ?? frame;
+      const prevContent = current.content as StickyFrameContent;
+      if ((prevContent.body ?? '') === next) return;
+      const nextContent: StickyFrameContent = { ...prevContent, body: next };
+      boardStore.upsertFrame({ ...current, content: nextContent });
       apiUpdateFrame(frame.id, { content: nextContent }).catch((err) => {
         // eslint-disable-next-line no-console
         console.warn('[foldo] sticky update failed', err);
+        // Roll back the optimistic write — but only if it's still what's
+        // showing, so a newer successful save or WS update isn't clobbered.
+        const live = boardStore.getSnapshot().frames.get(frame.id);
+        if (live && (live.content as StickyFrameContent).body === next) {
+          boardStore.upsertFrame({ ...live, content: prevContent });
+          if (!focusedRef.current) setBody(prevContent.body ?? '');
+        }
+        const toast = (
+          window as unknown as { __foldoToast?: (m: string) => void }
+        ).__foldoToast;
+        toast?.('Failed to save sticky note');
       });
     },
-    [frame, content],
+    [frame],
   );
 
   return (

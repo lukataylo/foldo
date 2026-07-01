@@ -124,6 +124,33 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     [],
   );
 
+  // Relative zoom, computed against the LIVE zoom inside the functional
+  // updater. The wheel handler used to derive the next zoom from the render
+  // closure's viewport.zoom — several wheel events landing before the next
+  // React commit all zoomed from the same stale base, quantizing pinch-zoom
+  // velocity to render cadence.
+  const zoomByAtAnchor = useCallback(
+    (factor: number, anchor?: { x: number; y: number }) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) {
+        setViewport((v) => ({ ...v, zoom: clamp(v.zoom * factor, 0.1, 3) }));
+        return;
+      }
+      const cx = anchor ? anchor.x - rect.left : rect.width / 2;
+      const cy = anchor ? anchor.y - rect.top : rect.height / 2;
+      setViewport((v) => {
+        const z = clamp(v.zoom * factor, 0.1, 3);
+        const ratio = z / v.zoom;
+        return {
+          zoom: z,
+          x: cx - (cx - v.x) * ratio,
+          y: cy - (cy - v.y) * ratio,
+        };
+      });
+    },
+    [],
+  );
+
   const zoomToFit = useCallback(() => {
     if (!contentBounds) return;
     const rect = containerRef.current?.getBoundingClientRect();
@@ -198,7 +225,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         // wherever the cursor happens to be.
         e.preventDefault();
         const factor = Math.exp(-e.deltaY * 0.01);
-        setZoomAtAnchor(viewport.zoom * factor, { x: e.clientX, y: e.clientY });
+        zoomByAtAnchor(factor, { x: e.clientX, y: e.clientY });
         return;
       }
       // Plain wheel = pan, but only when the cursor is actually over the
@@ -225,9 +252,12 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         }));
       }
     };
+    // Registered once — re-adding a `{ passive: false }` window listener on
+    // every zoom change forces the browser to treat all wheel events as
+    // blocking during churn.
     window.addEventListener('wheel', onWheel, { passive: false });
     return () => window.removeEventListener('wheel', onWheel);
-  }, [viewport.zoom, setZoomAtAnchor]);
+  }, [zoomByAtAnchor]);
 
   // Pan dragging
   const handMode = tool === 'hand' || spaceDown;
@@ -453,8 +483,11 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       onPointerCancel={onPointerUp}
       onPointerLeave={onPointerUp}
     >
+      {/* Testid must stay distinct from FrameLayer's foldo-canvas-frames
+          span — duplicating it makes every strict-mode getByTestId lookup
+          in e2e throw on the 2-element match. */}
       <div
-        data-testid="foldo-canvas-frames"
+        data-testid="foldo-canvas-transform"
         className="no-select absolute left-0 top-0 origin-top-left"
         style={{
           transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,

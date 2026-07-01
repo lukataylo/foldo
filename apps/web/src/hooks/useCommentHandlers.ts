@@ -392,9 +392,13 @@ export function useCommentHandlers({
       } catch (e) {
         // eslint-disable-next-line no-console
         console.warn('[foldo] reply failed', e);
+        pushToast('Failed to post reply');
+        // Rethrow so the popover keeps the draft text instead of clearing
+        // the textarea as if the reply had landed.
+        throw e;
       }
     },
-    [offline, demoUserId],
+    [offline, demoUserId, pushToast],
   );
 
   const onResolveComment = useCallback(
@@ -412,9 +416,10 @@ export function useCommentHandlers({
       } catch (e) {
         // eslint-disable-next-line no-console
         console.warn('[foldo] resolve failed', e);
+        pushToast(next ? 'Failed to resolve comment' : 'Failed to unresolve comment');
       }
     },
-    [offline],
+    [offline, pushToast],
   );
 
   const onDeleteComment = useCallback(

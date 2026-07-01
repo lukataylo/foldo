@@ -42,14 +42,17 @@ export async function tryHeadlessCapture(
       };
     };
     const browser = await mod.chromium.launch({ headless: true });
-    const ctx = await browser.newContext({ viewport: input.viewport });
-    const page = await ctx.newPage();
-    await page.goto(input.url, { waitUntil: 'networkidle' });
-    const buf = await page.screenshot();
-    await page.close();
-    await ctx.close();
-    await browser.close();
-    return { screenshotBase64: buf.toString('base64') };
+    try {
+      const ctx = await browser.newContext({ viewport: input.viewport });
+      const page = await ctx.newPage();
+      await page.goto(input.url, { waitUntil: 'networkidle' });
+      const buf = await page.screenshot();
+      return { screenshotBase64: buf.toString('base64') };
+    } finally {
+      // Close on every path — a failed goto (dev server down) used to
+      // orphan a headless Chromium process tree per capture attempt.
+      await browser.close().catch(() => undefined);
+    }
   } catch {
     return null;
   }

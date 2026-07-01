@@ -17,6 +17,35 @@ import { isMcpConnected } from './mcp.ts';
 
 const CURSOR_MIN_INTERVAL_MS = 33; // ~30Hz
 
+/**
+ * Server-initiated liveness probe. Without it a half-open socket (laptop
+ * sleep, NAT drop) is never reaped: sends don't throw, presence shows the
+ * user online, and broadcasts buffer unboundedly into the dead connection
+ * until TCP gives up (minutes to never).
+ */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+export function startHeartbeat(socket: WebSocket): void {
+  let alive = true;
+  socket.on('pong', () => {
+    alive = true;
+  });
+  const timer = setInterval(() => {
+    if (!alive) {
+      socket.terminate();
+      return;
+    }
+    alive = false;
+    try {
+      socket.ping();
+    } catch {
+      socket.terminate();
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  timer.unref?.();
+  socket.on('close', () => clearInterval(timer));
+}
+
 const wsLog = jobLogger('ws-browser');
 
 let nextConnId = 1;
@@ -28,6 +57,8 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
     // a Promise (RedisHub does, in-memory Hub doesn't) are wrapped in
     // `Promise.resolve(...).then(...)` so both shapes work without us
     // having to know which backend won at boot.
+    startHeartbeat(socket);
+
     const url = new URL(req.url, `http://${req.headers.host}`);
     const boardId = url.searchParams.get('boardId');
     const userId = url.searchParams.get('userId');

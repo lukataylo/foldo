@@ -8,7 +8,7 @@
 // the store directly: takes `frames` as an input so it benefits from the
 // granular useBoardSelector that produced it upstream.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Frame } from '@foldo/protocol';
 import type { ViewportState } from '../components/Canvas';
 
@@ -60,7 +60,13 @@ export function useFrameViewport(
   }, [frames]);
 
   /** Near-viewport set: frames within ~1.5× the viewport on each side. */
-  const inViewportSet = useMemo(() => {
+  // The memo below recomputes on every viewport pixel, but membership only
+  // changes when a frame crosses the (padded) boundary. Return the previous
+  // Set instance when membership is unchanged so memoized consumers
+  // (FrameLayer, Connectors) don't see a fresh identity per pan/zoom event
+  // and rebuild their whole render on every pointermove.
+  const prevSetRef = useRef<Set<string> | null>(null);
+  const rawInViewportSet = useMemo(() => {
     const w = containerSize.width;
     const h = containerSize.height;
     const padX = w * 1.5;
@@ -85,6 +91,22 @@ export function useFrameViewport(
     }
     return set;
   }, [frames, viewport, containerSize.width, containerSize.height]);
+
+  const inViewportSet = useMemo(() => {
+    const prev = prevSetRef.current;
+    if (prev && prev.size === rawInViewportSet.size) {
+      let same = true;
+      for (const id of rawInViewportSet) {
+        if (!prev.has(id)) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return prev;
+    }
+    prevSetRef.current = rawInViewportSet;
+    return rawInViewportSet;
+  }, [rawInViewportSet]);
 
   return { bounds, inViewportSet, containerSize };
 }

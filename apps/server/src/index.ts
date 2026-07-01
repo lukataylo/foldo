@@ -149,6 +149,11 @@ async function main(): Promise<void> {
       'FOLDO_EXTENSION_ID not set; allowing any chrome-extension:// origin (dev only). Set it before deploying to production.',
     );
   }
+  if (isProd && !(process.env.FOLDO_GITHUB_WEBHOOK_SECRET ?? '').trim()) {
+    app.log.warn(
+      'FOLDO_GITHUB_WEBHOOK_SECRET is not set in production — GitHub webhook deliveries will be rejected as unsigned. Set it to the GitHub App webhook secret.',
+    );
+  }
 
   await app.register(cors, {
     origin: (origin, cb) => {

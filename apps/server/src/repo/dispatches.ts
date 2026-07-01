@@ -93,25 +93,36 @@ export async function insertDispatch(d: DispatchInsert): Promise<Dispatch> {
   return (await getDispatchById(d.id))!;
 }
 
+// All four mutators below are single atomic UPDATEs. The previous
+// read-modify-write shape (getDispatchById → mutate events array in JS →
+// UPDATE) lost concurrent `dispatch.progress` events — two interleaved
+// handlers each read the same events_json and one write clobbered the
+// other — and let a late progress message resurrect a terminal dispatch.
+// Same pattern as the atomic replies_json append in repo/comments.ts.
+
+const TERMINAL_GUARD = `status NOT IN ('done', 'error', 'cancelled')`;
+
 export async function setDispatchStatus(
   id: string,
   status: DispatchStatus,
   event?: DispatchEvent,
 ): Promise<Dispatch | null> {
-  const existing = await getDispatchById(id);
-  if (!existing) return null;
-  const events = event ? [...existing.events, event] : existing.events;
-  const now = nowIso();
-  const startedAt =
-    status === 'running' && !existing.startedAt ? now : existing.startedAt ?? null;
-  const finishedAt =
-    status === 'done' || status === 'error' || status === 'cancelled' ? now : null;
-  await exec(
-    `UPDATE dispatches SET status = $1, events_json = $2, started_at = COALESCE($3, started_at),
-       finished_at = COALESCE($4, finished_at)
-     WHERE id = $5`,
-    [status, JSON.stringify(events), startedAt, finishedAt, id],
+  const rows = await query<DispatchRow>(
+    `UPDATE dispatches
+        SET status = $2,
+            events_json = COALESCE(events_json, '[]'::jsonb) || $3::jsonb,
+            started_at = CASE WHEN $2 = 'running'
+                              THEN COALESCE(started_at, $4) ELSE started_at END,
+            finished_at = CASE WHEN $2 IN ('done', 'error', 'cancelled')
+                               THEN COALESCE(finished_at, $4) ELSE finished_at END
+      WHERE id = $1 AND ${TERMINAL_GUARD}
+      RETURNING *`,
+    [id, status, JSON.stringify(event ? [event] : []), nowIso()],
   );
+  const row = rows[0];
+  if (row) return rowToDispatch(row);
+  // Already terminal: return current state unchanged so callers can still
+  // broadcast the real status; null only when the dispatch doesn't exist.
   return getDispatchById(id);
 }
 
@@ -119,14 +130,15 @@ export async function addDispatchEvent(
   id: string,
   event: DispatchEvent,
 ): Promise<Dispatch | null> {
-  const existing = await getDispatchById(id);
-  if (!existing) return null;
-  const events = [...existing.events, event];
-  await exec(`UPDATE dispatches SET events_json = $1 WHERE id = $2`, [
-    JSON.stringify(events),
-    id,
-  ]);
-  return getDispatchById(id);
+  const rows = await query<DispatchRow>(
+    `UPDATE dispatches
+        SET events_json = COALESCE(events_json, '[]'::jsonb) || $2::jsonb
+      WHERE id = $1
+      RETURNING *`,
+    [id, JSON.stringify([event])],
+  );
+  const row = rows[0];
+  return row ? rowToDispatch(row) : null;
 }
 
 export async function completeDispatch(
@@ -135,28 +147,61 @@ export async function completeDispatch(
   resultCommitSha: string,
   event?: DispatchEvent,
 ): Promise<Dispatch | null> {
-  const existing = await getDispatchById(id);
-  if (!existing) return null;
-  const events = event ? [...existing.events, event] : existing.events;
-  await exec(
-    `UPDATE dispatches SET status = 'done', events_json = $1, result_frame_id = $2,
-       result_commit_sha = $3, finished_at = $4 WHERE id = $5`,
-    [JSON.stringify(events), resultFrameId, resultCommitSha, nowIso(), id],
+  const rows = await query<DispatchRow>(
+    `UPDATE dispatches
+        SET status = 'done',
+            events_json = COALESCE(events_json, '[]'::jsonb) || $2::jsonb,
+            result_frame_id = $3,
+            result_commit_sha = $4,
+            finished_at = $5
+      WHERE id = $1 AND ${TERMINAL_GUARD}
+      RETURNING *`,
+    [id, JSON.stringify(event ? [event] : []), resultFrameId, resultCommitSha, nowIso()],
   );
-  return getDispatchById(id);
+  const row = rows[0];
+  return row ? rowToDispatch(row) : null;
+}
+
+/**
+ * Watchdog: flip every non-terminal dispatch created before `olderThanIso`
+ * to `error`. WS delivery of dispatch.completed/failed is not guaranteed
+ * (agent crash, socket flap past the client's queue) — without a sweep those
+ * rows sit in "running" forever and the board shows a stuck spinner.
+ * Returns the affected dispatches so the caller can broadcast.
+ */
+export async function sweepStaleDispatches(
+  olderThanIso: string,
+): Promise<Dispatch[]> {
+  const event: DispatchEvent = {
+    ts: nowIso(),
+    level: 'error',
+    message: 'Dispatch timed out waiting for the agent.',
+  };
+  const rows = await query<DispatchRow>(
+    `UPDATE dispatches
+        SET status = 'error',
+            events_json = COALESCE(events_json, '[]'::jsonb) || $2::jsonb,
+            error_message = 'dispatch timed out',
+            finished_at = $3
+      WHERE ${TERMINAL_GUARD} AND created_at < $1
+      RETURNING *`,
+    [olderThanIso, JSON.stringify([event]), nowIso()],
+  );
+  return rows.map(rowToDispatch);
 }
 
 export async function failDispatch(id: string, message: string): Promise<Dispatch | null> {
-  const existing = await getDispatchById(id);
-  if (!existing) return null;
-  const events: DispatchEvent[] = [
-    ...existing.events,
-    { ts: nowIso(), level: 'error', message },
-  ];
-  await exec(
-    `UPDATE dispatches SET status = 'error', events_json = $1, error_message = $2, finished_at = $3
-     WHERE id = $4`,
-    [JSON.stringify(events), message, nowIso(), id],
+  const event: DispatchEvent = { ts: nowIso(), level: 'error', message };
+  const rows = await query<DispatchRow>(
+    `UPDATE dispatches
+        SET status = 'error',
+            events_json = COALESCE(events_json, '[]'::jsonb) || $2::jsonb,
+            error_message = $3,
+            finished_at = $4
+      WHERE id = $1 AND ${TERMINAL_GUARD}
+      RETURNING *`,
+    [id, JSON.stringify([event]), message, nowIso()],
   );
-  return getDispatchById(id);
+  const row = rows[0];
+  return row ? rowToDispatch(row) : null;
 }

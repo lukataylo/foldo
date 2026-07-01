@@ -1,5 +1,7 @@
+import { createReadStream } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
+import type { Readable } from 'node:stream';
 import { S3Storage } from './s3.ts';
 
 /**
@@ -33,6 +35,14 @@ export interface Storage {
    * recordings route can 302-redirect and let S3 handle range requests.
    */
   signedUrl?(key: string): Promise<string | null>;
+  /** Object metadata without reading the body, or null if missing. */
+  head?(key: string): Promise<StoredObject | null>;
+  /**
+   * Stream the object's bytes (optionally a byte range, inclusive). Backends
+   * that can stream should implement this — `get()` buffers the whole object,
+   * which for a 200 MB recording means one full copy in RAM per range request.
+   */
+  getStream?(key: string, range?: { start: number; end: number }): Readable;
 }
 
 function contentTypeForKey(key: string): string {
@@ -86,6 +96,22 @@ class LocalStorage implements Storage {
     } catch {
       return false;
     }
+  }
+
+  async head(key: string): Promise<StoredObject | null> {
+    try {
+      const s = await stat(this.resolveKey(key));
+      return { key, size: s.size, contentType: contentTypeForKey(key) };
+    } catch {
+      return null;
+    }
+  }
+
+  getStream(key: string, range?: { start: number; end: number }): Readable {
+    return createReadStream(
+      this.resolveKey(key),
+      range ? { start: range.start, end: range.end } : undefined,
+    );
   }
 
   pathFor(key: string): string {

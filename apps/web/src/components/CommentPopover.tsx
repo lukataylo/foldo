@@ -19,6 +19,12 @@ interface Props {
   composing?: boolean;
   /** Persist the typed body. Called on blur / Cmd+Enter when `composing`. */
   onUpdateText?: (text: string) => Promise<void> | void;
+  /**
+   * Kind of the frame the comment sits on. Pin-only comments can become
+   * edits on app/markdown frames (useCommentHandlers synthesises a target
+   * from the pin) but not on sticky/arrow/image frames.
+   */
+  frameKind?: string;
 }
 
 export function CommentPopover({
@@ -32,6 +38,7 @@ export function CommentPopover({
   onDelete,
   composing = false,
   onUpdateText,
+  frameKind,
 }: Props) {
   const [replyText, setReplyText] = useState('');
   const [replyOpen, setReplyOpen] = useState(false);
@@ -65,6 +72,9 @@ export function CommentPopover({
       await onReply(text);
       setReplyText('');
       setReplyOpen(false);
+    } catch {
+      // Reply failed (handler already toasted) — keep the draft so the
+      // user can retry instead of silently losing their text.
     } finally {
       setSubmitting(false);
     }
@@ -259,11 +269,23 @@ export function CommentPopover({
             Delete
           </button>
         )}
-        {/* A+W1 features — disable when the comment has no element target
-            and no markdown anchor; the handler in useCommentHandlers also
-            short-circuits with a toast for keyboard / programmatic callers. */}
+        {/* Disable when the handler genuinely has nothing to dispatch from:
+            no element target, no markdown anchor, and no usable pin. A
+            pin-only comment IS dispatchable on app/markdown frames — the
+            handler synthesises a target from the pin — so the gate must
+            match, or the product's headline comment→edit loop dead-ends
+            on every drop-pin comment. */}
         {(() => {
-          const canMakeEdit = !!(comment.target?.elementLabel || comment.anchor);
+          const pinDispatchable =
+            !!comment.pin &&
+            (frameKind === undefined ||
+              frameKind === 'app' ||
+              frameKind === 'markdown');
+          const canMakeEdit = !!(
+            comment.target?.elementLabel ||
+            comment.anchor ||
+            pinDispatchable
+          );
           return (
             <button
               data-testid="foldo-comment-make-edit"

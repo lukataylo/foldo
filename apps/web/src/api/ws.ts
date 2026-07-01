@@ -89,8 +89,21 @@ export class FoldoWsClient {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     } else {
-      // queue non-cursor messages; drop high-rate cursor moves to avoid flooding
-      if (msg.type !== 'cursor.move') this.pendingSend.push(msg);
+      // Queue for the reconnect flush — but keep it sane across a long
+      // disconnect. Cursor moves are dropped outright; viewport/selection
+      // updates are ephemeral "latest wins" state, so replace any queued
+      // one instead of replaying every stale position in a burst (which
+      // yanks followers' cameras through each obsolete viewport).
+      if (msg.type === 'cursor.move') return;
+      if (msg.type === 'viewport.update' || msg.type === 'selection.update') {
+        const i = this.pendingSend.findIndex((m) => m.type === msg.type);
+        if (i >= 0) {
+          this.pendingSend[i] = msg;
+          return;
+        }
+      }
+      if (this.pendingSend.length >= 200) this.pendingSend.shift();
+      this.pendingSend.push(msg);
     }
   }
 
@@ -246,7 +259,10 @@ export class FoldoWsClient {
   }
 
   private scheduleReconnect() {
-    this.setStatus('reconnecting');
+    // Once we're in the offline regime, stay there between retries — flipping
+    // reconnecting ↔ offline every ~5s cycle re-rendered the app and made the
+    // connection dot flicker for as long as the server stayed down.
+    if (this.reconnectAttempt < 12) this.setStatus('reconnecting');
     const delay = Math.min(
       RECONNECT_MAX_MS,
       RECONNECT_BASE_MS * Math.pow(2, this.reconnectAttempt),

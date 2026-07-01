@@ -8,7 +8,11 @@ import type {
   McpServerMessage,
 } from '@foldo/protocol';
 import { resolveUserFromToken } from '../auth.ts';
+import { getBoardById } from '../repo/boards.ts';
+import { canEditBoard } from '../repo/members.ts';
+import { jobLogger } from '../log.ts';
 import { hub } from './hub.ts';
+import { startHeartbeat } from './browser.ts';
 import {
   addDispatchEvent,
   completeDispatch,
@@ -26,6 +30,8 @@ interface McpConn {
 }
 
 const mcpByBoard: Map<BoardId, McpConn> = new Map();
+
+const mcpLog = jobLogger('ws-mcp');
 
 export function isMcpConnected(boardId: BoardId): boolean {
   return mcpByBoard.has(boardId);
@@ -83,6 +89,10 @@ async function repositionResultFrame(
 
 export async function registerMcpWs(app: FastifyInstance): Promise<void> {
   app.get('/ws/mcp', { websocket: true }, async (socket, req) => {
+    // Reap half-open connections — a stale mcpByBoard entry makes
+    // isMcpConnected() lie and routes every dispatch into a dead socket.
+    startHeartbeat(socket);
+
     // The client sends `mcp.hello` immediately on open; on a fast (localhost)
     // link that frame can arrive *before* the awaited token resolution below
     // attaches the real message listener, silently dropping the handshake so
@@ -90,18 +100,32 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
     // everything synchronously from open and drain once we're ready.
     const earlyQueue: Buffer[] = [];
     let ready = false;
-    let handleMessage: ((raw: Buffer) => void) | null = null;
-    socket.on('message', (raw: Buffer) => {
-      if (ready && handleMessage) handleMessage(raw);
-      else earlyQueue.push(raw);
-    });
+    let handleMessage: ((raw: Buffer) => Promise<void>) | null = null;
+    // handleMessage is async; a rejection here must never escape as an
+    // unhandled promise rejection (which takes down the whole process).
+    const dispatchRaw = (raw: Buffer): void => {
+      if (ready && handleMessage) {
+        handleMessage(raw).catch((err) => {
+          mcpLog.error(
+            { err: err instanceof Error ? err.message : String(err) },
+            'mcp message handler failed',
+          );
+        });
+      } else {
+        earlyQueue.push(raw);
+      }
+    };
+    socket.on('message', dispatchRaw);
 
     const url = new URL(req.url, `http://${req.headers.host}`);
     const token = url.searchParams.get('token');
     const boardId = url.searchParams.get('boardId');
 
     const user = await resolveUserFromToken(token);
-    if (!user || !boardId) {
+    const board = boardId ? await getBoardById(boardId) : null;
+    const authorized =
+      user && board ? await canEditBoard(board.id, user.id) : false;
+    if (!user || !boardId || !board || !authorized) {
       try {
         socket.send(
           JSON.stringify({
@@ -133,8 +157,26 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           socket.close(1008, 'expected mcp.hello first');
           return;
         }
+        // The connection was authorized for the query-param board only; a
+        // hello naming a different board would let any token holder attach
+        // to (and inject frames into) an arbitrary board.
+        if (msg.boardId !== boardId) {
+          socket.close(1008, 'hello boardId does not match handshake');
+          return;
+        }
         helloReceived = true;
         registeredBoardId = msg.boardId;
+        // Displace (and actually close) any previous agent for this board —
+        // leaving it open means two agents both ack/complete dispatches while
+        // only the newest receives dispatch.execute.
+        const displaced = mcpByBoard.get(msg.boardId);
+        if (displaced && displaced.socket !== socket) {
+          try {
+            displaced.socket.close(1008, 'replaced by newer agent');
+          } catch {
+            // already dead
+          }
+        }
         mcpByBoard.set(msg.boardId, { socket, boardId: msg.boardId, agentName: msg.agentName });
         socket.send(
           JSON.stringify({
@@ -151,8 +193,16 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
         return;
       }
 
+      // Every post-hello message references a dispatch or frame; none of
+      // them may touch a board other than the one this socket registered.
+      const dispatchOnBoard = async (dispatchId: string) => {
+        const d = await getDispatchById(dispatchId);
+        return d && d.boardId === registeredBoardId ? d : null;
+      };
+
       switch (msg.type) {
         case 'dispatch.ack': {
+          if (!(await dispatchOnBoard(msg.dispatchId))) break;
           const d = await setDispatchStatus(msg.dispatchId, 'sending');
           if (d) {
             hub.broadcast(d.boardId, {
@@ -164,6 +214,7 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'dispatch.progress': {
+          if (!(await dispatchOnBoard(msg.dispatchId))) break;
           const before = await addDispatchEvent(msg.dispatchId, msg.event);
           if (!before) break;
           let d = before;
@@ -180,7 +231,11 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'dispatch.completed': {
-          const repositioned = await repositionResultFrame(msg.resultFrame, msg.dispatchId);
+          if (!(await dispatchOnBoard(msg.dispatchId))) break;
+          const repositioned = await repositionResultFrame(
+            { ...msg.resultFrame, boardId: registeredBoardId },
+            msg.dispatchId,
+          );
           await insertFrame(repositioned);
           const d = await completeDispatch(
             msg.dispatchId,
@@ -200,6 +255,7 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'dispatch.failed': {
+          if (!(await dispatchOnBoard(msg.dispatchId))) break;
           const d = await failDispatch(msg.dispatchId, msg.message);
           if (d) {
             hub.broadcast(d.boardId, {
@@ -212,6 +268,7 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'freeze.captured': {
+          if (msg.frame.boardId !== registeredBoardId) break;
           await insertFrame(msg.frame);
           hub.broadcast(msg.frame.boardId, { type: 'frame.added', frame: msg.frame });
           break;
@@ -246,7 +303,7 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
 
     // Auth resolved + listeners wired: process anything that arrived early.
     ready = true;
-    for (const raw of earlyQueue) handleMessage(raw);
+    for (const raw of earlyQueue) dispatchRaw(raw);
     earlyQueue.length = 0;
   });
 }

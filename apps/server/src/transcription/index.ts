@@ -1,5 +1,9 @@
 import type { RecordingMode, TranscriptCue } from '@foldo/protocol';
-import { getSessionById, updateSessionTranscript } from '../repo/testSessions.ts';
+import {
+  getSessionById,
+  getSessionRecordingKey,
+  updateSessionTranscript,
+} from '../repo/testSessions.ts';
 import { updateSessionFrame } from '../sessionFrames.ts';
 import { enqueueSynthesis } from '../ai/synthesis.ts';
 
@@ -99,8 +103,13 @@ async function runTranscription(sessionId: string): Promise<void> {
     const session = await getSessionById(sessionId);
     if (!session) return;
 
+    // The provider gets the *stored* key — reconstructing it from the old
+    // `recordings/${testId}/${sessionId}.webm` scheme broke silently when
+    // uploads moved to opaque keys.
+    const recordingKey = await getSessionRecordingKey(sessionId);
+
     // No recording (e.g. an upload that never landed) — nothing to transcribe.
-    if (!session.recordingUrl) {
+    if (!recordingKey) {
       await updateSessionTranscript(sessionId, [], 'skipped');
       await updateSessionFrame(sessionId);
       enqueueSynthesis(sessionId);
@@ -114,7 +123,6 @@ async function runTranscription(sessionId: string): Promise<void> {
     );
     await updateSessionFrame(sessionId);
 
-    const recordingKey = `recordings/${session.testId}/${session.id}.webm`;
     const result = await getTranscriber().transcribe(
       recordingKey,
       session.recordingMode,

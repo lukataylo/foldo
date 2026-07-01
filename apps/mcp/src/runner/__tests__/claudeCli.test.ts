@@ -78,9 +78,16 @@ function makeFakeChild(opts: FakeChildOpts): {
   return { spawn, stdinSink, killSpy };
 }
 
-function makeFakeGit(): {
+function makeFakeGit(opts: { currentBranch?: string } = {}): {
   factory: (cwd: string) => any;
-  calls: { apply: string[]; add: string[][]; commit: string[]; push: string[][]; revparse: string[][] };
+  calls: {
+    apply: string[];
+    add: string[][];
+    commit: string[];
+    push: string[][];
+    revparse: string[][];
+    checkout: (string | string[])[];
+  };
 } {
   const calls = {
     apply: [] as string[],
@@ -88,6 +95,7 @@ function makeFakeGit(): {
     commit: [] as string[],
     push: [] as string[][],
     revparse: [] as string[][],
+    checkout: [] as (string | string[])[],
   };
   const git = {
     applyPatch: async (patch: string) => {
@@ -101,7 +109,13 @@ function makeFakeGit(): {
     },
     revparse: async (args: string[]) => {
       calls.revparse.push(args);
+      if (args[0] === '--abbrev-ref') {
+        return `${opts.currentBranch ?? 'feat/test'}\n`;
+      }
       return 'abc1234567890abcdef0123456789abcdef012345\n';
+    },
+    checkout: async (what: string | string[]) => {
+      calls.checkout.push(what);
     },
     push: async (...args: string[]) => {
       calls.push.push(args);
@@ -209,6 +223,34 @@ describe('runClaudeCli', () => {
     expect(calls.commit[0]).toContain('[foldo dispatch disp-1]');
     expect(stdinSink.value).toContain('Dispatch id: disp-1');
     expect(progress.some((l) => l.includes('parsed unified diff'))).toBe(true);
+  });
+
+  it('checks out the target branch when the working tree is elsewhere', async () => {
+    const { spawn } = makeFakeChild({ stdout: SAMPLE_OUTPUT_FENCED });
+    const { factory, calls } = makeFakeGit({ currentBranch: 'main' });
+
+    await runClaudeCli(baseInput, {
+      spawn,
+      gitFactory: factory,
+      resolveClaudePath: () => '/usr/local/bin/claude',
+    });
+
+    // Checked out feat/test before applying anything.
+    expect(calls.checkout).toEqual(['feat/test']);
+    expect(calls.apply.length).toBe(1);
+  });
+
+  it('stays put when the working tree is already on the target branch', async () => {
+    const { spawn } = makeFakeChild({ stdout: SAMPLE_OUTPUT_FENCED });
+    const { factory, calls } = makeFakeGit({ currentBranch: 'feat/test' });
+
+    await runClaudeCli(baseInput, {
+      spawn,
+      gitFactory: factory,
+      resolveClaudePath: () => '/usr/local/bin/claude',
+    });
+
+    expect(calls.checkout).toEqual([]);
   });
 
   it('rejects when the binary is missing', async () => {

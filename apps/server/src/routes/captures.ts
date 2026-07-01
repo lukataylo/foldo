@@ -12,14 +12,20 @@ import { canEditBoard } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { newCommitSha, newId, nowIso } from '../util.ts';
 
-const CAPTURES_BRANCH_ID = 'captures';
+// Board-scoped, like the tests branch (`tests-${boardId}`). A single global
+// 'captures' id meant the first board to capture owned the branch row and
+// every later capture on any other board attached its frames to that
+// foreign branch — they never rendered, and `branch.added` never fired.
+function capturesBranchId(boardId: string): string {
+  return `captures-${boardId}`;
+}
 
 async function ensureCapturesBranch(boardId: string, userId: string): Promise<Branch> {
-  const existing = await getBranchById(CAPTURES_BRANCH_ID);
+  const existing = await getBranchById(capturesBranchId(boardId));
   if (existing) return existing;
   const now = nowIso();
   const branch: Branch = {
-    id: CAPTURES_BRANCH_ID,
+    id: capturesBranchId(boardId),
     boardId,
     name: 'captures',
     authoredBy: 'human',
@@ -57,7 +63,7 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
 
     const existing = await listFramesForBoard(body.boardId);
     const captureSiblings = existing.filter(
-      (f) => f.branchId === CAPTURES_BRANCH_ID,
+      (f) => f.branchId === capturesBranchId(body.boardId),
     );
     const rightmost = captureSiblings.reduce(
       (m, f) => Math.max(m, f.position.x + f.size.width),
@@ -84,7 +90,7 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
           id: newId('f'),
           boardId: body.boardId,
           kind: 'image',
-          branchId: CAPTURES_BRANCH_ID,
+          branchId: capturesBranchId(body.boardId),
           commitSha: newCommitSha(),
           commitMessage: `captured: ${body.title}`,
           age: 'just now',
@@ -104,7 +110,7 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
           id: newId('f'),
           boardId: body.boardId,
           kind: 'app',
-          branchId: CAPTURES_BRANCH_ID,
+          branchId: capturesBranchId(body.boardId),
           commitSha: newCommitSha(),
           commitMessage: `captured: ${body.title}`,
           age: 'just now',

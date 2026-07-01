@@ -38,6 +38,26 @@ export async function listBoards(opts: ListBoardsOptions = {}): Promise<Board[]>
   return rows.map(rowToBoard);
 }
 
+/**
+ * Boards the given user is a member of. `GET /api/boards` used to fetch
+ * every board in the database and filter in JS — O(total boards in the
+ * system) per request.
+ */
+export async function listBoardsForUser(
+  userId: string,
+  opts: ListBoardsOptions = {},
+): Promise<Board[]> {
+  const archivedFilter = opts.includeArchived ? '' : 'AND b.archived_at IS NULL';
+  const rows = await query<BoardRow>(
+    `SELECT b.* FROM boards b
+       JOIN board_members m ON m.board_id = b.id
+      WHERE m.user_id = $1 ${archivedFilter}
+      ORDER BY b.created_at`,
+    [userId],
+  );
+  return rows.map(rowToBoard);
+}
+
 export async function getBoardById(id: string): Promise<Board | null> {
   const r = await queryOne<BoardRow>(`SELECT * FROM boards WHERE id = $1`, [id]);
   return r ? rowToBoard(r) : null;

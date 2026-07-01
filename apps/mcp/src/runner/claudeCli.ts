@@ -411,6 +411,31 @@ export async function runClaudeCli(
 
   const git = gitFactory(cwd);
 
+  // Make sure the working tree is on the branch the dispatch targets.
+  // Previously the diff was applied and committed to whatever happened to
+  // be checked out (often main) while the push named the dispatch branch —
+  // the result frame's commitSha then pointed at a commit that isn't on
+  // the dispatch's branch at all.
+  const gitBranch = gitBranchNameFor(input.branchId);
+  try {
+    const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+    if (current !== gitBranch) {
+      emit(`checking out ${gitBranch} (working tree was on ${current})`);
+      try {
+        await git.checkout(gitBranch);
+      } catch {
+        // Branch doesn't exist locally yet — create it from the dispatch's
+        // base commit so the edit lands on the intended history.
+        await git.checkout(['-b', gitBranch, input.baseCommitSha]);
+      }
+    }
+  } catch (err) {
+    throw new ClaudeCliError(
+      `failed to check out target branch ${gitBranch}: ${(err as Error).message}`,
+      'apply_failed',
+    );
+  }
+
   try {
     await git.applyPatch(diff, ['--whitespace=nowarn']);
   } catch (err) {
@@ -449,8 +474,10 @@ export async function runClaudeCli(
   // no remote, so we tolerate the push failing.
   if (process.env.FOLDO_MCP_SKIP_PUSH !== '1') {
     try {
-      await git.push('origin', input.branchId);
-      emit(`pushed to origin/${input.branchId}`);
+      // Push the derived git branch name — a raw board-scoped Foldo id
+      // (`boardId:name`) is parsed by git as a SRC:DST refspec.
+      await git.push('origin', gitBranch);
+      emit(`pushed to origin/${gitBranch}`);
     } catch (err) {
       // Push failures are non-fatal — the commit exists locally. Surface
       // a warning to the log but don't fail the dispatch.
@@ -464,6 +491,15 @@ export async function runClaudeCli(
     commitMessage,
     diff,
   };
+}
+
+/**
+ * Foldo board-scoped branch ids are `${boardId}:${name}`; the git branch is
+ * the name part. Legacy/seeded branches use the bare name as their id.
+ */
+export function gitBranchNameFor(branchId: string): string {
+  const i = branchId.indexOf(':');
+  return i >= 0 ? branchId.slice(i + 1) : branchId;
 }
 
 export function buildCommitMessage(input: ClaudeCliRunInput): string {

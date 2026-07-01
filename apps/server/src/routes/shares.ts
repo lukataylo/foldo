@@ -4,7 +4,7 @@ import { getBoardById } from '../repo/boards.ts';
 import { listBranchesForBoard } from '../repo/branches.ts';
 import { listFramesForBoard } from '../repo/frames.ts';
 import { listCommentsForBoard } from '../repo/comments.ts';
-import { listUsers } from '../repo/users.ts';
+import { listUsersForBoard } from '../repo/users.ts';
 import { canEditBoard, isMember } from '../repo/members.ts';
 import {
   createShare,
@@ -124,12 +124,19 @@ export async function registerShareRoutes(app: FastifyInstance): Promise<void> {
           .code(404)
           .send({ error: 'Board not found', code: 'NOT_FOUND' });
       }
-      const [branches, frames, comments, users] = await Promise.all([
+      const [branches, frames, comments, boardUsers] = await Promise.all([
         listBranchesForBoard(board.id),
         listFramesForBoard(board.id),
         listCommentsForBoard(board.id),
-        listUsers(),
+        listUsersForBoard(board.id),
       ]);
+      // This endpoint is unauthenticated — anyone with the link sees it.
+      // Never ship email addresses (or verification state) to share viewers.
+      const users = boardUsers.map((u) => ({
+        ...u,
+        email: undefined,
+        emailVerifiedAt: undefined,
+      }));
       // A+ W1: 60s private cache. Public share snapshots don't change often;
       // letting the viewer's browser short-circuit refreshes avoids hammering
       // the listFrames/comments pipeline on tab-switch behaviour. `private`

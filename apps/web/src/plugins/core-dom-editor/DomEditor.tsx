@@ -316,29 +316,31 @@ export function DomEditor(): JSX.Element {
       const cssProp = controlKeyToCss(key);
       const validation = validateCssValue(cssProp, value);
 
-      setControls((prev) => {
-        const before = prev[key];
-        const next = { ...prev, [key]: value };
-        if (validation.ok && picked && before !== value) {
-          // Push an undo entry per selector — Undo undoes the most recent
-          // selector's change first (LIFO).
-          const entries: UndoEntry[] = picked.selectors.map((selector) => {
-            const computedBefore =
-              picked.computedBySelector[selector]?.[cssProp] ?? before;
-            return {
-              selector,
-              cssProp,
-              before: computedBefore,
-              after: value.trim(),
-            };
-          });
-          setUndoStack((prevStack) => [...prevStack, ...entries]);
-          applyStyles(next);
-        }
-        return next;
-      });
+      // Side effects (undo push, iframe broadcast) live OUTSIDE the
+      // setControls updater — React StrictMode double-invokes updaters in
+      // dev, which pushed duplicate undo entries and broadcast every edit
+      // twice.
+      const before = controls[key];
+      const next = { ...controls, [key]: value };
+      setControls(next);
+      if (validation.ok && picked && before !== value) {
+        // Push an undo entry per selector — Undo undoes the most recent
+        // selector's change first (LIFO).
+        const entries: UndoEntry[] = picked.selectors.map((selector) => {
+          const computedBefore =
+            picked.computedBySelector[selector]?.[cssProp] ?? before;
+          return {
+            selector,
+            cssProp,
+            before: computedBefore,
+            after: value.trim(),
+          };
+        });
+        setUndoStack((prevStack) => [...prevStack, ...entries]);
+        applyStyles(next);
+      }
     },
-    [applyStyles, picked],
+    [applyStyles, picked, controls],
   );
 
   const undoOne = useCallback((): void => {

@@ -174,9 +174,19 @@ export class PluginRegistry {
     );
     if (existing >= 0) {
       this.plugins[existing] = plugin;
+      // If we're already activated (HMR re-boot), the displaced instance's
+      // teardown must run (it holds live ctx.subscribe unsubscribes) and
+      // the replacement must actually be activated — activate() early-
+      // returns once the registry is live, so without this the new
+      // instance's activation logic would silently never fire.
+      if (this.activated && this.ctx) {
+        this.runTeardown(plugin.manifest.id);
+        this.activateOne(plugin, this.ctx);
+      }
       return;
     }
     this.plugins.push(plugin);
+    if (this.activated && this.ctx) this.activateOne(plugin, this.ctx);
   }
 
   installAll(plugins: Plugin[]): void {
@@ -187,28 +197,43 @@ export class PluginRegistry {
   activate(ctx: PluginContext): void {
     if (this.activated) return;
     this.activated = true;
-    for (const p of this.plugins) {
-      try {
-        const teardown = p.activate?.(ctx);
-        if (teardown) this.teardowns.push(teardown);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(`[plugin:${p.manifest.id}] activate threw`, err);
-      }
+    this.ctx = ctx;
+    for (const p of this.plugins) this.activateOne(p, ctx);
+  }
+
+  private activateOne(plugin: Plugin, ctx: PluginContext): void {
+    try {
+      const teardown = plugin.activate?.(ctx);
+      if (teardown) this.teardowns.set(plugin.manifest.id, teardown);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[plugin:${plugin.manifest.id}] activate threw`, err);
+    }
+  }
+
+  private runTeardown(id: PluginId): void {
+    const t = this.teardowns.get(id);
+    if (!t) return;
+    this.teardowns.delete(id);
+    try {
+      t();
+    } catch {
+      /* ignore */
     }
   }
 
   /** Run any teardowns. Used by tests. */
   deactivate(): void {
-    for (const t of this.teardowns) {
+    for (const t of this.teardowns.values()) {
       try {
         t();
       } catch {
         /* ignore */
       }
     }
-    this.teardowns.length = 0;
+    this.teardowns.clear();
     this.activated = false;
+    this.ctx = null;
   }
 
   /** Every installed plugin (frozen view). */
@@ -232,7 +257,8 @@ export class PluginRegistry {
   }
 
   private activated = false;
-  private readonly teardowns: Array<() => void> = [];
+  private ctx: PluginContext | null = null;
+  private readonly teardowns = new Map<PluginId, () => void>();
 }
 
 /** Default registry. Apps/web installs the core plugins into this at boot. */

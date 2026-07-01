@@ -22,6 +22,7 @@ import type {
 } from '@foldo/protocol';
 import { boardStore } from '../state/useBoardStore';
 import { applyServerMessage } from '../state/reducers';
+import { registry } from '../plugins/registry';
 import { listBoards, getBoard } from '../api/boards';
 import { listDispatches } from '../api/dispatches';
 import { FoldoWsClient, type WsStatus } from '../api/ws';
@@ -117,7 +118,30 @@ export function useCanvasBoot({
           },
         });
         wsRef.current = ws;
-        ws.subscribeAll((msg: ServerMessage) => applyServerMessage(msg));
+        // Plugin `wsHandler` surfaces get every ServerMessage of their
+        // registered type, AFTER the reducer has applied it to the store
+        // (so a handler reading the store sees post-message state). A
+        // throwing plugin must never break the reducer pipeline. The
+        // registry is frozen after boot, so index the handlers once.
+        const wsHandlers = new Map<string, Array<(msg: unknown) => void>>();
+        for (const s of registry.surfaces('wsHandler')) {
+          const list = wsHandlers.get(s.spec.type) ?? [];
+          list.push(s.spec.handler);
+          wsHandlers.set(s.spec.type, list);
+        }
+        ws.subscribeAll((msg: ServerMessage) => {
+          applyServerMessage(msg);
+          const handlers = wsHandlers.get(msg.type);
+          if (!handlers) return;
+          for (const h of handlers) {
+            try {
+              h(msg);
+            } catch (err) {
+              // eslint-disable-next-line no-console
+              console.error('[plugin wsHandler] threw', err);
+            }
+          }
+        });
         ws.connect();
 
         // Dev-only hooks for e2e specs: let Playwright force-close the WS and

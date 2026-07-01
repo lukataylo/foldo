@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Branch, Frame } from '@foldo/protocol';
 import { boardStore } from '../state/BoardStore';
 import { deleteFrame as apiDeleteFrame } from '../api/frames';
+import { usePluginSurfaces } from '../plugins/registry';
 import { useFrameDrag } from './useFrameDrag';
 
 interface Props {
@@ -21,6 +22,14 @@ export function FrameMeta({ frame, branch, zoom = 1, canEdit = true }: Props) {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Plugin contributions to this frame's actions menu (the documented
+  // `frameContextMenu` surface). Filtered by frameKinds when the item
+  // scopes itself to specific kinds.
+  const menuSurfaces = usePluginSurfaces('frameContextMenu');
+  const pluginItems = menuSurfaces
+    .flatMap((s) => s.items)
+    .filter((it) => !it.frameKinds || it.frameKinds.includes(frame.kind));
 
   async function onConfirmDelete(): Promise<void> {
     boardStore.removeFrame(frame.id);
@@ -104,16 +113,37 @@ export function FrameMeta({ frame, branch, zoom = 1, canEdit = true }: Props) {
               onPointerDown={(e) => e.stopPropagation()}
             >
               {!confirmDelete ? (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-[12px] text-red-300 hover:bg-red-500/10"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setConfirmDelete(true);
-                  }}
-                >
-                  <TrashIcon /> Delete frame
-                </button>
+                <>
+                  {pluginItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-[12px] text-ink hover:bg-white/10"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpen(false);
+                        try {
+                          item.onClick(frame.id);
+                        } catch (err) {
+                          // eslint-disable-next-line no-console
+                          console.error('[plugin frameContextMenu] threw', err);
+                        }
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-[12px] text-red-300 hover:bg-red-500/10"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmDelete(true);
+                    }}
+                  >
+                    <TrashIcon /> Delete frame
+                  </button>
+                </>
               ) : (
                 <div className="flex flex-col gap-1 px-2 py-1.5 text-[11.5px] text-inkMute">
                   <span>Delete this frame?</span>

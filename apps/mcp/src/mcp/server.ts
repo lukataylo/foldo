@@ -97,7 +97,14 @@ export async function startMcpStdioServer(deps: McpServerDeps): Promise<{
           const result = await runApplyEdit(parsed, { config, cloud }, {
             emitProgress: (line) => log(`[apply_edit] ${line}`),
           });
-          // Strip the internal `resultFrame` before returning to the caller , 
+          // The tool's contract is "…and emit a follow-up frame": post the
+          // result frame to the canvas when the cloud bridge is up. Without
+          // this, stdio-initiated edits committed + pushed but never showed
+          // anything on the board. (cloud.send queues while disconnected.)
+          if (cloud) {
+            cloud.send({ type: 'freeze.captured', frame: result.resultFrame });
+          }
+          // Strip the internal `resultFrame` before returning to the caller —
           // the public ApplyEditResult shape doesn't include it.
           const { resultFrame: _resultFrame, ...publicResult } = result;
           return toolJsonResult(publicResult);

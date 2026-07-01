@@ -79,11 +79,3 @@ export function startSessionGc(): void {
   // Don't keep the process alive just for the sweep.
   timer.unref?.();
 }
-
-/** Stop the sweep — used in tests / graceful shutdown if ever needed. */
-export function stopSessionGc(): void {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
-  }
-}

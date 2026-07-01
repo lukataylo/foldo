@@ -51,10 +51,10 @@ export async function listUsers(): Promise<User[]> {
 
 /**
  * Users relevant to one board: current members plus anyone who authored a
- * comment or initiated a dispatch there (covers ex-members and the deleted
- * sentinel, whose content stays on the board). Board hydration used to ship
- * `listUsers()` — every account in the database — to every member and every
- * public share viewer.
+ * comment or branch or initiated a dispatch there (covers ex-members, the
+ * deleted sentinel, and GitHub-webhook pushers — who are never members but
+ * author branches). Board hydration used to ship `listUsers()` — every
+ * account in the database — to every member and every public share viewer.
  */
 export async function listUsersForBoard(boardId: string): Promise<User[]> {
   const rows = await query<UserRow>(
@@ -65,6 +65,9 @@ export async function listUsersForBoard(boardId: string): Promise<User[]> {
         SELECT author_user_id FROM comments WHERE board_id = $1
         UNION
         SELECT initiator_user_id FROM dispatches WHERE board_id = $1
+        UNION
+        SELECT author_user_id FROM branches
+         WHERE board_id = $1 AND author_user_id IS NOT NULL
       )
       ORDER BY u.created_at`,
     [boardId],

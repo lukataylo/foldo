@@ -125,8 +125,3 @@ export function getEmailSender(): EmailSender {
   cached = new StubEmailSender();
   return cached;
 }
-
-/** Test-only reset so a Vitest can swap to a controlled implementation. */
-export function _resetEmailSenderForTests(): void {
-  cached = null;
-}

@@ -57,8 +57,3 @@ export async function listDemoRequestsForEmail(
   );
   return rows.map(rowToDemoRequest);
 }
-
-/** Test helper — wipes the table. Only meant to run against test DBs. */
-export async function _clearDemoRequestsForTests(): Promise<void> {
-  await exec(`DELETE FROM demo_requests`);
-}

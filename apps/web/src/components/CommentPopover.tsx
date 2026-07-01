@@ -277,10 +277,7 @@ export function CommentPopover({
             on every drop-pin comment. */}
         {(() => {
           const pinDispatchable =
-            !!comment.pin &&
-            (frameKind === undefined ||
-              frameKind === 'app' ||
-              frameKind === 'markdown');
+            !!comment.pin && (frameKind === 'app' || frameKind === 'markdown');
           const canMakeEdit = !!(
             comment.target?.elementLabel ||
             comment.anchor ||

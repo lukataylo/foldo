@@ -57,7 +57,7 @@ import type { Branch, Comment, Frame } from '@foldo/protocol';
 import { useBoardSnapshot } from '../../state/useBoardStore';
 import { boardStore } from '../../state/BoardStore';
 import { deleteFrame as apiDeleteFrame, updateFrame as apiUpdateFrame } from '../../api/frames';
-import { getSelectFrameHook } from '../registry';
+import { getSelectFrameHook, notifyToast } from '../registry';
 import { LayerNode, type CommentBadgeInfo } from './LayerNode';
 import { LayerSearch, matchFrame, type LayerSearchHandle } from './LayerSearch';
 import { LayerContextMenu } from './LayerContextMenu';
@@ -292,11 +292,8 @@ function applyRenameToStore(frame: Frame, next: string): Frame {
 
 // ---------- toast ----------
 
-function notify(msg: string): void {
-  const fn = (window as unknown as { __foldoToast?: (m: string) => void }).__foldoToast;
-  if (fn) fn(msg);
-  // Silently swallow when no toast hook is installed (unit tests, SSR).
-}
+// Silently no-ops when no toast hook is installed (unit tests, SSR).
+const notify = notifyToast;
 
 // A+W4: read the route's frameId from the URL on every render. We avoid
 // importing useRoute so this stays decoupled from App.tsx wiring. The

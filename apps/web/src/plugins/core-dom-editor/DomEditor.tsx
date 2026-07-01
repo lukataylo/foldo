@@ -36,6 +36,7 @@ import {
   type CSSProperties,
 } from 'react';
 import { createDispatch as apiCreateDispatch } from '../../api/dispatches';
+import { notifyToast } from '../registry';
 import { boardStore } from '../../state/useBoardStore';
 import type { CreateDispatchRequest } from '@foldo/protocol';
 import {
@@ -199,6 +200,11 @@ export function DomEditor(): JSX.Element {
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<PickedState | null>(null);
   const [controls, setControls] = useState<DomEditorControls>(EMPTY_CONTROLS);
+  // Live mirror of `controls` so updateControl reads the latest value even
+  // when called twice in one tick (e.g. a future "reset all" handler) —
+  // reading the render-closure `controls` there would drop the first write.
+  const controlsRef = useRef(controls);
+  controlsRef.current = controls;
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [error, setError] = useState<InspectErrorMessage | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -319,9 +325,10 @@ export function DomEditor(): JSX.Element {
       // Side effects (undo push, iframe broadcast) live OUTSIDE the
       // setControls updater — React StrictMode double-invokes updaters in
       // dev, which pushed duplicate undo entries and broadcast every edit
-      // twice.
-      const before = controls[key];
-      const next = { ...controls, [key]: value };
+      // twice. Read through the ref so same-tick calls compose.
+      const before = controlsRef.current[key];
+      const next = { ...controlsRef.current, [key]: value };
+      controlsRef.current = next;
       setControls(next);
       if (validation.ok && picked && before !== value) {
         // Push an undo entry per selector — Undo undoes the most recent
@@ -340,7 +347,7 @@ export function DomEditor(): JSX.Element {
         applyStyles(next);
       }
     },
-    [applyStyles, picked, controls],
+    [applyStyles, picked],
   );
 
   const undoOne = useCallback((): void => {
@@ -493,9 +500,7 @@ export function DomEditor(): JSX.Element {
       boardStore.upsertDispatch(d);
       setConfirming(false);
       setAnnouncement('Dispatch created. Watch the canvas for the new frame.');
-      const fn = (window as unknown as { __foldoToast?: (m: string) => void })
-        .__foldoToast;
-      fn?.('CSS overrides dispatched to Claude Code.');
+      notifyToast('CSS overrides dispatched to Claude Code.');
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setDispatchError({ message: msg });

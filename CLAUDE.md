@@ -532,10 +532,12 @@ running `npm --workspace @foldo/web run build`.
 - **`window.__foldo*` is wired in `App.tsx` and only on the canvas
   route.** A plugin that calls one of these from `home/` or
   `settings/` will hit `undefined`. Plugins are canvas-only today.
-- **The plugin registry is frozen after boot.** `bootPlugins(...)` is
-  called once at the top of `main.tsx`; calling it again is a no-op.
-  If you need to swap a plugin in/out at runtime, the registry needs
-  a real `uninstall(...)` first — it's a deliberate v1 limitation.
+- **The plugin registry installs once at boot.** `bootPlugins(...)` is
+  called once at the top of `main.tsx`. Re-installing a plugin with the
+  same manifest id (dev HMR) replaces it: the displaced instance's
+  teardown runs and the replacement activates immediately. There is
+  still no runtime `uninstall(...)` — removing a plugin entirely remains
+  a v1 limitation.
 - **`packages/protocol` is the source of truth for the wire format.**
   Don't define a new request/response shape in `apps/web/src/api/*`
   or `apps/server/src/routes/*` — define it in `packages/protocol`

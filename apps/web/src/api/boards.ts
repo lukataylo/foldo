@@ -22,31 +22,9 @@ export function getMe(signal?: AbortSignal) {
   return api<MeResponse>('/api/me', { signal });
 }
 
-/**
- * Soft-delete a board (sets archived_at on the server). The row stays in
- * Postgres so child frames / comments / dispatches survive; callers should
- * optimistically remove the card from the active list and let the user
- * recover via apiRestoreBoard if they toggle "Show archived" on.
- */
-export function apiArchiveBoard(boardId: string, signal?: AbortSignal) {
-  return api<{ ok: true; archived: true }>(
-    `/api/boards/${encodeURIComponent(boardId)}`,
-    { method: 'DELETE', signal },
-  );
-}
-
-/**
- * Clear archived_at on a previously-archived board. Pairs with the home
- * grid's "Show archived" toggle so a user can un-do an accidental archive.
- */
-export function apiRestoreBoard(boardId: string, signal?: AbortSignal) {
-  return api<{ ok: true; restored: true }>(
-    `/api/boards/${encodeURIComponent(boardId)}/restore`,
-    { method: 'POST', signal },
-  );
-}
-
 // ---------- Shares ----------
+// (Archive/restore + share-mint clients live in home/api.ts, where their
+// only callers are. This file keeps the list/manage/revoke share calls.)
 
 export interface BoardShareSummary {
   token: string;
@@ -62,14 +40,6 @@ export function apiListShares(boardId: string, signal?: AbortSignal) {
   return api<{ shares: BoardShareSummary[] }>(
     `/api/boards/${encodeURIComponent(boardId)}/shares`,
     { signal },
-  );
-}
-
-/** Mint a fresh share link on the board; returns the token + canonical URL. */
-export function apiCreateShare(boardId: string, signal?: AbortSignal) {
-  return api<{ token: string; url: string; share: BoardShareSummary }>(
-    `/api/boards/${encodeURIComponent(boardId)}/shares`,
-    { method: 'POST', signal },
   );
 }
 

@@ -194,10 +194,6 @@ export default function App() {
     undefined,
   );
   const { toasts, push: pushToast } = useToastQueue();
-  // Back-compat shim for the showToast helper calls scattered through the file.
-  // TODO(phase-1-extract): delete once the comment/dispatch/frame-tools
-  // extractions land — those callers will receive pushToast directly.
-  const setToast = pushToast;
   // Expose pushToast to the plugin context's notify() escape hatch. Plugins
   // call ctx.notify(msg) → registry.defaultContext lookups window.__foldoToast
   // → this push. Re-registering on every push identity change is cheap.
@@ -598,11 +594,11 @@ export default function App() {
     (frame: Frame) => {
       boardStore.upsertFrame(frame);
       setCaptureOpen(false);
-      showToast(setToast, 'Frame captured');
+      pushToast('Frame captured');
       setTimeout(() => fitToFrame(frame, 80), 250);
       if (snap.board) navigate({ boardId: snap.board.id, frameId: frame.id });
     },
-    [snap.board, navigate, fitToFrame, setCaptureOpen, setToast],
+    [snap.board, navigate, fitToFrame, setCaptureOpen, pushToast],
   );
 
   // ---------- new-frame tools (sticky / arrow / image) ----------
@@ -800,7 +796,7 @@ export default function App() {
                   updatedAt: previous.updatedAt,
                 });
               }
-              showToast(setToast, 'Failed to save comment');
+              pushToast('Failed to save comment');
             }
           }}
           onClose={() => {
@@ -882,14 +878,6 @@ export default function App() {
 
 // Frame memo wrappers + the 7-way render loop live in components/FrameLayer.tsx
 
-// Legacy helper kept so the many `showToast(setToast, '…')` callsites in this
-// file can stay unchanged during Phase 1. The "setter" arg is now actually
-// pushToast from useToastQueue (back-compat shim above). Once the comment /
-// dispatch / frame-tools components are extracted in Phase 1.3-1.5 they'll
-// take pushToast directly and this helper goes away.
-function showToast(push: (msg: string) => void, msg: string): void {
-  push(msg);
-}
 
 function canvasContainerRectFallback() {
   if (typeof window === 'undefined') return { width: 1440, height: 900 };

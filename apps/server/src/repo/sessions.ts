@@ -66,12 +66,13 @@ const SESSION_TOUCH_THRESHOLD = "interval '5 minutes'";
 
 export async function getUserIdForToken(token: string): Promise<string | null> {
   // Hot path is a plain read; the sliding-window extend only writes when
-  // last_seen_at is older than the touch threshold. API tokens are excluded
-  // from the auto-extend so they keep a fixed lifetime.
+  // last_seen_at is older than the touch threshold. last_seen_at is tracked
+  // for BOTH kinds (the settings UI shows API-token "last used"); only the
+  // expires_at extension is browser-scoped so API tokens keep a fixed
+  // lifetime.
   const r = await queryOne<SessionRow & { needs_touch: boolean }>(
     `SELECT *,
-            (kind = 'browser' AND last_seen_at < now() - ${SESSION_TOUCH_THRESHOLD})
-              AS needs_touch
+            (last_seen_at < now() - ${SESSION_TOUCH_THRESHOLD}) AS needs_touch
        FROM sessions
       WHERE token = $1 AND expires_at > now()`,
     [token],
@@ -81,7 +82,10 @@ export async function getUserIdForToken(token: string): Promise<string | null> {
     await exec(
       `UPDATE sessions
           SET last_seen_at = now(),
-              expires_at = now() + ${BROWSER_SESSION_TTL}
+              expires_at = CASE
+                WHEN kind = 'browser' THEN now() + ${BROWSER_SESSION_TTL}
+                ELSE expires_at
+              END
         WHERE token = $1`,
       [token],
     );

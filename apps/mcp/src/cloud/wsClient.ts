@@ -196,7 +196,7 @@ export function createCloudClient(
     socket.on('error', (err) => {
       log(`cloud unreachable: ${err.message}`);
     });
-    socket.on('close', () => {
+    socket.on('close', (code: number, reason: Buffer) => {
       if (stableTimer) {
         clearTimeout(stableTimer);
         stableTimer = null;
@@ -205,8 +205,20 @@ export function createCloudClient(
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
       }
-      log('cloud connection closed');
       ws = null;
+      // 1008 = policy violation: the server rejected us deliberately
+      // (bad token, no board access, or displaced by a newer agent for
+      // the same board). Reconnecting would be wrong — two agents on one
+      // board would displace each other in an infinite war, spamming
+      // mcp.online/offline to every browser. Stop and stay stopped.
+      if (code === 1008) {
+        stopped = true;
+        log(
+          `cloud rejected this connection (${reason.toString() || 'policy violation'}) — not reconnecting`,
+        );
+        return;
+      }
+      log('cloud connection closed');
       scheduleReconnect();
     });
   }

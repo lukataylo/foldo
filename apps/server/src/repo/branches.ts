@@ -55,6 +55,17 @@ export async function getBranchById(id: string): Promise<Branch | null> {
   return r ? rowToBranch(r) : null;
 }
 
+export async function getBranchByName(
+  boardId: string,
+  name: string,
+): Promise<Branch | null> {
+  const r = await queryOne<BranchRow>(
+    `SELECT * FROM branches WHERE board_id = $1 AND name = $2`,
+    [boardId, name],
+  );
+  return r ? rowToBranch(r) : null;
+}
+
 export async function upsertBranch(b: Branch): Promise<Branch> {
   await exec(
     `INSERT INTO branches (id, board_id, name, authored_by, author_user_id, agent_name, color, head_sha, created_at, updated_at)
@@ -131,9 +142,4 @@ export async function upsertCommit(c: Commit): Promise<Commit> {
     [c.sha, c.branchId, c.message, c.authorUserId, c.parentSha ?? null, c.createdAt],
   );
   return c;
-}
-
-export async function getCommit(sha: string): Promise<Commit | null> {
-  const r = await queryOne<CommitRow>(`SELECT * FROM commits WHERE sha = $1`, [sha]);
-  return r ? rowToCommit(r) : null;
 }

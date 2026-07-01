@@ -135,14 +135,6 @@ export function IconLogout({ size }: IconProps = {}) {
   );
 }
 
-export function IconPlus({ size }: IconProps = {}) {
-  return (
-    <Base size={size}>
-      <path d="M8 3.5v9M3.5 8h9" />
-    </Base>
-  );
-}
-
 export function IconBack({ size }: IconProps = {}) {
   return (
     <Base size={size}>

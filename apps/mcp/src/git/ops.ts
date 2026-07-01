@@ -55,26 +55,6 @@ export function listSeedBranches(boardId: BoardId): Branch[] {
   ];
 }
 
-/** Attempt to discover real branches from a local repo. Returns null on failure. */
-export async function tryLocalBranches(): Promise<string[] | null> {
-  try {
-    const importDyn = new Function(
-      'm',
-      'return import(m)',
-    ) as (m: string) => Promise<unknown>;
-    const mod = (await importDyn('simple-git')) as {
-      simpleGit: () => {
-        branch: (opts: string[]) => Promise<{ all: string[] }>;
-      };
-    };
-    const git = mod.simpleGit();
-    const out = await git.branch(['-a']);
-    return out.all;
-  } catch {
-    return null;
-  }
-}
-
 /** Simulated "commit + push", returns the fake SHA we already minted. */
 export async function fakeCommitAndPush(sha: string, message: string): Promise<{
   sha: string;

@@ -213,9 +213,6 @@ export type McpServerMessage = Versioned<
   | { type: 'ping'; ts: number }
 >;
 
-// ---------- Convenience ----------
-export type AnyClientMessage = ClientMessage | McpClientMessage;
-export type AnyServerMessage = ServerMessage | McpServerMessage;
 
 /**
  * Two protocol versions are wire-compatible iff they share a major version

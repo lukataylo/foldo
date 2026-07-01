@@ -244,17 +244,3 @@ export async function updateSessionFrame(sessionId: string): Promise<void> {
     hub.broadcast(updated.boardId, { type: 'frame.updated', frame: updated });
   }
 }
-
-/**
- * Convenience used when a session completes: ensure the summary frame, create
- * the session frame, and return both. Also refreshes the summary so its
- * aggregate counts include the new session.
- */
-export async function publishSessionResult(
-  session: TestSession,
-): Promise<{ summary: Frame; sessionFrame: Frame }> {
-  const sessionFrame = await createSessionFrame(session);
-  // Recompute summary stats now that this session counts.
-  const summary = await ensureSummaryFrame(session.testId);
-  return { summary, sessionFrame };
-}

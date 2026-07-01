@@ -9,7 +9,7 @@ import type {
 } from '@foldo/protocol';
 import { resolveUserFromToken } from '../auth.ts';
 import { getBoardById } from '../repo/boards.ts';
-import { canEditBoard } from '../repo/members.ts';
+import { addBoardMember, canEditBoard } from '../repo/members.ts';
 import { jobLogger } from '../log.ts';
 import { hub } from './hub.ts';
 import { startHeartbeat } from './browser.ts';
@@ -35,10 +35,6 @@ const mcpLog = jobLogger('ws-mcp');
 
 export function isMcpConnected(boardId: BoardId): boolean {
   return mcpByBoard.has(boardId);
-}
-
-export function getMcpForBoard(boardId: BoardId): McpConn | undefined {
-  return mcpByBoard.get(boardId);
 }
 
 export function sendToMcp(boardId: BoardId, message: McpServerMessage): boolean {
@@ -123,8 +119,21 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
 
     const user = await resolveUserFromToken(token);
     const board = boardId ? await getBoardById(boardId) : null;
-    const authorized =
+    let authorized =
       user && board ? await canEditBoard(board.id, user.id) : false;
+    // Dev convenience: the demo agent (demo-mcp → u-claude) is only seeded
+    // onto the demo board, but the documented dev flow points the MCP at
+    // whatever board the user just created. Auto-enroll agent users as
+    // editors in dev. In production agents must be real board members.
+    if (
+      !authorized &&
+      user?.kind === 'agent' &&
+      board &&
+      process.env.NODE_ENV !== 'production'
+    ) {
+      await addBoardMember(board.id, user.id, 'editor');
+      authorized = true;
+    }
     if (!user || !boardId || !board || !authorized) {
       try {
         socket.send(
@@ -205,10 +214,14 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           if (!(await dispatchOnBoard(msg.dispatchId))) break;
           const d = await setDispatchStatus(msg.dispatchId, 'sending');
           if (d) {
+            // Broadcast d.status, not a hardcoded 'sending' — a late/replayed
+            // ack for a dispatch the GC already timed out returns the row
+            // unchanged (terminal guard) and hardcoding would resurrect every
+            // client's spinner.
             hub.broadcast(d.boardId, {
               type: 'dispatch.status',
               dispatchId: d.id,
-              status: 'sending',
+              status: d.status,
             });
           }
           break;
@@ -231,7 +244,19 @@ export async function registerMcpWs(app: FastifyInstance): Promise<void> {
           break;
         }
         case 'dispatch.completed': {
-          if (!(await dispatchOnBoard(msg.dispatchId))) break;
+          const pending = await dispatchOnBoard(msg.dispatchId);
+          if (!pending) break;
+          // A late completion for a dispatch the GC already errored (or a
+          // queue replay of one already done) must not insert a frame:
+          // completeDispatch below would return null, so the frame would
+          // land in the DB but never broadcast — a ghost on next reload.
+          if (
+            pending.status === 'done' ||
+            pending.status === 'error' ||
+            pending.status === 'cancelled'
+          ) {
+            break;
+          }
           const repositioned = await repositionResultFrame(
             { ...msg.resultFrame, boardId: registeredBoardId },
             msg.dispatchId,

@@ -50,14 +50,3 @@ export async function upsertSource(
   );
   return s;
 }
-
-export function inferContentType(path: string): SourceFile['contentType'] {
-  if (path.endsWith('.md')) return 'markdown';
-  if (path.endsWith('.tsx')) return 'tsx';
-  if (path.endsWith('.ts')) return 'ts';
-  if (path.endsWith('.jsx')) return 'jsx';
-  if (path.endsWith('.js')) return 'js';
-  if (path.endsWith('.css')) return 'css';
-  if (path.endsWith('.json')) return 'json';
-  return 'other';
-}

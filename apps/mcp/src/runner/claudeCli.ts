@@ -424,9 +424,11 @@ export async function runClaudeCli(
       try {
         await git.checkout(gitBranch);
       } catch {
-        // Branch doesn't exist locally yet — create it from the dispatch's
-        // base commit so the edit lands on the intended history.
-        await git.checkout(['-b', gitBranch, input.baseCommitSha]);
+        // Branch doesn't exist locally yet — create it from HEAD. NOT from
+        // input.baseCommitSha: Foldo commit shas are synthetic (nanoid) for
+        // seeded/simulated/captured frames, so `checkout -b <branch> <sha>`
+        // would fail on "unknown revision" and hard-fail the dispatch.
+        await git.checkout(['-b', gitBranch]);
       }
     }
   } catch (err) {

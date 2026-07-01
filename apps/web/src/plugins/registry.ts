@@ -50,12 +50,15 @@ export function getHotkeys(): readonly HotkeySpec[] {
 }
 
 /**
- * Test-only: clear the cached hotkey list so a fresh install/activate
- * cycle takes effect. Production code never calls this — the registry is
- * frozen after boot.
+ * Fire the canvas's toast pipeline (App.tsx registers the push function via
+ * `registerToastHook`). No-op before App mounts. The single place that
+ * performs the `window.__foldoToast` lookup — components and plugins call
+ * this instead of re-casting window themselves.
  */
-export function __resetHotkeyCacheForTests(): void {
-  hotkeyCache = null;
+export function notifyToast(msg: string): void {
+  const fn = (window as unknown as { __foldoToast?: (m: string) => void })
+    .__foldoToast;
+  if (fn) fn(msg);
 }
 
 /**
@@ -92,11 +95,7 @@ export function getCurrentTool(): string | null {
  */
 export function defaultContext(): PluginContext {
   return {
-    notify(msg: string) {
-      const fn = (window as unknown as { __foldoToast?: (m: string) => void })
-        .__foldoToast;
-      if (fn) fn(msg);
-    },
+    notify: notifyToast,
     subscribe<T>(key: string, listener: (value: T) => void): () => void {
       const read = (): T | undefined => {
         const snap = boardStore.getSnapshot() as unknown as Record<string, T>;

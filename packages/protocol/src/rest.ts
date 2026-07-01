@@ -21,10 +21,6 @@ export interface PaginatedResponse<T> {
   cursor?: string;
 }
 
-export interface PageQuery {
-  limit?: number;
-  cursor?: string;
-}
 
 import type {
   Board,
@@ -143,12 +139,6 @@ export interface ListDispatchesResponse {
 }
 
 // ---------- Sources ----------
-export interface GetSourceQuery {
-  repoSlug: string;
-  commitSha: string;
-  path: string;
-}
-
 export type GetSourceResponse = SourceFile;
 
 // ---------- Branches ----------

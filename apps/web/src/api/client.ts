@@ -28,10 +28,6 @@ export function setAuth(userId: string, token: string) {
   authToken = token;
 }
 
-export function getAuth(): { userId: string | null; token: string | null } {
-  return { userId: authUserId, token: authToken };
-}
-
 export class ApiClientError extends Error {
   status: number;
   code: string;

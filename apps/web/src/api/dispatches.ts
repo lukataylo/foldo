@@ -14,7 +14,3 @@ export function listDispatches(boardId: string) {
     query: { boardId },
   });
 }
-
-export function getDispatch(id: string) {
-  return api<Dispatch>(`/api/dispatches/${encodeURIComponent(id)}`);
-}

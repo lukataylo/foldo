@@ -8,7 +8,7 @@ import type {
 import type { RecipeStep } from '@foldo/protocol';
 import { requireUser } from '../auth.ts';
 import { insertFrame, listFramesForBoard } from '../repo/frames.ts';
-import { getBranchById, upsertBranch } from '../repo/branches.ts';
+import { getBranchById, getBranchByName, upsertBranch } from '../repo/branches.ts';
 import { canEditBoard } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { isMcpConnected, sendToMcp } from '../ws/mcp.ts';
@@ -26,6 +26,12 @@ function capturesBranchId(boardId: string): string {
 async function ensureCapturesBranch(boardId: string, userId: string): Promise<Branch> {
   const existing = await getBranchById(capturesBranchId(boardId));
   if (existing) return existing;
+  // Legacy databases may hold the pre-scoping global row (id='captures')
+  // on this board. branches has a UNIQUE (board_id, name) constraint, so
+  // inserting a second name='captures' branch here would 500 every capture
+  // on that board forever — reuse the legacy row instead.
+  const byName = await getBranchByName(boardId, 'captures');
+  if (byName) return byName;
   const now = nowIso();
   const branch: Branch = {
     id: capturesBranchId(boardId),
@@ -120,11 +126,13 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
         .send({ error: 'url is not a valid absolute URL', code: 'BAD_REQUEST' });
     }
 
-    await ensureCapturesBranch(body.boardId, user.id);
+    // Use the RETURNED branch's id everywhere below — on legacy databases
+    // this is the pre-scoping 'captures' row, not `captures-${boardId}`.
+    const capturesBranch = await ensureCapturesBranch(body.boardId, user.id);
 
     const existing = await listFramesForBoard(body.boardId);
     const captureSiblings = existing.filter(
-      (f) => f.branchId === capturesBranchId(body.boardId),
+      (f) => f.branchId === capturesBranch.id,
     );
     const rightmost = captureSiblings.reduce(
       (m, f) => Math.max(m, f.position.x + f.size.width),
@@ -164,7 +172,7 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
           id: newId('f'),
           boardId: body.boardId,
           kind: 'image',
-          branchId: capturesBranchId(body.boardId),
+          branchId: capturesBranch.id,
           commitSha: newCommitSha(),
           commitMessage: `captured: ${body.title}`,
           age: 'just now',
@@ -184,7 +192,7 @@ export async function registerCaptureRoutes(app: FastifyInstance): Promise<void>
           id: newId('f'),
           boardId: body.boardId,
           kind: 'app',
-          branchId: capturesBranchId(body.boardId),
+          branchId: capturesBranch.id,
           commitSha: newCommitSha(),
           commitMessage: `captured: ${body.title}`,
           age: 'just now',

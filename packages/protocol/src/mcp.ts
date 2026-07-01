@@ -56,7 +56,6 @@ export type ApplyEditResult = {
 };
 
 /** Tool: list_branches, query branches known to the local repo */
-export type ListBranchesArgs = Record<string, never>;
 export type ListBranchesResult = { branches: Branch[] };
 
 /** Tool names exposed by the MCP server */
@@ -67,4 +66,3 @@ export const MCP_TOOLS = {
   LIST_BRANCHES: 'foldo_list_branches',
 } as const;
 
-export type McpToolName = (typeof MCP_TOOLS)[keyof typeof MCP_TOOLS];

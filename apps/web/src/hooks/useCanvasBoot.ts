@@ -26,12 +26,6 @@ import { registry } from '../plugins/registry';
 import { listBoards, getBoard } from '../api/boards';
 import { listDispatches } from '../api/dispatches';
 import { FoldoWsClient, type WsStatus } from '../api/ws';
-import {
-  mockBoardSnapshot,
-  mockPresence,
-  MOCK_BOARD_ID,
-  MOCK_ME_USER_ID,
-} from '../data/mockData';
 import type { Route } from '../routing/Router';
 
 export type BootState =
@@ -184,9 +178,14 @@ export function useCanvasBoot({
   }, []);
 
   const useOfflineDemo = useCallback(() => {
-    hydrateStoreFromMock();
-    navigate({ boardId: MOCK_BOARD_ID }, { replace: true });
-    setBoot({ kind: 'offline' });
+    // The ~11 KB of hand-written demo JSON only exists for this rarely-hit
+    // "server unreachable" fallback — load it on demand instead of shipping
+    // it in the main canvas chunk.
+    void import('../data/mockData').then((mock) => {
+      hydrateStoreFromMock(mock);
+      navigate({ boardId: mock.MOCK_BOARD_ID }, { replace: true });
+      setBoot({ kind: 'offline' });
+    });
   }, [navigate]);
 
   return { boot, useOfflineDemo, wsRef };
@@ -264,18 +263,20 @@ function rehydrateStoreFromRest(
   boardStore.markTestsChanged();
 }
 
-function hydrateStoreFromMock(): void {
-  const s = mockBoardSnapshot;
+function hydrateStoreFromMock(
+  mock: typeof import('../data/mockData'),
+): void {
+  const s = mock.mockBoardSnapshot;
   const frameMap = new Map(s.frames.map((f) => [f.id, f]));
   const commentMap = new Map(s.comments.map((c) => [c.id, c]));
   const branchMap = new Map(s.branches.map((b) => [b.id, b]));
   const userMap = new Map(s.users.map((u) => [u.id, u]));
-  const presence = new Map(mockPresence().map((p) => [p.userId, p]));
+  const presence = new Map(mock.mockPresence().map((p) => [p.userId, p]));
   boardStore.set({
     hydrated: true,
     offline: true,
     wsStatus: 'closed',
-    meUserId: MOCK_ME_USER_ID,
+    meUserId: mock.MOCK_ME_USER_ID,
     board: s.board,
     frames: frameMap,
     comments: commentMap,

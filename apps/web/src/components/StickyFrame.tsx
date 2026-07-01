@@ -3,6 +3,7 @@ import type { Branch, Frame, StickyFrameContent } from '@foldo/protocol';
 import { FrameMeta } from './FrameMeta';
 import { updateFrame as apiUpdateFrame } from '../api/frames';
 import { boardStore } from '../state/BoardStore';
+import { notifyToast } from '../plugins/registry';
 
 interface Props {
   frame: Frame;
@@ -46,15 +47,21 @@ export function StickyFrame({ frame, branch, zoom = 1 }: Props) {
         console.warn('[foldo] sticky update failed', err);
         // Roll back the optimistic write — but only if it's still what's
         // showing, so a newer successful save or WS update isn't clobbered.
+        // Merge only `body` into the LIVE content: restoring prevContent
+        // wholesale would also revert concurrent changes to other content
+        // fields (e.g. a color change that arrived over WS in between).
         const live = boardStore.getSnapshot().frames.get(frame.id);
         if (live && (live.content as StickyFrameContent).body === next) {
-          boardStore.upsertFrame({ ...live, content: prevContent });
+          boardStore.upsertFrame({
+            ...live,
+            content: {
+              ...(live.content as StickyFrameContent),
+              body: prevContent.body,
+            },
+          });
           if (!focusedRef.current) setBody(prevContent.body ?? '');
         }
-        const toast = (
-          window as unknown as { __foldoToast?: (m: string) => void }
-        ).__foldoToast;
-        toast?.('Failed to save sticky note');
+        notifyToast('Failed to save sticky note');
       });
     },
     [frame],

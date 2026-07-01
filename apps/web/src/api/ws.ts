@@ -135,7 +135,11 @@ export class FoldoWsClient {
     }
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
     this.closedByUser = false;
-    this.setStatus('connecting');
+    // In the offline regime (12+ failed attempts) stay 'offline' during
+    // retries — flipping offline ↔ connecting every ~5s cycle re-renders
+    // the app and flickers the connection dot for as long as the server is
+    // down. onopen still sets 'open' the moment a retry succeeds.
+    if (this.reconnectAttempt < 12) this.setStatus('connecting');
 
     const base = wsBaseFromApi(API_BASE);
     const url = new URL(base + '/ws');

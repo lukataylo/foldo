@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Board, UserId, User } from '@foldo/protocol';
 import { PresenceAvatars } from '../multiplayer/PresenceAvatars';
+import { TopBarRightSlot } from '../plugins/slots/TopBarRightSlot';
 import { useBoardSelector } from '../state/useBoardStore';
 import { ShareManagementModal } from './ShareManagementModal';
 
@@ -270,6 +271,9 @@ export function TopBar({
             </div>
           )}
         </div>
+        {/* Plugin `topBarRight` contributions — renders nothing when no
+            plugin contributes to the surface. */}
+        <TopBarRightSlot />
         <PresenceAvatars
           meUserId={meUserId}
           followingUserId={followingUserId}

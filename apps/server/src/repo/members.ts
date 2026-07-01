@@ -32,14 +32,6 @@ export async function getMembership(
   );
 }
 
-export async function listBoardIdsForUser(userId: string): Promise<string[]> {
-  const rows = await query<{ board_id: string }>(
-    `SELECT board_id FROM board_members WHERE user_id = $1`,
-    [userId],
-  );
-  return rows.map((r) => r.board_id);
-}
-
 export async function isMember(boardId: string, userId: string): Promise<boolean> {
   const row = await queryOne<{ exists: boolean }>(
     `SELECT EXISTS(
@@ -54,12 +46,4 @@ export async function isMember(boardId: string, userId: string): Promise<boolean
 export async function canEditBoard(boardId: string, userId: string): Promise<boolean> {
   const m = await getMembership(boardId, userId);
   return m?.role === 'owner' || m?.role === 'editor';
-}
-
-export async function countOwnedBoards(userId: string): Promise<number> {
-  const r = await queryOne<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM board_members WHERE user_id = $1 AND role = 'owner'`,
-    [userId],
-  );
-  return r ? Number(r.count) : 0;
 }

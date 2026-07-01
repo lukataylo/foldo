@@ -359,10 +359,6 @@ export function setActiveHub(next: HubInterface): void {
   activeHub = next;
 }
 
-export function getActiveHub(): HubInterface {
-  return activeHub;
-}
-
 /**
  * Public hub handle. A thin facade that forwards every HubInterface
  * method to whichever impl is current. Existing call sites

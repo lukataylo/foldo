@@ -151,12 +151,15 @@ export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
       message:
         'Simulating dispatch: no MCP agent connected, Foldo will fake a child frame.',
     };
+    // Broadcast the row's actual status: if the terminal guard blocked the
+    // write (dispatch already done/error/cancelled), echoing the hardcoded
+    // status would resurrect client spinners.
     const sending = await setDispatchStatus(dispatch.id, 'sending', sendingEvent);
     if (sending) {
       hub.broadcast(dispatch.boardId, {
         type: 'dispatch.status',
         dispatchId: dispatch.id,
-        status: 'sending',
+        status: sending.status,
         event: sendingEvent,
       });
     }
@@ -173,7 +176,7 @@ export async function simulateDispatch(dispatch: Dispatch): Promise<void> {
       hub.broadcast(dispatch.boardId, {
         type: 'dispatch.status',
         dispatchId: dispatch.id,
-        status: 'running',
+        status: running.status,
         event: runningEvent,
       });
     }

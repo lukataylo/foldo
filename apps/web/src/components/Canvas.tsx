@@ -41,8 +41,6 @@ interface Props {
   onBackgroundDragStart?: (world: { x: number; y: number }) => void;
   onBackgroundDragMove?: (world: { x: number; y: number }) => void;
   onBackgroundDragEnd?: (world: { x: number; y: number }) => void;
-  /** Fires at most ~33Hz with the user's cursor in world coordinates. */
-  onCursorMove?: (worldX: number, worldY: number) => void;
 }
 
 export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
@@ -56,7 +54,6 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     onBackgroundDragStart,
     onBackgroundDragMove,
     onBackgroundDragEnd,
-    onCursorMove,
   },
   ref,
 ) {
@@ -313,24 +310,6 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       }
     }
   };
-  const lastCursorRef = useRef<{ x: number; y: number } | null>(null);
-  const cursorRafRef = useRef<number | null>(null);
-  const flushCursor = useCallback(() => {
-    cursorRafRef.current = null;
-    const c = lastCursorRef.current;
-    if (!c || !onCursorMove) return;
-    const w = screenToWorld(c.x, c.y);
-    onCursorMove(w.x, w.y);
-  }, [onCursorMove, screenToWorld]);
-  // Cancel a pending cursor flush on unmount — once containerRef is gone,
-  // screenToWorld degrades to {0,0} and we'd broadcast a bogus origin cursor.
-  useEffect(
-    () => () => {
-      if (cursorRafRef.current != null) cancelAnimationFrame(cursorRafRef.current);
-    },
-    [],
-  );
-
   const onPointerMove = (e: React.PointerEvent) => {
     /* A+W1 touch: keep the per-pointer position in sync so pinch math sees
        this frame's coordinates, not stale ones. */
@@ -388,12 +367,6 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     }
     if (dragRef.current && onBackgroundDragMove) {
       onBackgroundDragMove(screenToWorld(e.clientX, e.clientY));
-    }
-    if (onCursorMove) {
-      lastCursorRef.current = { x: e.clientX, y: e.clientY };
-      if (cursorRafRef.current == null) {
-        cursorRafRef.current = requestAnimationFrame(flushCursor);
-      }
     }
   };
   const onPointerUp = (e: React.PointerEvent) => {

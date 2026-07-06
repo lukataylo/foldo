@@ -78,8 +78,7 @@ export type FrameKind =
   | 'sticky'
   | 'arrow'
   | 'image'
-  | 'test_summary'
-  | 'test_session';
+  | 'walkthrough';
 
 export type Variant = 'baseline' | 'cta-revamp' | 'pro-highlight';
 
@@ -166,35 +165,30 @@ export interface ImageFrameContent {
 }
 
 /**
- * The hub frame for an unmoderated test on the canvas — aggregate stats that
- * session frames cluster beneath. Defined in full in the "Tests" section.
+ * A rendered product walkthrough on the board — the core artifact of the
+ * living-documentation pivot. Each merged PR produces a new take; the frame
+ * shows the take's narrated video (or stills + captions when capture had to
+ * degrade) and lands beside its predecessor so a stakeholder can see what
+ * changed without reading a changelog.
  */
-export interface TestSummaryFrameContent {
-  kind: 'test_summary';
-  testId: TestId;
-  testName: string;
-  shareToken: string;
-  status: TestStatus;
-  totalSessions: number;
-  completedSessions: number;
-  taskStats: TestTaskStat[];
-}
-
-/** One recorded session, rendered as a frame on the canvas. */
-export interface TestSessionFrameContent {
-  kind: 'test_session';
-  testId: TestId;
-  sessionId: TestSessionId;
-  testerLabel: string;
-  recordingMode: RecordingMode;
-  recordingUrl?: string;
-  recordingDurationMs?: number;
-  taskResults: TestTaskResult[];
-  responses?: TestResponseAnswer[];
-  transcript?: TranscriptCue[];
-  transcriptStatus: TranscriptStatus;
-  synthesis?: TestSessionSynthesis;
-  completedAt?: string;
+export interface WalkthroughFrameContent {
+  kind: 'walkthrough';
+  walkthroughId: WalkthroughId;
+  takeId: TakeId;
+  title: string;
+  status: TakeStatus;
+  prNumber?: number;
+  prTitle?: string;
+  /** Director's plain-language note of what changed in this take */
+  summary?: string;
+  videoUrl?: string;
+  posterUrl?: string;
+  captionsUrl?: string;
+  durationMs?: number;
+  /** Per-step verdicts vs the predecessor take */
+  stepDiffs?: StepDiff[];
+  /** Steps whose video capture failed and degraded to a still + caption */
+  degradedStepIds?: WalkthroughStepId[];
 }
 
 export type FrameContent =
@@ -203,8 +197,7 @@ export type FrameContent =
   | StickyFrameContent
   | ArrowFrameContent
   | ImageFrameContent
-  | TestSummaryFrameContent
-  | TestSessionFrameContent;
+  | WalkthroughFrameContent;
 
 export interface Frame {
   id: FrameId;
@@ -317,35 +310,6 @@ export interface Dispatch {
   errorMessage?: string;
 }
 
-// ---------- Presence (multiplayer) ----------
-export interface PresenceUser {
-  userId: UserId;
-  name: string;
-  initial: string;
-  color: string;
-  online: boolean;
-  lastSeenAt: string;
-  cursor?: PresenceCursor;
-  selection?: PresenceSelection;
-  /** When following another user's viewport */
-  followingUserId?: UserId;
-  /** Most-recently-broadcast viewport, used by follow-me to mirror */
-  viewport?: { x: number; y: number; zoom: number };
-}
-
-export interface PresenceCursor {
-  /** World coordinates on the canvas */
-  x: number;
-  y: number;
-  /** If hovering over a frame */
-  frameId?: FrameId;
-}
-
-export interface PresenceSelection {
-  frameId: FrameId;
-  elementSelector?: string;
-}
-
 // ---------- Sources (markdown / code at a commit) ----------
 export interface SourceFile {
   repoSlug: string;
@@ -356,194 +320,107 @@ export interface SourceFile {
   updatedAt: string;
 }
 
-// ---------- Captures (extension) ----------
-export interface CaptureRequest {
-  url: string;
-  viewport: { width: number; height: number };
-  title: string;
-  /** Base64 PNG, optional */
-  screenshot?: string;
-  /** Serialised HTML, optional */
-  domSnapshot?: string;
-  capturedByUserId: UserId;
-  boardId: BoardId;
-}
+// ---------- Walkthroughs (living documentation) ----------
+//
+// A Walkthrough is the maintained artifact of the pivot: a spec of narrated
+// steps filmed against a running deployment of the product. The director
+// service re-films it on every merged PR, re-rendering only the steps the
+// diff touched (unchanged segments are reused byte-for-byte) and posting the
+// result to the board as a `walkthrough` frame beside its predecessor.
 
-// ---------- Tests (unmoderated UX testing) ----------
-export type TestId = string; // Phase 2 follow-up: brand (see Identifiers above).
-export type TestTaskId = string;
-export type TestSessionId = string; // Phase 2 follow-up: brand.
-
-export type TestStatus = 'draft' | 'live' | 'closed';
+export type WalkthroughId = string;
+export type WalkthroughStepId = string;
+export type TakeId = string;
 
 /**
- * How a tester reaches the app under test.
- *   - `auto`         , server probes the target and resolves to iframe/handoff per session
- *   - `iframe`       , target is embedded in an iframe with the task banner around it
- *   - `handoff`      , target opens in a new tab; screen recording spans both
- *   - `dom_snapshot` , a frozen DOM snapshot is served (local-only apps a tester can't reach)
+ * One Playwright action inside a step. Selectors are visible-text locators
+ * only ("grounded" capture) — never CSS/XPath — so the spec survives markup
+ * refactors and stays writable by non-engineers.
  */
-export type TestTargetMode = 'auto' | 'iframe' | 'handoff' | 'dom_snapshot';
+export type WalkthroughAction =
+  | { kind: 'goto'; url: string }
+  | { kind: 'click'; text: string }
+  | { kind: 'fill'; label: string; value: string }
+  | { kind: 'hover'; text: string }
+  | { kind: 'press'; key: string }
+  | { kind: 'scroll'; y: number }
+  | { kind: 'wait'; ms: number };
 
-/** Resolved mode for a given session (never `auto`). */
-export type TestDeliveryMode = 'iframe' | 'handoff' | 'dom_snapshot';
-
-/** What a tester is asked to capture. The creator allows a subset; the tester picks. */
-export type RecordingMode = 'screen_voice' | 'voice_only' | 'screen_only';
-
-export interface TestTask {
-  id: TestTaskId;
-  testId: TestId;
-  /** 0-based position in the task list */
-  orderIndex: number;
+export interface WalkthroughStep {
+  id: WalkthroughStepId;
   title: string;
-  /** Banner text shown to the tester while doing this task */
-  instruction: string;
-  /** Optional , what "done" looks like, a creator analysis aid */
-  successHint?: string;
-  /** Optional per-task starting route */
-  startUrl?: string;
-  /** Optional , reuses the recipe system to set up starting state */
-  startRecipe?: RecipeStep[];
+  /** Narration script for this step; spoken by TTS and shown as captions */
+  narration: string;
+  actions: WalkthroughAction[];
+  /** Target duration of the rendered segment */
+  durationMs: number;
 }
 
-export type TestQuestionKind =
-  | 'short_text'
-  | 'long_text'
-  | 'single_choice'
-  | 'multi_choice'
-  | 'rating';
-
-export interface TestQuestion {
-  id: string;
-  kind: TestQuestionKind;
-  prompt: string;
-  /** For single_choice / multi_choice */
-  choices?: string[];
-  required?: boolean;
-}
-
-export interface Test {
-  id: TestId;
+export interface Walkthrough {
+  id: WalkthroughId;
   boardId: BoardId;
-  name: string;
-  /** The deployed app URL; absent for `dom_snapshot` mode */
-  targetUrl?: string;
-  targetMode: TestTargetMode;
-  /** Probe result , whether the target allows being iframed. null = unknown/not probed */
-  frameable?: boolean | null;
-  /** Object-storage key of the frozen DOM (dom_snapshot mode) */
-  domSnapshotKey?: string;
-  /** Welcome / context shown to the tester before the task loop */
-  intro: string;
-  /** Recording modes the tester may choose from */
-  recordingModes: RecordingMode[];
-  questionnaire?: TestQuestion[];
-  status: TestStatus;
-  /** Short base62 token , foldo.dev/t/:token */
-  shareToken: string;
-  /** Optional cap on sessions; auto-closes when reached */
-  responseLimit?: number;
-  /** The hub frame on the canvas that results cluster under */
-  summaryFrameId?: FrameId;
-  createdByUserId: UserId;
+  title: string;
+  /** Base URL of the deployed/preview app the director films */
+  targetUrl: string;
+  steps: WalkthroughStep[];
+  /** Optional auth recipe run before the first step (login walls) */
+  authActions?: WalkthroughAction[];
   createdAt: string;
   updatedAt: string;
 }
 
-export interface TestSessionCounts {
-  total: number;
-  completed: number;
+export type StepDiffStatus = 'unchanged' | 'changed' | 'added' | 'removed';
+
+/** The director's per-step verdict for one merged PR. */
+export interface StepDiff {
+  stepId: WalkthroughStepId;
+  status: StepDiffStatus;
+  /** One-line reason a stakeholder can read ("CTA label changed to …") */
+  reason: string;
 }
 
-export type TestSessionStatus =
-  | 'started'
-  | 'recording'
-  | 'completed'
-  | 'abandoned';
+export type TakeStatus =
+  | 'queued'
+  | 'capturing'
+  | 'rendering'
+  | 'ready'
+  | 'degraded'
+  | 'error';
 
-export type TestTaskOutcome = 'completed' | 'skipped' | 'gave_up';
-
-export interface TestTaskResult {
-  taskId: TestTaskId;
-  outcome: TestTaskOutcome;
-  durationMs: number;
-  /** Offset into the recording where this task starts */
-  recordingOffsetMs: number;
+/** How one step's segment in a take was produced. */
+export interface TakeSegment {
+  stepId: WalkthroughStepId;
+  /** Content fingerprint of the step spec (id+narration+actions+duration) */
+  fingerprint: string;
+  /** sha256 of the segment bytes; equal shas ⇒ byte-identical reuse */
+  segmentSha256?: string;
+  /** reused = copied from parent take; still = degraded to poster+caption */
+  source: 'reused' | 'rebuilt' | 'still';
+  captureWarnings?: string[];
 }
 
-/** Aggregate outcome of one task across every completed session of a test. */
-export interface TestTaskStat {
-  taskId: TestTaskId;
-  title: string;
-  completed: number;
-  skipped: number;
-  gaveUp: number;
-  /** Median time-on-task across sessions, ms. 0 when there's no data. */
-  medianDurationMs: number;
-}
-
-export interface TranscriptCue {
-  startMs: number;
-  endMs: number;
-  text: string;
-}
-
-export interface TestResponseAnswer {
-  questionId: string;
-  /** string for text/rating, string[] for multi_choice */
-  value: string | string[];
-}
-
-export type TranscriptStatus =
-  | 'pending'
-  | 'processing'
-  | 'done'
-  | 'failed'
-  | 'skipped';
-
-export type IssueSeverity = 'low' | 'medium' | 'high';
-
-/** One problem an AI pass extracted from a session, anchored to the recording. */
-export interface TestSessionIssue {
-  severity: IssueSeverity;
-  text: string;
-  taskId?: TestTaskId;
-  /** Offset into the recording the issue refers to, ms. */
-  atMs?: number;
-}
-
-/** AI-generated synthesis of a single session. */
-export interface TestSessionSynthesis {
-  summary: string;
-  issues: TestSessionIssue[];
-  /** Provider/model that produced this, or 'stub' when no provider is configured. */
-  generatedBy: string;
-  generatedAt: string;
-}
-
-export interface TestSession {
-  id: TestSessionId;
-  testId: TestId;
-  status: TestSessionStatus;
-  recordingMode: RecordingMode;
-  /** Anonymous label , "Tester 4" , or an optional self-entered name */
-  testerLabel: string;
-  /** UA / viewport / locale / referrer. No PII unless volunteered */
-  testerMeta?: Record<string, unknown>;
-  consentAt?: string;
-  /** Playback URL for the recording (signed); absent until upload completes */
-  recordingUrl?: string;
-  recordingDurationMs?: number;
-  transcript?: TranscriptCue[];
-  transcriptStatus: TranscriptStatus;
-  responses?: TestResponseAnswer[];
-  taskResults?: TestTaskResult[];
-  /** AI synthesis of this session, once a synthesis pass has run. */
-  synthesis?: TestSessionSynthesis;
-  resultFrameId?: FrameId;
-  startedAt: string;
-  completedAt?: string;
+/** One rendering of a walkthrough, usually triggered by a merged PR. */
+export interface Take {
+  id: TakeId;
+  walkthroughId: WalkthroughId;
+  parentTakeId?: TakeId;
+  prNumber?: number;
+  prTitle?: string;
+  /** Director's plain-language summary of what changed */
+  summary?: string;
+  status: TakeStatus;
+  stepDiffs: StepDiff[];
+  segments: TakeSegment[];
+  masterSha256?: string;
+  videoUrl?: string;
+  posterUrl?: string;
+  captionsUrl?: string;
+  durationMs?: number;
+  /** The board frame this take rendered into */
+  frameId?: FrameId;
+  createdAt: string;
+  finishedAt?: string;
+  errorMessage?: string;
 }
 
 // ---------- API errors ----------

@@ -36,6 +36,7 @@ import {
 import { hub } from '../ws/hub.ts';
 import { isMcpConnected } from '../ws/mcp.ts';
 import { newCommitSha, newId, nowIso } from '../util.ts';
+import { trackFunnelEvent } from '../repo/analytics.ts';
 
 interface CreateBoardBody {
   name?: string;
@@ -193,6 +194,7 @@ export async function registerBoardRoutes(app: FastifyInstance): Promise<void> {
 
     hub.broadcast(id, { type: 'branch.added', branch: mainBranch });
 
+    void trackFunnelEvent('first_board', { userId: me.id, boardId: id }).catch(() => {});
     return reply.code(201).send({ board });
   });
 

@@ -1,6 +1,6 @@
 // WebSocket protocol, bidirectional, JSON-over-WS.
 // Two distinct WS endpoints:
-//   /ws           , browser clients (canvas)
+//   /ws           , browser clients (board viewer)
 //   /ws/mcp       , in-directory MCP servers
 //
 // Versioning: every message carries an optional `version` field. Server
@@ -21,19 +21,13 @@ import type {
   DispatchStatus,
   Frame,
   FrameId,
-  PresenceCursor,
-  PresenceSelection,
-  PresenceUser,
+  User,
   UserId,
   CommentId,
   BoardId,
   DispatchId,
   CommitSha,
   RecipeStep,
-  Test,
-  TestId,
-  TestSession,
-  TestSessionId,
 } from './domain.ts';
 
 /**
@@ -42,14 +36,16 @@ import type {
  * McpServerMessage shapes. Server refuses to talk across a major mismatch.
  *
  * 1.0.0 — initial versioned release (2026-05-23, Phase 2 of the AAA roadmap).
+ * 2.0.0 — living-documentation pivot (2026-07): presence/cursor/follow and
+ *         user-test messages removed; `welcome.users` is now `User[]`.
  */
-export const PROTOCOL_VERSION = '1.0.0';
+export const PROTOCOL_VERSION = '2.0.0';
 
 /**
  * Adds an optional `version` field to every WS message variant without
- * disturbing the discriminated unions. The field is optional so pre-1.0 (or
- * unversioned third-party) clients still parse — the server treats a missing
- * field as PROTOCOL_VERSION.
+ * disturbing the discriminated unions. The field is optional so unversioned
+ * third-party clients still parse — the server treats a missing field as
+ * PROTOCOL_VERSION.
  */
 export type Versioned<T> = T & { version?: string };
 
@@ -65,15 +61,10 @@ export type ClientMessage = Versioned<
        * Highest broadcast `seq` the client has already applied on a previous
        * connection. Server replays any broadcasts strictly greater than
        * this (up to the in-memory window cap) immediately after the welcome
-       * so a brief disconnect doesn't desync the canvas.
+       * so a brief disconnect doesn't desync the board.
        */
       sinceSeq?: number;
     }
-  | { type: 'cursor.move'; cursor: PresenceCursor }
-  | { type: 'selection.update'; selection: PresenceSelection | null }
-  | { type: 'viewport.update'; x: number; y: number; zoom: number }
-  | { type: 'follow.start'; targetUserId: UserId }
-  | { type: 'follow.stop' }
   | { type: 'ping'; ts: number }
 >;
 
@@ -89,64 +80,44 @@ export type SeqStamped<T> = T & { seq?: number };
 
 export type ServerMessage = SeqStamped<
   Versioned<
-  | {
-      type: 'welcome';
-      boardId: BoardId;
-      youUserId: UserId;
-      board: Board;
-      users: PresenceUser[];
-      /**
-       * Current high-watermark seq for this board. Client stores it so the
-       * next `hello` can carry `sinceSeq` and skip the lost-message window.
-       */
-      latestSeq: number;
-    }
-  | { type: 'presence.join'; user: PresenceUser }
-  | { type: 'presence.leave'; userId: UserId }
-  | { type: 'presence.cursor'; userId: UserId; cursor: PresenceCursor }
-  | {
-      type: 'presence.selection';
-      userId: UserId;
-      selection: PresenceSelection | null;
-    }
-  | {
-      type: 'presence.viewport';
-      userId: UserId;
-      x: number;
-      y: number;
-      zoom: number;
-    }
-  | { type: 'frame.added'; frame: Frame }
-  | { type: 'frame.updated'; frame: Frame }
-  | { type: 'frame.moved'; frameId: FrameId; x: number; y: number }
-  | { type: 'frame.deleted'; frameId: FrameId }
-  | { type: 'comment.added'; comment: Comment }
-  | { type: 'comment.updated'; comment: Comment }
-  | {
-      type: 'comment.reply.added';
-      commentId: CommentId;
-      reply: CommentReply;
-    }
-  | { type: 'comment.deleted'; commentId: CommentId }
-  | { type: 'dispatch.created'; dispatch: Dispatch }
-  | {
-      type: 'dispatch.status';
-      dispatchId: DispatchId;
-      status: DispatchStatus;
-      event?: DispatchEvent;
-    }
-  | { type: 'dispatch.done'; dispatch: Dispatch }
-  | { type: 'branch.added'; branch: Branch }
-  | { type: 'branch.updated'; branch: Branch }
-  | { type: 'mcp.online'; boardId: BoardId; agentName: string }
-  | { type: 'mcp.offline'; boardId: BoardId }
-  | { type: 'test.created'; test: Test }
-  | { type: 'test.updated'; test: Test }
-  | { type: 'test.deleted'; testId: TestId }
-  | { type: 'test.session.started'; testId: TestId; sessionId: TestSessionId }
-  | { type: 'test.session.completed'; testId: TestId; session: TestSession }
-  | { type: 'pong'; ts: number }
-  | { type: 'error'; code: string; message: string }
+    | {
+        type: 'welcome';
+        boardId: BoardId;
+        youUserId: UserId;
+        board: Board;
+        users: User[];
+        /**
+         * Current high-watermark seq for this board. Client stores it so the
+         * next `hello` can carry `sinceSeq` and skip the lost-message window.
+         */
+        latestSeq: number;
+      }
+    | { type: 'frame.added'; frame: Frame }
+    | { type: 'frame.updated'; frame: Frame }
+    | { type: 'frame.moved'; frameId: FrameId; x: number; y: number }
+    | { type: 'frame.deleted'; frameId: FrameId }
+    | { type: 'comment.added'; comment: Comment }
+    | { type: 'comment.updated'; comment: Comment }
+    | {
+        type: 'comment.reply.added';
+        commentId: CommentId;
+        reply: CommentReply;
+      }
+    | { type: 'comment.deleted'; commentId: CommentId }
+    | { type: 'dispatch.created'; dispatch: Dispatch }
+    | {
+        type: 'dispatch.status';
+        dispatchId: DispatchId;
+        status: DispatchStatus;
+        event?: DispatchEvent;
+      }
+    | { type: 'dispatch.done'; dispatch: Dispatch }
+    | { type: 'branch.added'; branch: Branch }
+    | { type: 'branch.updated'; branch: Branch }
+    | { type: 'mcp.online'; boardId: BoardId; agentName: string }
+    | { type: 'mcp.offline'; boardId: BoardId }
+    | { type: 'pong'; ts: number }
+    | { type: 'error'; code: string; message: string }
   >
 >;
 

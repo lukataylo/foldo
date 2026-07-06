@@ -1,21 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
-import type {
-  ClientMessage,
-  PresenceUser,
-  ServerMessage,
-} from '@foldo/protocol';
+import type { ClientMessage, ServerMessage } from '@foldo/protocol';
 import { PROTOCOL_VERSION, isCompatibleProtocolVersion } from '@foldo/protocol';
 import { resolveUserFromToken } from '../auth.ts';
 import { getBoardById } from '../repo/boards.ts';
 import { isMember } from '../repo/members.ts';
+import { listUsers } from '../repo/users.ts';
 import { hub, type BrowserConn } from './hub.ts';
 import { wsReplayGaps } from '../metrics.ts';
 import { jobLogger } from '../log.ts';
-import { nowIso } from '../util.ts';
 import { isMcpConnected } from './mcp.ts';
-
-const CURSOR_MIN_INTERVAL_MS = 33; // ~30Hz
 
 const wsLog = jobLogger('ws-browser');
 
@@ -67,25 +61,13 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
       return;
     }
 
-    const presence: PresenceUser = {
-      userId: user.id,
-      name: user.name,
-      initial: user.initial,
-      color: user.color,
-      online: true,
-      lastSeenAt: nowIso(),
-    };
-
     const conn: BrowserConn = {
       socket,
       boardId: board.id,
       userId: user.id,
-      presence,
-      lastCursorBroadcastAt: 0,
     };
 
     let helloReceived = false;
-    let disconnectTimer: NodeJS.Timeout | null = null;
     const connId = nextConnId++;
 
     socket.on('message', (raw: Buffer) => {
@@ -151,13 +133,8 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
         // Register with hub
         hub.subscribe(conn);
 
-        // Build presence users for welcome, start with everyone currently connected on this board
-        const others = hub
-          .connectionsOnBoard(board.id)
-          .map((c) => c.presence);
-
         // The protocol guarantees replayed messages arrive immediately AFTER
-        // the welcome, so the SENDS must be ordered — on RedisHub the two hub
+        // the welcome, so the SENDS must be ordered — on RedisHub the hub
         // reads are independent round-trips that would otherwise race. The
         // reads themselves are safe to issue in parallel; only the send
         // order matters.
@@ -166,18 +143,19 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
             ? msg.sinceSeq
             : null;
         void Promise.all([
+          listUsers(),
           Promise.resolve(hub.latestSeq(board.id)),
           sinceSeq === null
             ? Promise.resolve(undefined)
             : Promise.resolve(hub.getMissedSince(board.id, sinceSeq)),
         ])
-          .then(([latestSeq, missed]) => {
+          .then(([users, latestSeq, missed]) => {
             sendSafe(socket, {
               type: 'welcome',
               boardId: board.id,
               youUserId: user.id,
               board,
-              users: others,
+              users,
               latestSeq,
             });
             // Replay any broadcasts the client missed while it was
@@ -208,9 +186,6 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
             );
           });
 
-        // Tell others we joined
-        hub.broadcast(board.id, { type: 'presence.join', user: presence }, user.id);
-
         // Tell us about MCP status
         if (isMcpConnected(board.id)) {
           sendSafe(socket, {
@@ -223,54 +198,6 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
       }
 
       switch (msg.type) {
-        case 'cursor.move': {
-          const now = Date.now();
-          if (now - conn.lastCursorBroadcastAt < CURSOR_MIN_INTERVAL_MS) break;
-          conn.lastCursorBroadcastAt = now;
-          conn.presence.cursor = msg.cursor;
-          conn.presence.lastSeenAt = nowIso();
-          hub.broadcast(
-            board.id,
-            { type: 'presence.cursor', userId: user.id, cursor: msg.cursor },
-            user.id,
-          );
-          break;
-        }
-        case 'selection.update': {
-          conn.presence.selection = msg.selection ?? undefined;
-          hub.broadcast(
-            board.id,
-            { type: 'presence.selection', userId: user.id, selection: msg.selection },
-            user.id,
-          );
-          break;
-        }
-        case 'viewport.update': {
-          // Single broadcast, followers receive it through the standard
-          // `presence.viewport` event like everyone else.
-          hub.broadcast(
-            board.id,
-            {
-              type: 'presence.viewport',
-              userId: user.id,
-              x: msg.x,
-              y: msg.y,
-              zoom: msg.zoom,
-            },
-            user.id,
-          );
-          break;
-        }
-        case 'follow.start': {
-          conn.followingUserId = msg.targetUserId;
-          conn.presence.followingUserId = msg.targetUserId;
-          break;
-        }
-        case 'follow.stop': {
-          conn.followingUserId = undefined;
-          conn.presence.followingUserId = undefined;
-          break;
-        }
         case 'ping': {
           sendSafe(socket, { type: 'pong', ts: msg.ts });
           break;
@@ -280,28 +207,13 @@ export async function registerBrowserWs(app: FastifyInstance): Promise<void> {
       }
     });
 
-    const boardIdLocal = board.id;
-    const userIdLocal = user.id;
-
     function handleDisconnect(): void {
       hub.unsubscribe(conn);
-      // Delay presence.leave by 5s in case of flaky reconnect.
-      disconnectTimer = setTimeout(() => {
-        // Only fire leave if no other connection for this user has come up
-        const stillThere = hub.findConn(boardIdLocal, userIdLocal);
-        if (!stillThere) {
-          hub.broadcast(boardIdLocal, {
-            type: 'presence.leave',
-            userId: userIdLocal,
-          });
-        }
-      }, 5000);
     }
 
     socket.on('close', handleDisconnect);
     socket.on('error', () => {
-      // Let close handle cleanup; ensure timer is cleared if explicit close follows
-      if (disconnectTimer) clearTimeout(disconnectTimer);
+      // Let close handle cleanup.
     });
   });
 }

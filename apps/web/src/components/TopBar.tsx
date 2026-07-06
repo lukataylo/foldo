@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Board, UserId, User } from '@foldo/protocol';
-import { PresenceAvatars } from '../multiplayer/PresenceAvatars';
 import { useBoardSelector } from '../state/useBoardStore';
 import { ShareManagementModal } from './ShareManagementModal';
 
@@ -9,10 +8,6 @@ const HOME_URL = '/home';
 interface Props {
   board: Board | null;
   meUserId: UserId | null;
-  followingUserId: UserId | null;
-  onFollow: (userId: UserId | null) => void;
-  onCapture: () => void;
-  onOpenTests: () => void;
   onSwitchUser: (userId: UserId) => void;
   wsStatus: 'connecting' | 'open' | 'closed' | 'reconnecting' | 'offline';
   offline: boolean;
@@ -21,10 +16,6 @@ interface Props {
 export function TopBar({
   board,
   meUserId,
-  followingUserId,
-  onFollow,
-  onCapture,
-  onOpenTests,
   onSwitchUser,
   wsStatus,
   offline,
@@ -37,11 +28,6 @@ export function TopBar({
   const shareMenuRef = useRef<HTMLDivElement | null>(null);
   const users = useBoardSelector((s) => s.users);
   const mcpConnected = useBoardSelector((s) => s.mcpConnected);
-  /* A+W1 features — pending test session count for the Tests button badge.
-     `activeTestSessions` is the canonical source (driven by WS
-     test.session.started / completed); rendered with a small absolute
-     overlay so we don't perturb the button's padding or font. */
-  const pendingTestSessions = useBoardSelector((s) => s.activeTestSessions.size);
   const me = meUserId ? users.get(meUserId) ?? null : null;
   const switchable: User[] = [];
   for (const u of users.values()) if (u.kind === 'human') switchable.push(u);
@@ -125,7 +111,7 @@ export function TopBar({
         )}
       </div>
 
-      {/* right: capture, share, avatars */}
+      {/* right: user switcher + share */}
       <div className="pointer-events-auto flex items-center gap-2">
         {me && switchable.length > 1 && (
           <div className="relative">
@@ -171,59 +157,12 @@ export function TopBar({
                   </button>
                 ))}
                 <div className="border-t border-hairlineSoft px-2 py-1.5 text-[10.5px] text-inkFaint">
-                  Open another window to demo multiplayer with a different user.
+                  Refreshes the page under the selected identity.
                 </div>
               </div>
             )}
           </div>
         )}
-        {/* A+W1 touch: py-1.5 → py-2 across the action chips for finger reach. */}
-        <button
-          data-testid="foldo-canvas-topbar-capture"
-          onClick={onCapture}
-          className="flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink hover:bg-white/5"
-        >
-          <ExtensionIcon /> Capture from URL
-        </button>
-        {/* A+W1 features — testid + pending session badge. Position is
-            relative so the badge can absolutely-position over the corner;
-            the button's padding / sizing stays exactly as it was. */}
-        <button
-          data-testid="foldo-topbar-tests"
-          onClick={onOpenTests}
-          title={
-            pendingTestSessions > 0
-              ? `Tests — ${pendingTestSessions} session${pendingTestSessions === 1 ? '' : 's'} in progress`
-              : 'Create unmoderated UX test links'
-          }
-          className="relative flex items-center gap-1.5 rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink hover:bg-white/5"
-        >
-          <FlaskIcon /> Tests
-          {pendingTestSessions > 0 && (
-            <span
-              data-testid="foldo-topbar-tests-badge"
-              aria-label={`${pendingTestSessions} pending sessions`}
-              style={{
-                position: 'absolute',
-                top: -4,
-                right: -4,
-                minWidth: 14,
-                height: 14,
-                padding: '0 3px',
-                borderRadius: 7,
-                background: '#FDB306',
-                color: '#1a1a1d',
-                fontSize: 9.5,
-                fontWeight: 700,
-                lineHeight: '14px',
-                textAlign: 'center',
-                boxShadow: '0 0 0 1.5px #1a1a1d',
-              }}
-            >
-              {pendingTestSessions > 9 ? '9+' : pendingTestSessions}
-            </span>
-          )}
-        </button>
         <div className="relative inline-flex" ref={shareMenuRef}>
           <button
             data-testid="foldo-canvas-topbar-share"
@@ -270,11 +209,6 @@ export function TopBar({
             </div>
           )}
         </div>
-        <PresenceAvatars
-          meUserId={meUserId}
-          followingUserId={followingUserId}
-          onFollow={onFollow}
-        />
       </div>
 
       <ShareManagementModal
@@ -408,37 +342,6 @@ function CheckIcon() {
         strokeWidth="1.6"
         strokeLinecap="round"
         strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-function FlaskIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-      <path
-        d="M6 2.5h4M6.8 2.5v4.2L3.8 12a1 1 0 0 0 .9 1.5h6.6a1 1 0 0 0 .9-1.5L9.2 6.7V2.5"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M5.4 9.5h5.2"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-function ExtensionIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-      <path
-        d="M3 6.5V11a1.5 1.5 0 0 0 1.5 1.5h6A1.5 1.5 0 0 0 12 11V6.5M3 6.5h9M3 6.5V5a1.5 1.5 0 0 1 1.5-1.5h1.25a1 1 0 0 0 1-.6c.1-.2.3-.4.6-.4h1.3c.3 0 .5.2.6.4.1.4.5.6 1 .6h1.25A1.5 1.5 0 0 1 12 5v1.5"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
       />
     </svg>
   );

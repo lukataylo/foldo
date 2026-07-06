@@ -18,6 +18,7 @@ import { canEditBoard } from '../repo/members.ts';
 import { hub } from '../ws/hub.ts';
 import { userMutationLimit } from '../rateLimit.ts';
 import { newId, nowIso } from '../util.ts';
+import { trackFunnelEvent } from '../repo/analytics.ts';
 
 /**
  * Cap a single user's comment-creation rate. 500/hour easily covers an
@@ -58,6 +59,10 @@ export async function registerCommentRoutes(app: FastifyInstance): Promise<void>
         target: body.target,
       });
       hub.broadcast(comment.boardId, { type: 'comment.added', comment });
+      void trackFunnelEvent('first_comment', {
+        userId: user.id,
+        boardId: comment.boardId,
+      }).catch(() => {});
       return reply.send(comment);
     },
   );

@@ -32,14 +32,15 @@ import type {
   Comment,
   CommentAnchor,
   CommentPin,
-  CommentReply,
   CommentTarget,
   Dispatch,
   Frame,
-  RecipeStep,
   SourceFile,
+  Take,
   User,
-  VariantOverrides,
+  Walkthrough,
+  WalkthroughAction,
+  WalkthroughStep,
   AppFrameContent,
   ArrowFrameContent,
   FrameContent,
@@ -47,18 +48,6 @@ import type {
   ImageFrameContent,
   MarkdownFrameContent,
   StickyFrameContent,
-  CaptureRequest,
-  Test,
-  TestTask,
-  TestQuestion,
-  TestTargetMode,
-  TestDeliveryMode,
-  TestStatus,
-  TestSession,
-  TestSessionCounts,
-  TestTaskResult,
-  TestResponseAnswer,
-  RecordingMode,
 } from './domain.ts';
 
 // ---------- Auth ----------
@@ -156,13 +145,115 @@ export interface ListBranchesResponse {
   branches: Branch[];
 }
 
-// ---------- Captures (extension) ----------
-export interface CreateCaptureRequest extends CaptureRequest {}
-export interface CreateCaptureResponse {
-  frame: Frame;
+// ---------- Walkthroughs (living documentation) ----------
+
+/** A step as supplied by the creator UI — server assigns ids when absent. */
+export interface WalkthroughStepInput {
+  id?: string;
+  title: string;
+  narration: string;
+  actions: WalkthroughAction[];
+  durationMs?: number;
 }
 
-// ---------- GitHub webhook (passthrough type) ----------
+export interface CreateWalkthroughRequest {
+  boardId: string;
+  title: string;
+  /** Base URL of the deployed/preview app the director films */
+  targetUrl: string;
+  steps?: WalkthroughStepInput[];
+  authActions?: WalkthroughAction[];
+}
+
+export interface UpdateWalkthroughRequest {
+  title?: string;
+  targetUrl?: string;
+  steps?: WalkthroughStepInput[];
+  authActions?: WalkthroughAction[];
+}
+
+export interface ListWalkthroughsResponse {
+  walkthroughs: Walkthrough[];
+}
+
+export interface GetWalkthroughResponse {
+  walkthrough: Walkthrough;
+  takes: Take[];
+}
+
+export interface CreateWalkthroughResponse {
+  walkthrough: Walkthrough;
+}
+
+/**
+ * Manual render trigger — same path a merged PR takes, useful for the first
+ * take and for retries. `diff` (unified) and PR metadata are optional; with
+ * neither the director films every step.
+ */
+export interface RenderTakeRequest {
+  prNumber?: number;
+  prTitle?: string;
+  diff?: string;
+  summary?: string;
+}
+
+export interface RenderTakeResponse {
+  take: Take;
+}
+
+export interface ProposeStepsResponse {
+  steps: WalkthroughStep[];
+  /** 'llm' when a model drafted them, 'heuristic' for the no-key fallback */
+  proposedBy: 'llm' | 'heuristic';
+}
+
+// ---------- Billing (Stripe) ----------
+
+export type SubscriptionStatus =
+  | 'none'
+  | 'trialing'
+  | 'active'
+  | 'past_due'
+  | 'canceled';
+
+export interface BillingStatusResponse {
+  status: SubscriptionStatus;
+  /** ISO timestamp; present while `status === 'trialing'` */
+  trialEndsAt?: string;
+  /** Products (boards) covered by the subscription */
+  quantity?: number;
+}
+
+export interface CreateCheckoutSessionRequest {
+  /** Where Stripe should send the user afterwards */
+  successUrl?: string;
+  cancelUrl?: string;
+}
+
+export interface CreateCheckoutSessionResponse {
+  /** Stripe-hosted checkout URL to redirect to */
+  url: string;
+}
+
+// ---------- Funnel analytics ----------
+
+/**
+ * The six funnel events instrumented server-side. Emitted once per user
+ * (except walkthrough/dispatch which also carry board context).
+ */
+export type FunnelEventName =
+  | 'signup'
+  | 'first_board'
+  | 'first_walkthrough'
+  | 'first_comment'
+  | 'first_dispatch'
+  | 'conversion';
+
+export interface FunnelSnapshotResponse {
+  counts: Record<FunnelEventName, number>;
+}
+
+// ---------- GitHub webhook (passthrough types) ----------
 export interface GithubPushPayload {
   ref: string;
   before: string;
@@ -177,134 +268,22 @@ export interface GithubPushPayload {
   }>;
 }
 
-// ---------- Tests (unmoderated UX testing) ----------
-
-/** A task as supplied by the builder UI , server assigns id/testId/orderIndex. */
-export interface TestTaskInput {
-  title: string;
-  instruction: string;
-  successHint?: string;
-  startUrl?: string;
-  startRecipe?: TestTask['startRecipe'];
+/** The subset of GitHub's `pull_request` webhook payload the director needs. */
+export interface GithubPullRequestPayload {
+  action: string;
+  number: number;
+  pull_request: {
+    number: number;
+    title: string;
+    body?: string | null;
+    merged: boolean;
+    merge_commit_sha?: string | null;
+    base: { ref: string };
+    head: { ref: string; sha: string };
+    user?: { login: string };
+  };
+  repository: { full_name: string };
 }
-
-export interface CreateTestRequest {
-  boardId: string;
-  name: string;
-  targetUrl?: string;
-  targetMode?: TestTargetMode;
-  intro?: string;
-  recordingModes?: RecordingMode[];
-  responseLimit?: number;
-  tasks?: TestTaskInput[];
-  questionnaire?: TestQuestion[];
-}
-
-export interface UpdateTestRequest {
-  name?: string;
-  targetUrl?: string;
-  targetMode?: TestTargetMode;
-  intro?: string;
-  recordingModes?: RecordingMode[];
-  questionnaire?: TestQuestion[];
-  responseLimit?: number | null;
-  status?: TestStatus;
-}
-
-export interface ReplaceTestTasksRequest {
-  tasks: TestTaskInput[];
-}
-
-/** Test plus its session tallies, for board-level list views. */
-export interface TestListItem {
-  test: Test;
-  sessionCounts: TestSessionCounts;
-}
-
-export interface ListTestsResponse {
-  tests: TestListItem[];
-}
-
-export interface GetTestResponse {
-  test: Test;
-  tasks: TestTask[];
-  /** Absolute foldo.dev/t/:token link */
-  shareUrl: string;
-}
-
-export interface CreateTestResponse {
-  test: Test;
-  shareUrl: string;
-}
-
-/**
- * The public, unauthenticated view a tester gets at GET /api/t/:token.
- * Deliberately omits creator-only fields (board, token internals, limits).
- */
-export interface PublicTestResponse {
-  id: string;
-  name: string;
-  intro: string;
-  status: TestStatus;
-  recordingModes: RecordingMode[];
-  /** Resolved delivery mode for this tester (never `auto`) */
-  deliveryMode: TestDeliveryMode;
-  targetUrl?: string;
-  questionnaire?: TestQuestion[];
-  tasks: TestTask[];
-}
-
-// ---------- Test sessions (tester runtime) ----------
-
-export interface StartTestSessionRequest {
-  recordingMode: RecordingMode;
-  /** Optional self-entered name; falls back to an anonymous "Tester N". */
-  testerLabel?: string;
-  /** UA / viewport / locale / referrer , no PII unless volunteered. */
-  testerMeta?: Record<string, unknown>;
-}
-
-export interface StartTestSessionResponse {
-  sessionId: string;
-  /** Bearer-style secret authorising writes to this one session only. */
-  sessionToken: string;
-  testerLabel: string;
-}
-
-export interface UploadRecordingResponse {
-  ok: true;
-  recordingDurationMs: number;
-}
-
-export interface CompleteTestSessionRequest {
-  taskResults: TestTaskResult[];
-  /** Answers to the followup questionnaire, if the test has one. */
-  responses?: TestResponseAnswer[];
-  recordingDurationMs?: number;
-}
-
-export interface CompleteTestSessionResponse {
-  session: TestSession;
-}
-
-/**
- * Sent (often via navigator.sendBeacon) when a tester closes the tab before
- * finishing — lets the server mark the session `abandoned` instead of leaving
- * it dangling in `started`/`recording` forever.
- */
-export interface AbandonTestSessionRequest {
-  /** Session-scoped write token (sendBeacon can't set custom headers). */
-  sessionToken: string;
-  recordingDurationMs?: number;
-}
-
-/** Creator-side: every session recorded against a test. */
-export interface ListTestSessionsResponse {
-  sessions: TestSession[];
-}
-
-/** Response from POST /api/tests/:id/duplicate. */
-export type DuplicateTestResponse = CreateTestResponse;
 
 // ---------- Misc ----------
 export interface SuccessResponse {

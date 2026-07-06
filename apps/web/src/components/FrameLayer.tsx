@@ -1,29 +1,22 @@
-// FrameLayer — the 7-way frame rendering loop, extracted from App.tsx so it
+// FrameLayer — the per-kind frame rendering loop, extracted from App.tsx so it
 // has its own store subscription scope. App.tsx still re-renders on every
-// store change (cursor moves, dispatch progress, etc.) but the inner frame
-// tree only re-renders when its own inputs change (frames, branches, board,
-// or one of the passed-in props).
+// store change (dispatch progress, etc.) but the inner frame tree only
+// re-renders when its own inputs change (frames, branches, board, or one of
+// the passed-in props).
 //
 // Also wraps each frame in a per-frame ErrorBoundary so a single bad frame
 // (e.g. malformed content_json from a bad WS message) doesn't blank the whole
-// canvas. Completes the Phase-0 deferred per-frame boundary work.
+// canvas.
 
 import { memo, useMemo } from 'react';
-import type {
-  Board,
-  Branch,
-  Comment,
-  Frame,
-  TestSessionIssue,
-} from '@foldo/protocol';
+import type { Board, Branch, Comment, Frame } from '@foldo/protocol';
 import { useBoardSelector } from '../state/useBoardStore';
 import { AppFrame } from './AppFrame';
 import { ArrowFrame } from './ArrowFrame';
 import { ImageFrame } from './ImageFrame';
 import { MarkdownFrame } from './MarkdownFrame';
 import { StickyFrame } from './StickyFrame';
-import { TestSessionFrame } from './TestSessionFrame';
-import { TestSummaryFrame } from './TestSummaryFrame';
+import { WalkthroughFrame } from './WalkthroughFrame';
 import { ErrorBoundary } from './ErrorBoundary';
 import type { SelectedElement, Tool } from '../types';
 
@@ -32,8 +25,7 @@ const MemoMarkdownFrame = memo(MarkdownFrame);
 const MemoStickyFrame = memo(StickyFrame);
 const MemoArrowFrame = memo(ArrowFrame);
 const MemoImageFrame = memo(ImageFrame);
-const MemoTestSummaryFrame = memo(TestSummaryFrame);
-const MemoTestSessionFrame = memo(TestSessionFrame);
+const MemoWalkthroughFrame = memo(WalkthroughFrame);
 
 interface Props {
   tool: Tool;
@@ -46,7 +38,6 @@ interface Props {
   onSelectElement: (sel: SelectedElement | null) => void;
   onDropPin: (frameId: string, x: number, y: number) => void;
   onCommentClick: (frameId: string, comment: Comment) => void;
-  onMakeEditFromIssue: (frame: Frame, issue: TestSessionIssue) => void;
   /**
    * App-level callback for selecting a markdown line. Wired here (not inlined)
    * so FrameLayer doesn't need to know about App's selection state.
@@ -68,11 +59,10 @@ export const FrameLayer = memo(function FrameLayer({
   onSelectElement,
   onDropPin,
   onCommentClick,
-  onMakeEditFromIssue,
   onSelectMdLine,
 }: Props) {
-  // Store reads live here, not in App, so an unrelated store patch (cursor
-  // move, presence update, dispatch status) doesn't re-render the frame tree.
+  // Store reads live here, not in App, so an unrelated store patch (dispatch
+  // status, WS state) doesn't re-render the frame tree.
   const framesMap = useBoardSelector((s) => s.frames);
   const branchesMap = useBoardSelector((s) => s.branches);
   const board = useBoardSelector((s) => s.board);
@@ -122,7 +112,6 @@ export const FrameLayer = memo(function FrameLayer({
                 onSelectElement,
                 onDropPin,
                 onCommentClick,
-                onMakeEditFromIssue,
                 onSelectMdLine,
               })}
             </span>
@@ -148,7 +137,6 @@ function renderFrame(args: {
   onSelectElement: Props['onSelectElement'];
   onDropPin: Props['onDropPin'];
   onCommentClick: Props['onCommentClick'];
-  onMakeEditFromIssue: Props['onMakeEditFromIssue'];
   onSelectMdLine: Props['onSelectMdLine'];
 }): React.ReactNode {
   const {
@@ -163,7 +151,6 @@ function renderFrame(args: {
     onSelectElement,
     onDropPin,
     onCommentClick,
-    onMakeEditFromIssue,
     onSelectMdLine,
   } = args;
 
@@ -199,15 +186,16 @@ function renderFrame(args: {
           onCommentClick={onCommentClick}
         />
       );
-    case 'test_summary':
-      return <MemoTestSummaryFrame frame={f} branch={branch} zoom={zoom} />;
-    case 'test_session':
+    case 'walkthrough':
       return (
-        <MemoTestSessionFrame
+        <MemoWalkthroughFrame
           frame={f}
           branch={branch}
           zoom={zoom}
-          onMakeEditFromIssue={onMakeEditFromIssue}
+          tool={tool}
+          comments={comments}
+          onDropPin={onDropPin}
+          onCommentClick={onCommentClick}
         />
       );
     case 'markdown':
@@ -267,4 +255,3 @@ function FrameErrorBadge({
     </div>
   );
 }
-

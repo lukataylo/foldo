@@ -2,9 +2,6 @@
 // lives in App because it's read from ~8 places (Esc key, route deep-links,
 // background click, etc.); the *handlers* are colocated here. App passes the
 // setters in so this hook stays decoupled from App's other state.
-//
-// Phase-4 plan: this becomes the implementation of the `core/comments`
-// plugin once the plugin substrate lands.
 
 import { useCallback, useEffect, useRef } from 'react';
 import type {
@@ -12,7 +9,6 @@ import type {
   Comment,
   CreateCommentRequest,
   Frame,
-  TestSessionIssue,
   User,
   UserId,
 } from '@foldo/protocol';
@@ -65,7 +61,6 @@ export interface CommentHandlersApi {
   handleDropPin: (frameId: string, xRel: number, yRel: number) => Promise<void>;
   handleCommentClick: (frameId: string, comment: Comment) => void;
   onMakeEditFromComment: () => void;
-  onMakeEditFromIssue: (frame: Frame, issue: TestSessionIssue) => Promise<void>;
   onReplyToComment: (commentId: string, text: string) => Promise<void>;
   onResolveComment: (commentId: string) => Promise<void>;
   onDeleteComment: (commentId: string) => Promise<void>;
@@ -282,7 +277,7 @@ export function useCommentHandlers({
           height: 36,
         },
       });
-    } else if (f.kind === 'app' && c.pin) {
+    } else if ((f.kind === 'app' || f.kind === 'walkthrough') && c.pin) {
       // PIN-DROP FIX (A+ W2): mirror the markdown-pin fallback for app
       // frames whose comment has only a pin (no `target` from the DOM
       // editor). Opens the EditPanel with the pin's local coords as the
@@ -290,9 +285,22 @@ export function useCommentHandlers({
       // from. File/line default to the conventional review starting
       // point — useDispatchFlow will overwrite if the backend resolves
       // a better target.
+      //
+      // Walkthrough frames take the same path: a comment pinned on the
+      // walkthrough video has no source target, so we synthesise a
+      // SelectedElement from the pin + frame. The label is a comment-text
+      // excerpt (falling back to pin coords for empty comments) — enough
+      // context for the dispatch intent without pretending we resolved a
+      // selector.
+      const excerpt = c.text.trim().slice(0, 80);
+      const label =
+        f.kind === 'walkthrough'
+          ? excerpt ||
+            `pin @ ${Math.round(c.pin.x * 100)}%,${Math.round(c.pin.y * 100)}%`
+          : `pin @ ${Math.round(c.pin.x * 100)}%,${Math.round(c.pin.y * 100)}%`;
       setSelectedElement({
         frameId: f.id,
-        label: `pin @ ${Math.round(c.pin.x * 100)}%,${Math.round(c.pin.y * 100)}%`,
+        label,
         file: 'src/App.tsx',
         line: 0,
         currentSource: c.text,
@@ -327,49 +335,6 @@ export function useCommentHandlers({
     setCommentPopover,
     pushToast,
   ]);
-
-  // "Make this an edit" from a test_session synthesis issue: drop a comment on
-  // the session frame carrying the issue text so it flows into the existing
-  // comment → dispatch loop.
-  const onMakeEditFromIssue = useCallback(
-    async (frame: Frame, issue: TestSessionIssue): Promise<void> => {
-      const text = `From testing — ${issue.text}`;
-      if (offline) {
-        const optimistic: Comment = {
-          id: `c-local-${Date.now()}`,
-          boardId: board?.id ?? MOCK_BOARD_FALLBACK,
-          frameId: frame.id,
-          authorUserId: demoUserId,
-          authorName: 'You',
-          authorInitial: 'Y',
-          authorColor: '#7fd49a',
-          text,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          resolved: false,
-          replies: [],
-        };
-        boardStore.upsertComment(optimistic);
-        pushToast('Issue added as a comment');
-        return;
-      }
-      try {
-        const body: CreateCommentRequest = {
-          boardId: board?.id ?? '',
-          frameId: frame.id,
-          text,
-        };
-        const c = await apiCreateComment(body);
-        boardStore.upsertComment(c);
-        pushToast('Issue added as a comment');
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn('[foldo] make-edit-from-issue failed', e);
-        pushToast('Failed to add comment');
-      }
-    },
-    [offline, board, demoUserId, pushToast],
-  );
 
   const onReplyToComment = useCallback(
     async (commentId: string, text: string): Promise<void> => {
@@ -440,7 +405,6 @@ export function useCommentHandlers({
     handleDropPin,
     handleCommentClick,
     onMakeEditFromComment,
-    onMakeEditFromIssue,
     onReplyToComment,
     onResolveComment,
     onDeleteComment,

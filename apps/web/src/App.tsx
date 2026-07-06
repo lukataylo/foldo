@@ -1,4 +1,4 @@
-// Foldo canvas, multiplayer, server-backed Figma-style review surface.
+// Foldo canvas — the living-documentation board viewer.
 //
 // Boot sequence:
 //   1. Parse the URL to find the desired board / frame / comment.
@@ -14,17 +14,13 @@
 //   - useCanvasBoot      — boot effect + WS lifecycle + "offline demo" switch
 //   - useRouteSync       — URL-frame/comment ↔ canvas pan/zoom + popover
 //   - useFrameViewport   — content bounds + near-viewport set + container size
-//   - useTopBarHandlers  — follow / capture-open / tests-open / switch-user
-//   - useFrameTools      — sticky / arrow / image create flows
+//   - useTopBarHandlers  — switch-user
 //   - useDispatchFlow    — edit-panel state + send-to-Claude lifecycle
 //   - useCommentHandlers — drop-pin / reply / resolve / delete + make-edit
 // Render tree stays here; each hook's JSDoc documents its boundary.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type {
-  Comment,
-  Frame,
-} from '@foldo/protocol';
+import type { Comment } from '@foldo/protocol';
 import { Canvas, type CanvasHandle, type ViewportState } from './components/Canvas';
 import { TopBar } from './components/TopBar';
 import { LeftRail } from './components/LeftRail';
@@ -38,24 +34,7 @@ import {
   ClaudeSimulatorBanner,
   useBannerDismissal,
 } from './components/ClaudeSimulatorBanner';
-import { LeftPanel, RightPanel } from './plugins/slots/SidePanel';
-import { ToolBar as PluginToolBar } from './plugins/slots/ToolBar';
-import {
-  registerToastHook,
-  registerSetToolHook,
-  registerSelectFrameHook,
-  /* A+W1 features — layer-nav delete/rename/reorder window hooks. */
-  registerLayerActionHooks,
-  /* A+W4 features — let plugins/tests read the current tool without
-     reaching into App's React state. */
-  registerCurrentToolAccessor,
-} from './plugins/registry';
-/* A+W4 features — read the previously-persisted tool on boot so a reload
-   restores the user's last tool instead of always landing on 'select'.
-   LAST_TOOL_KEY is the canonical localStorage key both sides agree on. */
-import { getInitialTool, LAST_TOOL_KEY } from './plugins/core-tools/index';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { useFrameTools, ArrowDraftPreview } from './hooks/useFrameTools';
 import { useDispatchFlow } from './hooks/useDispatchFlow';
 import { useCommentHandlers } from './hooks/useCommentHandlers';
 import { useCanvasBoot } from './hooks/useCanvasBoot';
@@ -71,22 +50,12 @@ import {
   UnreachableOverlay,
 } from './components/BootOverlays';
 import { EditPanel } from './components/EditPanel';
-import { CaptureModal } from './components/CaptureModal';
-import { TestsPanel } from './components/TestsPanel';
 import { Connectors } from './components/Connectors';
 import { CommentPopover } from './components/CommentPopover';
-import { CursorLayer } from './multiplayer/CursorLayer';
-import { SelectionGhosts } from './multiplayer/SelectionGhosts';
 import { useRoute } from './routing/Router';
 import { boardStore, useBoardSelector } from './state/useBoardStore';
 import { setAuth } from './api/client';
 import { updateComment as apiUpdateComment } from './api/comments';
-/* A+W1 features — layer-nav action hooks call these. */
-import {
-  deleteFrame as apiDeleteFrame,
-  moveFrame as apiMoveFrame,
-  updateFrame as apiUpdateFrame,
-} from './api/frames';
 import {
   readOrCreateDemoUserId,
   readStoredAuth,
@@ -107,12 +76,36 @@ setAuth(DEMO_USER_ID, DEMO_TOKEN);
 // renders (useDispatchFlow takes it as a dep).
 const runOfflineDispatch = makeOfflineDispatchSim(DEMO_USER_ID);
 
+/** localStorage key for the last-selected tool. Bumped if we ever change shape. */
+const LAST_TOOL_KEY = 'foldo:lastTool';
+
+const TOOL_IDS: readonly Tool[] = ['select', 'hand', 'comment', 'edit'];
+
+function isTool(v: unknown): v is Tool {
+  return typeof v === 'string' && (TOOL_IDS as readonly string[]).includes(v);
+}
+
+/**
+ * Read the previously-persisted tool from localStorage. Falls back to
+ * `'select'` when nothing is persisted, the value is unrecognised, or the
+ * read throws (Safari private mode).
+ */
+function getInitialTool(): Tool {
+  try {
+    if (typeof localStorage === 'undefined') return 'select';
+    const raw = localStorage.getItem(LAST_TOOL_KEY);
+    if (raw && isTool(raw)) return raw;
+  } catch {
+    /* ignore */
+  }
+  return 'select';
+}
+
 export default function App() {
   // Granular store subscriptions — each useBoardSelector independently checks
   // whether its slice changed since the last commit, so a comment.added event
   // (which touches only `comments`) won't re-render the App tree just because
-  // a single useBoardSnapshot() read was at the root. Cuts the worst-case
-  // re-render rate on a busy multiplayer board by ~70%. `snap` is rebuilt
+  // a single useBoardSnapshot() read was at the root. `snap` is rebuilt
   // each render for back-compat with the many `snap.X` reads below; it's not
   // used as anyone's dep so the rebuilt object is fine.
   const board = useBoardSelector((s) => s.board);
@@ -120,7 +113,6 @@ export default function App() {
   const comments_ = useBoardSelector((s) => s.comments);
   const branches_ = useBoardSelector((s) => s.branches);
   const users_ = useBoardSelector((s) => s.users);
-  const presence_ = useBoardSelector((s) => s.presence);
   const dispatches_ = useBoardSelector((s) => s.dispatches);
   const meUserId = useBoardSelector((s) => s.meUserId);
   const hydrated = useBoardSelector((s) => s.hydrated);
@@ -134,7 +126,6 @@ export default function App() {
     comments: comments_,
     branches: branches_,
     users: users_,
-    presence: presence_,
     dispatches: dispatches_,
     meUserId,
     hydrated,
@@ -151,23 +142,20 @@ export default function App() {
   const isBoardRoute = !!route.boardId || (typeof location !== 'undefined' && /^\/board\//.test(location.pathname));
   /* /A+W1 touch */
 
-  const { boot, useOfflineDemo, wsRef } = useCanvasBoot({
+  const { boot, useOfflineDemo } = useCanvasBoot({
     route,
     navigate,
     demoUserId: DEMO_USER_ID,
     demoToken: DEMO_TOKEN,
   });
-  /* A+W4 features — seed from localStorage so the canvas reopens on the
-     user's last tool. getInitialTool() falls back to 'select' for first
-     paint / unsupported storage. */
+  // Seed from localStorage so the canvas reopens on the user's last tool.
+  // getInitialTool() falls back to 'select' for first paint / unsupported
+  // storage.
   const [tool, setToolRaw] = useState<Tool>(() => getInitialTool());
-  /* A+W4 features — wrap setTool so every tool change (plugin activate,
-     comment "make this an edit" flow, frame-tools sticky/image/arrow
-     completion handlers, …) persists to localStorage. Without this wrap
-     only plugin-driven changes round-trip across reload — direct callers
-     (useCommentHandlers, useFrameTools) would silently drop the persistence.
-     useCallback keeps the identity stable so the hooks that take setTool
-     in their deps array don't see a fresh function every render. */
+  // Wrap setTool so every tool change (rail click, hotkey, comment "make this
+  // an edit" flow, …) persists to localStorage. useCallback keeps the
+  // identity stable so the hooks that take setTool in their deps array don't
+  // see a fresh function every render.
   const setTool = useCallback((next: Tool): void => {
     try {
       if (typeof localStorage !== 'undefined') {
@@ -178,7 +166,7 @@ export default function App() {
     }
     setToolRaw(next);
   }, []);
-  const [selectedElement, setSelectedElementRaw] =
+  const [selectedElement, setSelectedElement] =
     useState<SelectedElement | null>(null);
   // activeDispatchId lives in useDispatchFlow now.
   const [viewport, setViewport] = useState<ViewportState>({
@@ -197,56 +185,10 @@ export default function App() {
   );
   const { toasts, push: pushToast } = useToastQueue();
   // Back-compat shim for the showToast helper calls scattered through the file.
-  // TODO(phase-1-extract): delete once the comment/dispatch/frame-tools
-  // extractions land — those callers will receive pushToast directly.
   const setToast = pushToast;
-  // Expose pushToast to the plugin context's notify() escape hatch. Plugins
-  // call ctx.notify(msg) → registry.defaultContext lookups window.__foldoToast
-  // → this push. Re-registering on every push identity change is cheap.
-  useEffect(() => registerToastHook(pushToast), [pushToast]);
-  // Same escape hatch for the canvas tool setter. The core/tools plugin's
-  // ToolSpec.activate() calls window.__foldoSetTool, which routes here.
-  // useState's setter is stable across renders so this only fires once.
-  useEffect(() => registerSetToolHook(setTool as (t: string) => void), []);
-  /* A+W4 features — register a getter for the live tool so the plugin layer
-     can read it without importing App. The accessor closes over the latest
-     `tool` value via a ref-style refresh on every render (cheap). */
-  const toolRef = useRef<Tool>(tool);
-  toolRef.current = tool;
-  useEffect(() => {
-    registerCurrentToolAccessor(() => toolRef.current);
-    return () => registerCurrentToolAccessor(null);
-  }, []);
-  const topBar = useTopBarHandlers({ wsRef });
-  const {
-    followingUserId,
-    captureOpen,
-    setCaptureOpen,
-    testsOpen,
-    setTestsOpen,
-  } = topBar;
-
-  // Flag the body element when the AI edit panel is mounted so CSS can hide
-  // the right plugin slot (Inspect tab) — they both want the right rail
-  // and were overlapping. Cleanup removes the attr on unmount so the
-  // Inspect panel can re-appear once the edit flow closes.
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    if (selectedElement) {
-      document.body.setAttribute('data-edit-panel-open', 'true');
-    } else {
-      document.body.removeAttribute('data-edit-panel-open');
-    }
-    return () => {
-      document.body.removeAttribute('data-edit-panel-open');
-    };
-  }, [selectedElement]);
+  const topBar = useTopBarHandlers();
 
   const canvasRef = useRef<CanvasHandle>(null);
-  const lastBroadcastSelectionRef = useRef<string | null>(null);
-  const viewportBroadcastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
 
   // ---------- derived: bounds / frames-by-id / near-viewport ----------
 
@@ -282,125 +224,6 @@ export default function App() {
     selectionRef.current = selectedElement;
   }, [selectedElement]);
 
-  // Plugin escape hatch: the Layer Navigator (and any future panel that needs
-  // to drive the canvas) calls window.__foldoSelectFrame(frameId) to focus a
-  // frame from outside the React tree. We register the hook here because this
-  // is the only site that owns both fitToFrame and the route navigator. The
-  // pan happens via navigate() flipping route.frameId, which the focus effect
-  // above translates into a fitToFrame() call — same path as a deep-link.
-  useEffect(() => {
-    registerSelectFrameHook((frameId: string) => {
-      const f = boardStore.getSnapshot().frames.get(frameId);
-      if (!f) return;
-      setSelectedElementRaw(null);
-      setCommentPopover(null);
-      if (snap.board) {
-        navigate({ boardId: snap.board.id, frameId });
-      }
-      // Best-effort immediate pan — the URL effect will also fire but doing
-      // it here keeps the response feel tight even before the route updates.
-      fitToFrame(f);
-    });
-  }, [snap.board, navigate, fitToFrame]);
-
-  /* A+W1 features — layer-nav action hooks. The Layer Navigator's
-     toolbar (touch agent's surface) calls window.__foldoDeleteFrame /
-     __foldoRenameFrame / __foldoReorderFrame; we own the implementations
-     so they go through the REST API + optimistic store writes. Offline
-     mode skips the REST call but keeps the store in sync. */
-  useEffect(() => {
-    const offline = boot.kind === 'offline';
-    registerLayerActionHooks({
-      delete: async (frameId: string) => {
-        const f = boardStore.getSnapshot().frames.get(frameId);
-        if (!f) return;
-        boardStore.removeFrame(frameId);
-        if (!offline) {
-          try {
-            await apiDeleteFrame(frameId);
-          } catch (err) {
-            // Re-insert on failure so the UI doesn't silently lose state.
-            // eslint-disable-next-line no-console
-            console.warn('[foldo] delete frame failed', err);
-            boardStore.upsertFrame(f);
-            pushToast('Failed to delete frame');
-          }
-        }
-      },
-      rename: async (frameId: string, newName: string) => {
-        const f = boardStore.getSnapshot().frames.get(frameId);
-        if (!f) return;
-        // Translate "name" into the per-kind content slot the user would
-        // visually edit — sticky body, markdown title, image caption.
-        const trimmed = (newName ?? '').trim();
-        if (!trimmed) return;
-        let nextContent: Frame['content'] = f.content;
-        if (f.content.kind === 'sticky') {
-          nextContent = { ...f.content, body: trimmed };
-        } else if (f.content.kind === 'markdown') {
-          nextContent = { ...f.content, title: trimmed };
-        } else if (f.content.kind === 'image') {
-          nextContent = { ...f.content, caption: trimmed };
-        } else {
-          // app / arrow frames don't have an obvious user-editable name slot;
-          // fall back to surfacing the rename in commitMessage so the layer
-          // tree still updates.
-          boardStore.upsertFrame({ ...f, commitMessage: trimmed });
-          return;
-        }
-        const optimistic = { ...f, content: nextContent };
-        boardStore.upsertFrame(optimistic);
-        if (!offline) {
-          try {
-            const updated = await apiUpdateFrame(frameId, { content: nextContent });
-            boardStore.upsertFrame(updated);
-          } catch (err) {
-            // eslint-disable-next-line no-console
-            console.warn('[foldo] rename frame failed', err);
-            boardStore.upsertFrame(f);
-            pushToast('Failed to rename frame');
-          }
-        }
-      },
-      reorder: async (frameId: string, newIndex: number) => {
-        // v1: "reorder" within a branch means shuffling x positions on the
-        // canvas. We compute the target x relative to the branch siblings
-        // sorted by current x and pin the frame there.
-        const snap = boardStore.getSnapshot();
-        const f = snap.frames.get(frameId);
-        if (!f) return;
-        const siblings: Frame[] = [];
-        for (const s of snap.frames.values()) {
-          if (s.branchId === f.branchId && s.id !== frameId) siblings.push(s);
-        }
-        siblings.sort((a, b) => a.position.x - b.position.x);
-        const clamped = Math.max(0, Math.min(newIndex, siblings.length));
-        const before = siblings[clamped - 1];
-        const after = siblings[clamped];
-        const targetX = before && after
-          ? (before.position.x + after.position.x) / 2
-          : before
-            ? before.position.x + (before.size.width + 80)
-            : after
-              ? Math.max(0, after.position.x - (f.size.width + 80))
-              : f.position.x;
-        boardStore.moveFrame(frameId, targetX, f.position.y);
-        if (!offline) {
-          try {
-            await apiMoveFrame(frameId, {
-              position: { x: targetX, y: f.position.y },
-            });
-          } catch (err) {
-            // eslint-disable-next-line no-console
-            console.warn('[foldo] reorder frame failed', err);
-            boardStore.moveFrame(frameId, f.position.x, f.position.y);
-            pushToast('Failed to reorder frame');
-          }
-        }
-      },
-    });
-  }, [boot.kind, pushToast]);
-
   /* A+W1 features — global unhandled rejection listener. Without this,
      a stray `void fetch(...).then()` that rejects only prints to the
      console; the user sees nothing. We log + surface a generic toast
@@ -420,7 +243,7 @@ export default function App() {
   // Hook owns the keydown handler; this site keeps the Esc semantics local
   // because clearing the popover/intent reaches into App-only state.
   const handleEscape = useCallback(() => {
-    setSelectedElementRaw(null);
+    setSelectedElement(null);
     setCommentPopover(null);
     setInitialIntent(undefined);
   }, []);
@@ -432,78 +255,6 @@ export default function App() {
     onEscape: handleEscape,
   });
 
-  // ---------- multiplayer outbound ----------
-
-  const onCursorMove = useCallback((x: number, y: number) => {
-    wsRef.current?.send({
-      type: 'cursor.move',
-      cursor: { x, y },
-    });
-  }, [wsRef]);
-
-  // Broadcast selection updates to the server
-  const setSelectedElement = useCallback((sel: SelectedElement | null) => {
-    setSelectedElementRaw(sel);
-    const key = sel ? `${sel.frameId}|${sel.label}` : null;
-    if (lastBroadcastSelectionRef.current !== key) {
-      lastBroadcastSelectionRef.current = key;
-      wsRef.current?.send({
-        type: 'selection.update',
-        selection: sel
-          ? { frameId: sel.frameId, elementSelector: sel.label }
-          : null,
-      });
-    }
-  }, [wsRef]);
-
-  // Debounced viewport broadcast (used for follow-me)
-  useEffect(() => {
-    if (viewportBroadcastTimerRef.current) {
-      clearTimeout(viewportBroadcastTimerRef.current);
-    }
-    viewportBroadcastTimerRef.current = setTimeout(() => {
-      wsRef.current?.send({
-        type: 'viewport.update',
-        x: viewport.x,
-        y: viewport.y,
-        zoom: viewport.zoom,
-      });
-    }, 120);
-    return () => {
-      if (viewportBroadcastTimerRef.current) {
-        clearTimeout(viewportBroadcastTimerRef.current);
-        viewportBroadcastTimerRef.current = null;
-      }
-    };
-  }, [viewport.x, viewport.y, viewport.zoom, wsRef]);
-
-  // Follow-me: react to the followed user's viewport updates
-  const followedViewport = followingUserId
-    ? (snap.presence.get(followingUserId)?.viewport ?? null)
-    : null;
-  useEffect(() => {
-    if (!followingUserId || !followedViewport) return;
-    const v = followedViewport;
-    const c = canvasRef.current;
-    if (!c) return;
-    const rect = canvasContainerRectFallback();
-    // Compute the followed user's screen-center in world coords and fit a
-    // viewport-sized rect around it.
-    const wx = (rect.width / 2 - v.x) / v.zoom;
-    const wy = (rect.height / 2 - v.y) / v.zoom;
-    c.fitTo({
-      x: wx - rect.width / (2 * v.zoom),
-      y: wy - rect.height / (2 * v.zoom),
-      width: rect.width / v.zoom,
-      height: rect.height / v.zoom,
-    });
-  }, [
-    followingUserId,
-    followedViewport?.x,
-    followedViewport?.y,
-    followedViewport?.zoom,
-  ]);
-
   // ---------- comments ----------
 
   const onSelectElement = useCallback(
@@ -512,13 +263,13 @@ export default function App() {
       if (!sel) setInitialIntent(undefined);
       setCommentPopover(null);
     },
-    [setSelectedElement],
+    [],
   );
 
   // Comment handlers — handleDropPin, handleCommentClick, onMakeEditFromComment,
-  // onMakeEditFromIssue, onReplyToComment, onResolveComment, onDeleteComment.
-  // Popover state stays in App (read from ~8 places) but the handler bodies
-  // live in useCommentHandlers.
+  // onReplyToComment, onResolveComment, onDeleteComment. Popover state stays
+  // in App (read from ~8 places) but the handler bodies live in
+  // useCommentHandlers.
   const commentHandlers = useCommentHandlers({
     board: snap.board,
     frames: snap.frames,
@@ -535,12 +286,8 @@ export default function App() {
     pushToast,
     commentPopover,
   });
-  const {
-    handleDropPin,
-    handleCommentClick,
-    onMakeEditFromComment,
-    onMakeEditFromIssue,
-  } = commentHandlers;
+  const { handleDropPin, handleCommentClick, onMakeEditFromComment } =
+    commentHandlers;
 
   // Stable callback for FrameLayer's MarkdownFrame children. Looks up the
   // frame from the store (rather than capturing snap.frames in closure so the
@@ -558,7 +305,7 @@ export default function App() {
         rect: { x: 0, y: 0, width: 0, height: 0 },
       });
     },
-    [setSelectedElement],
+    [],
   );
 
   // onReplyToComment / onResolveComment / onDeleteComment live in
@@ -585,31 +332,6 @@ export default function App() {
     runOffline: runOfflineDispatch,
   });
   const activeDispatch = dispatchFlow.activeDispatch;
-
-  // ---------- capture ----------
-
-  const onCaptureComplete = useCallback(
-    (frame: Frame) => {
-      boardStore.upsertFrame(frame);
-      setCaptureOpen(false);
-      showToast(setToast, 'Frame captured');
-      setTimeout(() => fitToFrame(frame, 80), 250);
-      if (snap.board) navigate({ boardId: snap.board.id, frameId: frame.id });
-    },
-    [snap.board, navigate, fitToFrame, setCaptureOpen, setToast],
-  );
-
-  // ---------- new-frame tools (sticky / arrow / image) ----------
-  // All the create handlers + arrow-draft state + image-input ref live in
-  // useFrameTools. The hook returns the arrow draft, the file input ref, an
-  // onChange for the input, click handlers for the sticky/image tools, and
-  // background-drag handlers for the arrow tool.
-  const frameTools = useFrameTools({
-    board: snap.board,
-    branches: snap.branches,
-    setTool,
-    pushToast,
-  });
 
   // ---------- popover screen-positioning ----------
 
@@ -651,16 +373,7 @@ export default function App() {
         tool={tool}
         contentBounds={bounds}
         onViewportChange={setViewport}
-        onCursorMove={onCursorMove}
-        onBackgroundClick={(world) => {
-          if (tool === 'sticky') {
-            frameTools.createStickyAt(world);
-            return;
-          }
-          if (tool === 'image') {
-            frameTools.openImagePickerAt(world);
-            return;
-          }
+        onBackgroundClick={() => {
           if (tool !== 'comment') {
             setSelectedElement(null);
             setCommentPopover(null);
@@ -669,19 +382,8 @@ export default function App() {
             }
           }
         }}
-        onBackgroundDragStart={
-          tool === 'arrow' ? frameTools.arrowDragHandlers.onStart : undefined
-        }
-        onBackgroundDragMove={
-          tool === 'arrow' ? frameTools.arrowDragHandlers.onMove : undefined
-        }
-        onBackgroundDragEnd={
-          tool === 'arrow' ? frameTools.arrowDragHandlers.onEnd : undefined
-        }
       >
         <Connectors frames={frames} inViewportFrameIds={inViewportSet} />
-        <SelectionGhosts meUserId={snap.meUserId} />
-        <ArrowDraftPreview draft={frameTools.arrowDraft} />
         <FrameLayer
           tool={tool}
           selectedElement={selectedElement}
@@ -691,43 +393,18 @@ export default function App() {
           onSelectElement={onSelectElement}
           onDropPin={handleDropPin}
           onCommentClick={handleCommentClick}
-          onMakeEditFromIssue={onMakeEditFromIssue}
           onSelectMdLine={onSelectMdLine}
         />
-        <CursorLayer meUserId={snap.meUserId} zoom={viewport.zoom} />
       </Canvas>
 
       <TopBar
         board={snap.board}
         meUserId={snap.meUserId}
-        followingUserId={followingUserId}
-        onFollow={topBar.onFollow}
-        onCapture={topBar.onCapture}
-        onOpenTests={topBar.onOpenTests}
         onSwitchUser={topBar.onSwitchUser}
         wsStatus={snap.wsStatus}
         offline={boot.kind === 'offline'}
       />
-      {/* A+W1 features — `onChange` was a dead prop; the plugin tools
-          route through window.__foldoSetTool. */}
-      <LeftRail tool={tool} />
-      {/*
-        Plugin substrate slots (Step 9). LeftPanel / RightPanel / PluginToolBar
-        render nothing if no plugin contributes to them, so today they're
-        invisible — Step 10's Layer Navigator + Step 11's DOM Editor light them
-        up. Mounted alongside the existing LeftRail / EditPanel / TestsPanel
-        rather than replacing them so the substrate ships with zero UX change.
-      */}
-      <LeftPanel />
-      <RightPanel />
-      <PluginToolBar />
-      <input
-        ref={frameTools.imageInputRef}
-        type="file"
-        accept="image/*"
-        style={{ position: 'fixed', left: -9999, top: -9999, opacity: 0 }}
-        onChange={frameTools.onImageFileChange}
-      />
+      <LeftRail tool={tool} onChange={setTool} />
       <ZoomControl
         zoom={viewport.zoom}
         onZoomIn={() => canvasRef.current?.zoomIn()}
@@ -830,20 +507,6 @@ export default function App() {
         />
       )}
 
-      <CaptureModal
-        open={captureOpen}
-        boardId={snap.board?.id ?? null}
-        meUserId={snap.meUserId}
-        onClose={() => setCaptureOpen(false)}
-        onComplete={onCaptureComplete}
-      />
-
-      <TestsPanel
-        open={testsOpen}
-        boardId={snap.board?.id ?? null}
-        onClose={() => setTestsOpen(false)}
-      />
-
       {/* A+W1 features — show the simulator banner when MCP isn't
           connected (dispatches are answered by the local simulator).
           Hidden in the offline demo and once the user dismisses it for
@@ -863,8 +526,7 @@ export default function App() {
       {snap.hydrated &&
         frames.length > 0 &&
         !selectedElement &&
-        !commentPopover &&
-        !captureOpen && <FirstRunHint count={frames.length} />}
+        !commentPopover && <FirstRunHint count={frames.length} />}
 
       <ToastStack toasts={toasts} />
     </div>
@@ -873,18 +535,11 @@ export default function App() {
 
 // ----- memoised frame children so unrelated frame updates don't re-render every frame -----
 
-// Frame memo wrappers + the 7-way render loop live in components/FrameLayer.tsx
+// Frame memo wrappers + the per-kind render loop live in components/FrameLayer.tsx
 
-// Legacy helper kept so the many `showToast(setToast, '…')` callsites in this
-// file can stay unchanged during Phase 1. The "setter" arg is now actually
-// pushToast from useToastQueue (back-compat shim above). Once the comment /
-// dispatch / frame-tools components are extracted in Phase 1.3-1.5 they'll
-// take pushToast directly and this helper goes away.
+// Legacy helper kept so the `showToast(setToast, '…')` callsites in this
+// file can stay unchanged. The "setter" arg is now actually pushToast from
+// useToastQueue (back-compat shim above).
 function showToast(push: (msg: string) => void, msg: string): void {
   push(msg);
-}
-
-function canvasContainerRectFallback() {
-  if (typeof window === 'undefined') return { width: 1440, height: 900 };
-  return { width: window.innerWidth, height: window.innerHeight };
 }

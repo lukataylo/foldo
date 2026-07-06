@@ -329,7 +329,9 @@ function FrameTile({
             ? 'Arrow'
             : c.kind === 'image'
               ? 'Image'
-              : 'Frame';
+              : c.kind === 'walkthrough'
+                ? 'Walkthrough'
+                : 'Frame';
   const previewDetail =
     c.kind === 'markdown'
       ? c.title || c.docPath
@@ -339,7 +341,15 @@ function FrameTile({
           ? (c.body ?? '').slice(0, 80)
           : c.kind === 'image'
             ? c.caption || c.alt || 'Image'
-            : '';
+            : c.kind === 'walkthrough'
+              ? c.prTitle || c.summary || c.title
+              : '';
+  // Walkthrough tiles can cheaply show the take's poster still behind the
+  // kind chip — the poster URL is API-relative, same as image uploads.
+  const posterSrc =
+    c.kind === 'walkthrough' && c.posterUrl
+      ? `${API_BASE}${c.posterUrl.startsWith('/') ? '' : '/'}${c.posterUrl}`
+      : null;
   return (
     <div
       className="frame-tile"
@@ -349,7 +359,23 @@ function FrameTile({
       style={{ position: 'relative' }}
     >
       <div className="preview" style={{ position: 'relative' }}>
-        <span className="chip">{kindLabel}</span>
+        {posterSrc && (
+          <img
+            src={posterSrc}
+            alt={c.kind === 'walkthrough' ? c.title : ''}
+            draggable={false}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+            }}
+          />
+        )}
+        <span className="chip" style={posterSrc ? { position: 'relative' } : undefined}>
+          {kindLabel}
+        </span>
         {unresolved.length > 0 && (
           <CommentMarkers
             count={unresolved.length}

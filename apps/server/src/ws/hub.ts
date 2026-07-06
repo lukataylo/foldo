@@ -1,4 +1,4 @@
-import type { ServerMessage, UserId, BoardId, PresenceUser } from '@foldo/protocol';
+import type { ServerMessage, UserId, BoardId } from '@foldo/protocol';
 import { PROTOCOL_VERSION } from '@foldo/protocol';
 import type { WebSocket } from 'ws';
 import { setWsHubSampler, wsBroadcastSeq, wsConnections, type WsHubSample } from '../metrics.ts';
@@ -41,10 +41,6 @@ export interface BrowserConn {
   socket: WebSocket;
   boardId: BoardId;
   userId: UserId;
-  presence: PresenceUser;
-  followingUserId?: UserId;
-  /** Cursor broadcast throttling */
-  lastCursorBroadcastAt: number;
 }
 
 /**

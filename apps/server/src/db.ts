@@ -327,76 +327,79 @@ CREATE TABLE IF NOT EXISTS demo_requests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Unmoderated UX tests. A test publishes a short foldo.dev/t/:token link;
--- testers run it, recordings + answers land back on the board as frames.
-CREATE TABLE IF NOT EXISTS tests (
+-- NOTE: the tests / test_tasks / test_sessions / test_task_results tables were
+-- removed in the living-docs pivot (2026-07); pre-pivot databases may still
+-- carry those (now orphaned) tables — we deliberately don't DROP them.
+
+-- ============================================================================
+-- Living documentation (the pivot's core domain).
+-- A walkthrough is the maintained spec of narrated steps filmed against the
+-- product; a take is one rendering of it, usually triggered by a merged PR.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS walkthroughs (
   id TEXT PRIMARY KEY,
   board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  target_url TEXT,
-  target_mode TEXT NOT NULL DEFAULT 'auto',
-  frameable BOOLEAN,
-  dom_snapshot_key TEXT,
-  intro TEXT NOT NULL DEFAULT '',
-  recording_modes_json TEXT NOT NULL DEFAULT '["screen_voice","voice_only"]',
-  questionnaire_json TEXT,
-  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','live','closed')),
-  share_token TEXT NOT NULL UNIQUE,
-  response_limit INTEGER,
-  summary_frame_id TEXT,
-  created_by_user_id TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_tests_board ON tests(board_id);
-
-CREATE TABLE IF NOT EXISTS test_tasks (
-  id TEXT PRIMARY KEY,
-  test_id TEXT NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
-  order_index INTEGER NOT NULL,
   title TEXT NOT NULL,
-  instruction TEXT NOT NULL,
-  success_hint TEXT,
-  start_url TEXT,
-  start_recipe_json TEXT
+  target_url TEXT NOT NULL,
+  steps_json JSONB NOT NULL DEFAULT '[]',
+  auth_actions_json JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_test_tasks_test ON test_tasks(test_id);
+CREATE INDEX IF NOT EXISTS idx_walkthroughs_board ON walkthroughs(board_id);
 
-CREATE TABLE IF NOT EXISTS test_sessions (
+CREATE TABLE IF NOT EXISTS walkthrough_takes (
   id TEXT PRIMARY KEY,
-  test_id TEXT NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
-  session_token TEXT,
-  status TEXT NOT NULL DEFAULT 'started'
-    CHECK (status IN ('started','recording','completed','abandoned')),
-  recording_mode TEXT NOT NULL,
-  tester_label TEXT NOT NULL,
-  tester_meta_json TEXT,
-  consent_at TEXT,
-  recording_key TEXT,
-  recording_duration_ms INTEGER,
-  transcript_json TEXT,
-  transcript_status TEXT NOT NULL DEFAULT 'pending',
-  responses_json TEXT,
-  synthesis_json TEXT,
-  result_frame_id TEXT,
-  started_at TEXT NOT NULL,
-  completed_at TEXT
+  walkthrough_id TEXT NOT NULL REFERENCES walkthroughs(id) ON DELETE CASCADE,
+  parent_take_id TEXT,
+  pr_number INTEGER,
+  pr_title TEXT,
+  summary TEXT,
+  status TEXT NOT NULL CHECK (status IN ('queued','capturing','rendering','ready','degraded','error')),
+  step_diffs_json JSONB NOT NULL DEFAULT '[]',
+  segments_json JSONB NOT NULL DEFAULT '[]',
+  -- The effective step list this take was filmed from (spec after applying
+  -- the verdict's proposals) — the walkthrough row is updated to match on
+  -- success, but the take keeps its own copy for history.
+  steps_json JSONB NOT NULL DEFAULT '[]',
+  master_sha256 TEXT,
+  video_key TEXT,
+  poster_key TEXT,
+  captions_key TEXT,
+  duration_ms INTEGER,
+  frame_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  error_message TEXT
 );
--- Additive migrations for dev databases created before these columns existed.
-ALTER TABLE test_sessions ADD COLUMN IF NOT EXISTS session_token TEXT;
-ALTER TABLE test_sessions ADD COLUMN IF NOT EXISTS synthesis_json TEXT;
-CREATE INDEX IF NOT EXISTS idx_test_sessions_test ON test_sessions(test_id);
+CREATE INDEX IF NOT EXISTS idx_takes_walkthrough ON walkthrough_takes(walkthrough_id);
 
-CREATE TABLE IF NOT EXISTS test_task_results (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES test_sessions(id) ON DELETE CASCADE,
-  task_id TEXT NOT NULL,
-  outcome TEXT NOT NULL CHECK (outcome IN ('completed','skipped','gave_up')),
-  duration_ms INTEGER NOT NULL DEFAULT 0,
-  recording_offset_ms INTEGER NOT NULL DEFAULT 0,
-  events_json TEXT
+-- Stripe billing: one row per customer (user). £79/month per product with a
+-- 14-day trial; quantity = number of products (boards) covered.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  status TEXT NOT NULL DEFAULT 'none',
+  trial_ends_at TIMESTAMPTZ,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_test_task_results_session ON test_task_results(session_id);
+
+-- Funnel analytics, server-side. Six event names (see @foldo/protocol
+-- FunnelEventName); the partial unique index makes first_* events idempotent
+-- per user so route code can fire-and-forget.
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  user_id TEXT,
+  board_id TEXT,
+  metadata_json JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_once_per_user
+  ON analytics_events(name, user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_analytics_name ON analytics_events(name);
 
 CREATE INDEX IF NOT EXISTS idx_frames_board ON frames(board_id);
 CREATE INDEX IF NOT EXISTS idx_comments_frame ON comments(frame_id);
@@ -409,7 +412,6 @@ CREATE INDEX IF NOT EXISTS idx_branches_board ON branches(board_id);
 CREATE INDEX IF NOT EXISTS idx_commits_branch ON commits(branch_id);
 CREATE INDEX IF NOT EXISTS idx_frames_parent ON frames(parent_frame_id);
 CREATE INDEX IF NOT EXISTS idx_frames_board_kind ON frames(board_id, kind);
-CREATE INDEX IF NOT EXISTS idx_test_sessions_status ON test_sessions(status);
 
 -- ============================================================================
 -- Foreign-key constraints. Until now frames / comments / dispatches were
@@ -517,15 +519,6 @@ DO $$ BEGIN
       CHECK (pin_y IS NULL OR (pin_y >= 0 AND pin_y <= 1));
   END IF;
 
-  -- Recording durations are physical: a negative one is a bug.
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'test_sessions_recording_duration_nonneg') THEN
-    UPDATE test_sessions SET recording_duration_ms = 0
-      WHERE recording_duration_ms IS NOT NULL AND recording_duration_ms < 0;
-    ALTER TABLE test_sessions
-      ADD CONSTRAINT test_sessions_recording_duration_nonneg
-      CHECK (recording_duration_ms IS NULL OR recording_duration_ms >= 0);
-  END IF;
-
   -- DOUBLE PRECISION can hold NaN, which breaks layout math and renders
   -- frames at unreachable positions. x = x is the canonical NaN check
   -- (NaN is the only value not equal to itself).
@@ -550,28 +543,10 @@ DO $$ BEGIN
     ALTER TABLE branches
       ADD CONSTRAINT branches_board_name_unique UNIQUE (board_id, name);
   END IF;
-
-  -- One task per (test, order_index) — the order is meant to be a sortable
-  -- key for the tester UI, duplicates produce a non-deterministic order.
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'test_tasks_test_order_unique') THEN
-    -- Re-pack duplicates: any (test_id, order_index) collisions get their
-    -- order_index bumped to the next free slot.
-    WITH dups AS (
-      SELECT id, test_id, order_index,
-             ROW_NUMBER() OVER (PARTITION BY test_id, order_index ORDER BY id) AS rn
-        FROM test_tasks
-    )
-    UPDATE test_tasks t
-       SET order_index = t.order_index + d.rn - 1
-      FROM dups d
-     WHERE d.id = t.id AND d.rn > 1;
-    ALTER TABLE test_tasks
-      ADD CONSTRAINT test_tasks_test_order_unique UNIQUE (test_id, order_index);
-  END IF;
 END $$;
 
 -- ============================================================================
--- Migrate the 13 TEXT-storing-JSON columns to JSONB. JSONB gives us native
+-- Migrate the TEXT-storing-JSON columns to JSONB. JSONB gives us native
 -- containment / indexability, SQL-level validation (a malformed write fails
 -- at the DB instead of being silently accepted), and removes the per-row
 -- JSON.parse cost on read. The pg driver returns JSONB columns as parsed
@@ -585,7 +560,7 @@ END $$;
 -- silently dropping data.
 -- ============================================================================
 -- ============================================================================
--- Standardize 19 TEXT-storing-ISO-timestamp columns to TIMESTAMPTZ. Without
+-- Standardize the TEXT-storing-ISO-timestamp columns to TIMESTAMPTZ. Without
 -- this we mix two timestamp types across the same DB — SQL date math fails,
 -- timezone bugs are latent, and indexes on (date, ...) sort lexicographically
 -- not chronologically. The pg driver's TIMESTAMPTZ parser is overridden at
@@ -612,12 +587,7 @@ DECLARE
     ARRAY['dispatches',    'created_at'],
     ARRAY['dispatches',    'started_at'],
     ARRAY['dispatches',    'finished_at'],
-    ARRAY['sources',       'updated_at'],
-    ARRAY['tests',         'created_at'],
-    ARRAY['tests',         'updated_at'],
-    ARRAY['test_sessions', 'started_at'],
-    ARRAY['test_sessions', 'completed_at'],
-    ARRAY['test_sessions', 'consent_at']
+    ARRAY['sources',       'updated_at']
   ];
   tname TEXT;
   cname TEXT;
@@ -647,15 +617,7 @@ DECLARE
     ARRAY['comments',          'target_json',          NULL],
     ARRAY['comments',          'replies_json',         '[]'::text],
     ARRAY['dispatches',        'target_json',          NULL],
-    ARRAY['dispatches',        'events_json',          '[]'::text],
-    ARRAY['tests',             'recording_modes_json', '["screen_voice","voice_only"]'::text],
-    ARRAY['tests',             'questionnaire_json',   NULL],
-    ARRAY['test_tasks',        'start_recipe_json',    NULL],
-    ARRAY['test_sessions',     'tester_meta_json',     NULL],
-    ARRAY['test_sessions',     'transcript_json',      NULL],
-    ARRAY['test_sessions',     'responses_json',       NULL],
-    ARRAY['test_sessions',     'synthesis_json',       NULL],
-    ARRAY['test_task_results', 'events_json',          NULL]
+    ARRAY['dispatches',        'events_json',          '[]'::text]
   ];
   tname TEXT;
   cname TEXT;
@@ -727,42 +689,6 @@ DO $$ BEGIN
     ALTER TABLE dispatches
       ADD CONSTRAINT dispatches_result_frame_id_fkey
       FOREIGN KEY (result_frame_id) REFERENCES frames(id) ON DELETE SET NULL;
-  END IF;
-
-  -- tests.summary_frame_id → frames(id). SET NULL: deleting the synth-summary
-  -- frame should leave the test row alive (the test can re-synthesize).
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tests_summary_frame_id_fkey') THEN
-    UPDATE tests SET summary_frame_id = NULL
-      WHERE summary_frame_id IS NOT NULL
-        AND summary_frame_id NOT IN (SELECT id FROM frames);
-    ALTER TABLE tests
-      ADD CONSTRAINT tests_summary_frame_id_fkey
-      FOREIGN KEY (summary_frame_id) REFERENCES frames(id) ON DELETE SET NULL;
-  END IF;
-END $$;
-
--- test_sessions.responses_json should default to '[]'::jsonb so reads never
--- have to coalesce NULL → []. The JSONB-migration loop above leaves the
--- column without a default (its dval was NULL there); apply the new default
--- now using the same DROP DEFAULT → SET DEFAULT pattern.
-DO $$ BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_name = 'test_sessions'
-       AND column_name = 'responses_json'
-       AND data_type = 'jsonb'
-  ) THEN
-    -- Normalise existing NULLs so the NOT NULL contract holds going forward
-    -- even if a future migration tightens nullability.
-    UPDATE test_sessions SET responses_json = '[]'::jsonb WHERE responses_json IS NULL;
-    EXECUTE format(
-      'ALTER TABLE %I ALTER COLUMN %I DROP DEFAULT',
-      'test_sessions', 'responses_json'
-    );
-    EXECUTE format(
-      'ALTER TABLE %I ALTER COLUMN %I SET DEFAULT %L::jsonb',
-      'test_sessions', 'responses_json', '[]'
-    );
   END IF;
 END $$;
 -- ============================================================================

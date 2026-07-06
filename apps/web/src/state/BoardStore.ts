@@ -1,4 +1,4 @@
-// In-memory store of the current board's frames / comments / branches / users / presence.
+// In-memory store of the current board's frames / comments / branches / users.
 // Map-based so individual lookups are O(1); subscribe()/notify() is shallow.
 // React reads via the hooks in ./useBoardStore.ts.
 
@@ -9,8 +9,6 @@ import type {
   CommentReply,
   Dispatch,
   Frame,
-  PresenceUser,
-  TestId,
   User,
   UserId,
 } from '@foldo/protocol';
@@ -29,25 +27,10 @@ export interface BoardSnapshot {
   comments: Map<string, Comment>;
   branches: Map<string, Branch>;
   users: Map<UserId, User>;
-  presence: Map<UserId, PresenceUser>;
   /** Most recently created/streaming dispatches; key = dispatchId */
   dispatches: Map<string, Dispatch>;
   /** mcp connection (informational) */
   mcpConnected: boolean;
-  /**
-   * Tests with a session in progress right now — a transient "someone is
-   * testing" signal driven by `test.session.started` / `test.session.completed`
-   * WS messages. The completed session's actual frame still arrives via the
-   * normal `frame.added` path.
-   */
-  activeTestSessions: Set<TestId>;
-  /**
-   * Bumped whenever a `test.created` / `test.updated` / `test.deleted`
-   * broadcast arrives. Tests themselves live in TestsPanel-local state
-   * (fetched via REST); this counter just tells an open panel to refetch
-   * so collaborator edits show up live.
-   */
-  testsRevision: number;
 }
 
 type Listener = () => void;
@@ -62,11 +45,8 @@ const empty = (): BoardSnapshot => ({
   comments: new Map(),
   branches: new Map(),
   users: new Map(),
-  presence: new Map(),
   dispatches: new Map(),
   mcpConnected: false,
-  activeTestSessions: new Set(),
-  testsRevision: 0,
 });
 
 class BoardStoreImpl {
@@ -153,23 +133,6 @@ class BoardStoreImpl {
     this.patch({ branches });
   }
 
-  upsertPresence(p: PresenceUser) {
-    const presence = new Map(this.snap.presence);
-    presence.set(p.userId, p);
-    this.patch({ presence });
-  }
-
-  removePresence(userId: UserId) {
-    if (!this.snap.presence.has(userId)) return;
-    const presence = new Map(this.snap.presence);
-    const existing = presence.get(userId);
-    if (existing) {
-      // keep the user record but mark offline for the avatar strip
-      presence.set(userId, { ...existing, online: false, cursor: undefined });
-    }
-    this.patch({ presence });
-  }
-
   setWsStatus(s: BoardSnapshot['wsStatus']) {
     if (this.snap.wsStatus !== s) this.patch({ wsStatus: s });
   }
@@ -178,27 +141,6 @@ class BoardStoreImpl {
     const dispatches = new Map(this.snap.dispatches);
     dispatches.set(d.id, d);
     this.patch({ dispatches });
-  }
-
-  /** Mark a test as having a session in progress (transient indicator). */
-  markTestSessionActive(testId: TestId) {
-    if (this.snap.activeTestSessions.has(testId)) return;
-    const activeTestSessions = new Set(this.snap.activeTestSessions);
-    activeTestSessions.add(testId);
-    this.patch({ activeTestSessions });
-  }
-
-  /** Signal that the board's User Tests changed (created/updated/deleted). */
-  markTestsChanged() {
-    this.patch({ testsRevision: this.snap.testsRevision + 1 });
-  }
-
-  /** Clear the in-progress indicator for a test. */
-  markTestSessionInactive(testId: TestId) {
-    if (!this.snap.activeTestSessions.has(testId)) return;
-    const activeTestSessions = new Set(this.snap.activeTestSessions);
-    activeTestSessions.delete(testId);
-    this.patch({ activeTestSessions });
   }
 
   reset() {

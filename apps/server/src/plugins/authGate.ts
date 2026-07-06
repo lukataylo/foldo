@@ -3,8 +3,8 @@
 // Before this plugin, every route file that needed to gate on board
 // membership / edit-permission rolled its own `requireEditor` /
 // `requireMember` helper. The bodies were copy-pasted (~8 sites between
-// comments.ts, frames.ts, dispatches.ts, shares.ts, captures.ts,
-// boards.ts, tests.ts), which meant any tweak to the error shape / status
+// comments.ts, frames.ts, dispatches.ts, shares.ts,
+// boards.ts), which meant any tweak to the error shape / status
 // code / log shape had to happen N times. We centralise the gate here so
 // every route reaches for `req.server.requireEditor(req, boardId)` and
 // gets the same 403 / message / log line for free.

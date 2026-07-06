@@ -30,10 +30,6 @@ import {
   listCommentsAuthoredBy,
   reassignCommentsAuthor,
 } from '../repo/comments.ts';
-import {
-  listSessionsForOwner,
-  reassignTestCreator,
-} from '../repo/testSessions.ts';
 import { listDemoRequestsForEmail } from '../repo/demoRequests.ts';
 import { exec } from '../db.ts';
 import { nowIso } from '../util.ts';
@@ -137,11 +133,10 @@ export async function registerMeRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: rateLimitPreHandler('me-export', 5, 60_000) },
     async (req, reply) => {
       const me = requireUser(req);
-      const [boards, branches, comments, sessions, demoRequests] = await Promise.all([
+      const [boards, branches, comments, demoRequests] = await Promise.all([
         listBoardsOwnedBy(me.id),
         listBranchesAuthoredBy(me.id),
         listCommentsAuthoredBy(me.id),
-        listSessionsForOwner(me.id),
         me.email ? listDemoRequestsForEmail(me.email) : Promise.resolve([]),
       ]);
       // Public, scrubbed shape of the User row — drop nothing the wire type
@@ -165,7 +160,6 @@ export async function registerMeRoutes(app: FastifyInstance): Promise<void> {
           boards,
           branches,
           comments,
-          testSessions: sessions,
           demoRequests,
         });
     },
@@ -175,7 +169,6 @@ export async function registerMeRoutes(app: FastifyInstance): Promise<void> {
   // Soft delete:
   //   * password-gated (401 if wrong)
   //   * anonymise comments to the `u-deleted` sentinel (board history intact)
-  //   * reassign test ownership to the sentinel too
   //   * wipe email + email_verified_at + password_hash + name on the user row
   //   * store sha256(email) on the row for fraud-audit lookup
   //   * delete every session for the user (browser + api)
@@ -222,7 +215,6 @@ export async function registerMeRoutes(app: FastifyInstance): Promise<void> {
         initial: '?',
         color: '#999',
       });
-      await reassignTestCreator(me.id, DELETED_USER_ID);
       const emailHash = await softDeleteUser(me.id);
       // Kill every session belonging to this user — both browser and API
       // tokens. The cascade on sessions.user_id is fk-cascade on user DELETE,

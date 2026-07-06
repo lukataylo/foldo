@@ -14,17 +14,16 @@ import { registerFrameRoutes } from './routes/frames.ts';
 import { registerCommentRoutes } from './routes/comments.ts';
 import { registerDispatchRoutes } from './routes/dispatches.ts';
 import { registerSourceRoutes } from './routes/sources.ts';
-import { registerCaptureRoutes } from './routes/captures.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
 import { registerMeRoutes } from './routes/me.ts';
 import { registerDemoRequestRoutes } from './routes/demoRequests.ts';
 import { registerHomeRoutes } from './routes/home.ts';
 import { registerWebhookRoutes } from './routes/webhooks.ts';
 import { registerShareRoutes } from './routes/shares.ts';
-import { registerTestRoutes } from './routes/tests.ts';
-import { registerTestSessionRoutes } from './routes/testSessions.ts';
 import { registerRecordingRoutes } from './routes/recordings.ts';
 import { registerUploadRoutes } from './routes/uploads.ts';
+import { registerWalkthroughRoutes } from './routes/walkthroughs.ts';
+import { registerBillingRoutes } from './routes/billing.ts';
 import { registerBrowserWs } from './ws/browser.ts';
 import { registerMcpWs } from './ws/mcp.ts';
 import { startSessionGc } from './gc.ts';
@@ -181,7 +180,7 @@ async function main(): Promise<void> {
 
   await app.register(websocket);
 
-  // Raw-body parser for binary uploads (test-session recordings). The default
+  // Raw-body parser for binary uploads (walkthrough recordings). The default
   // Fastify body limit is 1 MB, far too small for a webm; bump it for this
   // content type only so JSON routes keep their tight limit.
   app.addContentTypeParser(
@@ -199,17 +198,16 @@ async function main(): Promise<void> {
   await registerCommentRoutes(app);
   await registerDispatchRoutes(app);
   await registerSourceRoutes(app);
-  await registerCaptureRoutes(app);
   await registerAuthRoutes(app);
   await registerMeRoutes(app);
   await registerDemoRequestRoutes(app);
   await registerHomeRoutes(app);
   await registerWebhookRoutes(app);
   await registerShareRoutes(app);
-  await registerTestRoutes(app);
-  await registerTestSessionRoutes(app);
   await registerRecordingRoutes(app);
   await registerUploadRoutes(app);
+  await registerWalkthroughRoutes(app);
+  await registerBillingRoutes(app);
 
   // WebSocket endpoints
   await registerBrowserWs(app);
@@ -301,7 +299,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void closeOnce('SIGINT'));
   process.on('SIGTERM', () => void closeOnce('SIGTERM'));
 
-  // Background sweep: mark dangling test sessions as abandoned.
+  // Background sweep: expired auth sessions + stale reset/verify tokens.
   startSessionGc();
 
   await app.listen({ port: PORT, host: '0.0.0.0' });

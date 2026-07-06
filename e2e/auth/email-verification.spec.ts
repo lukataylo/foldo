@@ -1,16 +1,16 @@
 // Step 2 — end-to-end email-verification flow.
 //   signup → email-outbox holds a verify link → home banner shows "verify"
-//   → publishing a test is BLOCKED (403)
+//   → creating a public share link is BLOCKED (403)
 //   → visit /verify?token=… → success state
 //   → resending again returns alreadyVerified
-//   → publishing the test now SUCCEEDS
+//   → creating the share link now SUCCEEDS
 
 import { expect, test } from '@playwright/test';
 import { createUser, loginAs } from '../helpers/factory';
 import { deleteEmail, extractLink, waitForEmail } from '../helpers/email-outbox';
 
 test.describe('auth: email verification', () => {
-  test('signup → link → verify → unblocks publishing a test', async ({ page, request }) => {
+  test('signup → link → verify → unblocks creating a share link', async ({ page, request }) => {
     // Explicitly opt OUT of auto-verification — this spec exercises the
     // signup → verify-link → verify flow itself, so the user MUST start
     // unverified.
@@ -31,31 +31,15 @@ test.describe('auth: email verification', () => {
       user.email,
     );
 
-    // 3. Try to publish a test on the seeded demo board — must 403 EMAIL_NOT_VERIFIED.
-    const createRes = await request.post('http://localhost:4000/api/tests', {
-      headers: { Authorization: `Bearer ${user.token}`, 'Content-Type': 'application/json' },
-      data: {
-        boardId: 'board-acme-landing',
-        name: `e2e-verify-${Date.now().toString(36)}`,
-        targetUrl: 'http://localhost:5174',
-        recordingModes: ['voice_only'],
-        tasks: [{ title: 'Look', instruction: 'Browse' }],
-      },
-    });
-    // POST /api/tests is a real REST create — returns 201 Created.
-    expect([200, 201]).toContain(createRes.status());
-    const created = (await createRes.json()) as { test: { id: string } };
-    const testId = created.test.id;
-
-    const publishBlocked = await request.patch(
-      `http://localhost:4000/api/tests/${testId}`,
-      {
-        headers: { Authorization: `Bearer ${user.token}`, 'Content-Type': 'application/json' },
-        data: { status: 'live' },
-      },
+    // 3. Creating a public share link on the seeded demo board (signups
+    // auto-join it as editors) must 403 EMAIL_NOT_VERIFIED — it's the
+    // outward-facing action the verification gate protects.
+    const blocked = await request.post(
+      'http://localhost:4000/api/boards/board-acme-landing/shares',
+      { headers: { Authorization: `Bearer ${user.token}` } },
     );
-    expect(publishBlocked.status()).toBe(403);
-    const blockedBody = (await publishBlocked.json()) as { code?: string };
+    expect(blocked.status()).toBe(403);
+    const blockedBody = (await blocked.json()) as { code?: string };
     expect(blockedBody.code).toBe('EMAIL_NOT_VERIFIED');
 
     // 4. Click the verify link — success state renders.
@@ -71,25 +55,26 @@ test.describe('auth: email verification', () => {
     const resendBody = (await resend.json()) as { alreadyVerified?: boolean };
     expect(resendBody.alreadyVerified).toBe(true);
 
-    // 6. Publishing now succeeds.
-    const publishOk = await request.patch(
-      `http://localhost:4000/api/tests/${testId}`,
-      {
-        headers: { Authorization: `Bearer ${user.token}`, 'Content-Type': 'application/json' },
-        data: { status: 'live' },
-      },
+    // 6. Creating the share link now succeeds.
+    const shareOk = await request.post(
+      'http://localhost:4000/api/boards/board-acme-landing/shares',
+      { headers: { Authorization: `Bearer ${user.token}` } },
     );
-    expect(publishOk.status()).toBe(200);
+    expect([200, 201]).toContain(shareOk.status());
+    const share = (await shareOk.json()) as { token?: string; share?: { token?: string } };
+    const shareToken = share.token ?? share.share?.token;
+    expect(shareToken).toBeTruthy();
 
     // 7. Banner is gone on a fresh /home load (the cached me state is updated
     // server-side; the client refetches on navigate).
     await page.goto('/home');
     await expect(page.getByTestId('foldo-home-verify-banner')).toHaveCount(0);
 
-    // Cleanup the test we created.
-    await request.delete(`http://localhost:4000/api/tests/${testId}`, {
-      headers: { Authorization: `Bearer ${user.token}` },
-    });
+    // Cleanup the share link we created.
+    await request.delete(
+      `http://localhost:4000/api/boards/board-acme-landing/shares/${shareToken}`,
+      { headers: { Authorization: `Bearer ${user.token}` } },
+    );
   });
 
   test('verify route surfaces a clean error for invalid/expired token', async ({ page }) => {

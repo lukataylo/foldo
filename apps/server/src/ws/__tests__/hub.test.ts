@@ -1,10 +1,10 @@
 // Hub broadcast semantics — seq monotonicity, replay-buffer windowing, and
-// the gap-detection path that tells clients to refetch — are multiplayer-
-// critical. A regression here desyncs every connected canvas.
+// the gap-detection path that tells clients to refetch. A regression here
+// desyncs every connected canvas.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@foldo/protocol';
-import type { BoardId, PresenceUser, ServerMessage, UserId } from '@foldo/protocol';
+import type { BoardId, ServerMessage, UserId } from '@foldo/protocol';
 import { Hub, type BrowserConn } from '../hub.ts';
 
 // Stub out the prom-client metrics so unit tests don't pull in the global
@@ -23,17 +23,6 @@ const BOARD: BoardId = 'b-test';
 const USER_A: UserId = 'u-anna';
 const USER_M: UserId = 'u-mateo';
 
-function fakePresence(userId: UserId): PresenceUser {
-  return {
-    userId,
-    name: userId,
-    initial: userId[2]?.toUpperCase() ?? '?',
-    color: '#999',
-    online: true,
-    lastSeenAt: new Date().toISOString(),
-  };
-}
-
 function fakeConn(userId: UserId): {
   conn: BrowserConn;
   sent: string[];
@@ -42,8 +31,6 @@ function fakeConn(userId: UserId): {
   const conn: BrowserConn = {
     boardId: BOARD,
     userId,
-    presence: fakePresence(userId),
-    lastCursorBroadcastAt: 0,
     socket: {
       send(payload: string) {
         sent.push(payload);
@@ -97,7 +84,7 @@ describe('Hub', () => {
     expect(hub.latestSeq(BOARD)).toBe(3);
   });
 
-  it('skips the excluded user on broadcast (cursor "echo" suppression)', () => {
+  it('skips the excluded user on broadcast ("echo" suppression)', () => {
     const a = fakeConn(USER_A);
     const m = fakeConn(USER_M);
     hub.subscribe(a.conn);

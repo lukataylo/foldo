@@ -10,7 +10,6 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
-    "@foldo/plugin": "^0.0.1",
     "@foldo/protocol": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

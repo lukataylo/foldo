@@ -1,6 +1,11 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import type { Frame, GithubPushPayload, MarkdownFrameContent } from '@foldo/protocol';
+import type {
+  Frame,
+  GithubPullRequestPayload,
+  GithubPushPayload,
+  MarkdownFrameContent,
+} from '@foldo/protocol';
 import { getBoardByRepoSlug } from '../repo/boards.ts';
 import {
   getBranchById,
@@ -9,6 +14,9 @@ import {
   upsertCommit,
 } from '../repo/branches.ts';
 import { insertFrame, listFramesForBoard } from '../repo/frames.ts';
+import { listWalkthroughsForBoard } from '../repo/walkthroughs.ts';
+import { onPrMerged } from '../director/service.ts';
+import { fetchPrDiff } from '../director/github.ts';
 import { hub } from '../ws/hub.ts';
 import { newId, nowIso } from '../util.ts';
 import { upsertUser } from '../repo/users.ts';
@@ -56,7 +64,7 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
       },
     );
 
-    scope.post<{ Body: GithubPushPayload }>(
+    scope.post<{ Body: GithubPushPayload | GithubPullRequestPayload }>(
       '/api/webhooks/github',
       async (req, reply) => {
         const secret = process.env.FOLDO_GITHUB_WEBHOOK_SECRET;
@@ -67,7 +75,41 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
             .send({ error: 'Invalid webhook signature', code: 'UNAUTHORIZED' });
         }
 
-      const body = req.body;
+      // The living-docs trigger: a merged PR kicks the director, which
+      // re-films the affected walkthrough steps and lands a new walkthrough
+      // frame beside its predecessor. Non-merge PR events are acked and
+      // ignored (GitHub sends opened/synchronize/etc. to the same hook).
+      const eventHeader = req.headers['x-github-event'];
+      const event = Array.isArray(eventHeader) ? eventHeader[0] : eventHeader;
+      if (event === 'pull_request' || (req.body && 'pull_request' in req.body)) {
+        const pr = req.body as GithubPullRequestPayload;
+        if (!pr?.pull_request || !pr?.repository?.full_name) {
+          return reply.code(400).send({ error: 'Invalid GitHub payload', code: 'BAD_REQUEST' });
+        }
+        if (pr.action !== 'closed' || !pr.pull_request.merged) {
+          return reply.send({ ok: true, ignored: pr.action });
+        }
+        const board = await getBoardByRepoSlug(pr.repository.full_name);
+        if (!board) {
+          return reply.code(404).send({ error: 'No board for repo', code: 'NOT_FOUND' });
+        }
+        const walkthroughs = await listWalkthroughsForBoard(board.id);
+        const withSteps = walkthroughs.filter((w) => w.steps.length > 0);
+        if (!withSteps.length) {
+          return reply.send({ ok: true, takes: [] });
+        }
+        const diff = (await fetchPrDiff(pr.repository.full_name, pr.pull_request.number)) ?? undefined;
+        const takes = await onPrMerged(board, withSteps, {
+          prNumber: pr.pull_request.number,
+          prTitle: pr.pull_request.title,
+          prBody: pr.pull_request.body ?? undefined,
+          diff,
+          mergeCommitSha: pr.pull_request.merge_commit_sha ?? undefined,
+        });
+        return reply.send({ ok: true, takes: takes.map((t) => t.id) });
+      }
+
+      const body = req.body as GithubPushPayload;
       if (!body?.ref || !body?.after || !body?.repository?.full_name) {
         return reply.code(400).send({ error: 'Invalid GitHub payload', code: 'BAD_REQUEST' });
       }

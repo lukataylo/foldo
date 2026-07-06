@@ -7,52 +7,12 @@ import { boardStore } from './BoardStore';
 export function applyServerMessage(msg: ServerMessage) {
   switch (msg.type) {
     case 'welcome': {
-      const presence = new Map(
-        msg.users.map((u) => [u.userId, u] as const),
-      );
+      const users = new Map(msg.users.map((u) => [u.id, u] as const));
       boardStore.patch({
         meUserId: msg.youUserId,
         board: msg.board,
-        presence,
+        users,
         hydrated: true,
-      });
-      return;
-    }
-    case 'presence.join':
-      boardStore.upsertPresence(msg.user);
-      return;
-    case 'presence.leave':
-      boardStore.removePresence(msg.userId);
-      return;
-    case 'presence.cursor': {
-      const snap = boardStore.getSnapshot();
-      const existing = snap.presence.get(msg.userId);
-      if (!existing) return;
-      boardStore.upsertPresence({
-        ...existing,
-        cursor: msg.cursor,
-        online: true,
-        lastSeenAt: new Date().toISOString(),
-      });
-      return;
-    }
-    case 'presence.selection': {
-      const snap = boardStore.getSnapshot();
-      const existing = snap.presence.get(msg.userId);
-      if (!existing) return;
-      boardStore.upsertPresence({
-        ...existing,
-        selection: msg.selection ?? undefined,
-      });
-      return;
-    }
-    case 'presence.viewport': {
-      const snap = boardStore.getSnapshot();
-      const existing = snap.presence.get(msg.userId);
-      if (!existing) return;
-      boardStore.upsertPresence({
-        ...existing,
-        viewport: { x: msg.x, y: msg.y, zoom: msg.zoom },
       });
       return;
     }
@@ -122,21 +82,6 @@ export function applyServerMessage(msg: ServerMessage) {
       return;
     case 'mcp.offline':
       boardStore.patch({ mcpConnected: false });
-      return;
-    case 'test.session.started':
-      // Transient "someone is testing now" signal. The completed session's
-      // frame still arrives via the normal `frame.added` path below.
-      boardStore.markTestSessionActive(msg.testId);
-      return;
-    case 'test.session.completed':
-      boardStore.markTestSessionInactive(msg.testId);
-      return;
-    case 'test.created':
-    case 'test.updated':
-    case 'test.deleted':
-      // Tests live in TestsPanel-local state; bump the revision so an open
-      // panel knows to refetch.
-      boardStore.markTestsChanged();
       return;
     case 'error':
       console.warn('[foldo-ws] server error', msg);

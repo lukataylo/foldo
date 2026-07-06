@@ -41,6 +41,8 @@ function contentTypeForKey(key: string): string {
   if (key.endsWith('.ogg')) return 'audio/ogg';
   if (key.endsWith('.png')) return 'image/png';
   if (key.endsWith('.html')) return 'text/html';
+  if (key.endsWith('.vtt')) return 'text/vtt';
+  if (key.endsWith('.mp3')) return 'audio/mpeg';
   return 'application/octet-stream';
 }
 

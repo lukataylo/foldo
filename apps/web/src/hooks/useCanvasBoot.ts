@@ -1,9 +1,7 @@
 // Boot the canvas: pick a board, hydrate the store via REST, open the WS,
 // stitch in the e2e dev-only WS hooks. Returns the boot state machine, an
 // `useOfflineDemo()` callback the unreachable overlay binds to its "Use
-// offline demo" button, and a stable `wsRef` so App can keep dispatching
-// outbound messages (`cursor.move`, `selection.update`, `viewport.update`,
-// `follow.start/stop`) without rewiring the existing call-sites.
+// offline demo" button, and a stable `wsRef` for outbound messages.
 //
 // Boundary: this hook owns the boot effect — the only place that mutates
 // the boardStore from a network response. Reads NO store slices (only
@@ -27,7 +25,6 @@ import { listDispatches } from '../api/dispatches';
 import { FoldoWsClient, type WsStatus } from '../api/ws';
 import {
   mockBoardSnapshot,
-  mockPresence,
   MOCK_BOARD_ID,
   MOCK_ME_USER_ID,
 } from '../data/mockData';
@@ -185,46 +182,24 @@ function snapshotSlices(snapshot: GetBoardResponse) {
 }
 
 function hydrateStoreFromRest(snapshot: GetBoardResponse, meUserId: string): void {
-  const slices = snapshotSlices(snapshot);
-  // Presence will be supplied by the WS welcome; seed a basic record for ourselves.
-  const me = slices.users.get(meUserId);
-  const presence = new Map<string, import('@foldo/protocol').PresenceUser>();
-  if (me) {
-    presence.set(meUserId, {
-      userId: me.id,
-      name: me.name,
-      initial: me.initial,
-      color: me.color,
-      online: true,
-      lastSeenAt: new Date().toISOString(),
-    });
-  }
   boardStore.set({
     hydrated: true,
     offline: false,
     wsStatus: 'connecting',
     meUserId,
-    ...slices,
-    presence,
+    ...snapshotSlices(snapshot),
     dispatches: new Map(),
-    activeTestSessions: new Set(),
-    testsRevision: 0,
   });
 }
 
 /**
  * Reconnect-time rehydrate. Unlike the boot-time {@link hydrateStoreFromRest}
- * this must NOT reset the slices the WS connection owns: the `welcome` that
- * just arrived seeded the full presence list (a wholesale `set` would wipe
- * remote peers, and the presence reducers drop updates for unknown users),
- * and `wsStatus` was just set to 'open' by the status callback.
+ * this must NOT reset the slices the WS connection owns: `wsStatus` was just
+ * set to 'open' by the status callback, so a wholesale `set` would clobber it.
  *
  * Slices the REST board payload doesn't carry get refreshed explicitly:
  * `dispatches` from the freshly-fetched list (so in-flight progress UI stays
- * accurate instead of stale or blank), `activeTestSessions` cleared (it's a
- * transient signal — a `test.session.completed` missed past the replay
- * buffer would otherwise stick the "testing now" badge forever), and
- * `testsRevision` bumped so an open TestsPanel refetches anything it missed.
+ * accurate instead of stale or blank).
  */
 function rehydrateStoreFromRest(
   snapshot: GetBoardResponse,
@@ -235,32 +210,22 @@ function rehydrateStoreFromRest(
     offline: false,
     ...snapshotSlices(snapshot),
     dispatches: new Map(dispatches.map((d) => [d.id, d])),
-    activeTestSessions: new Set(),
   });
-  boardStore.markTestsChanged();
 }
 
 function hydrateStoreFromMock(): void {
   const s = mockBoardSnapshot;
-  const frameMap = new Map(s.frames.map((f) => [f.id, f]));
-  const commentMap = new Map(s.comments.map((c) => [c.id, c]));
-  const branchMap = new Map(s.branches.map((b) => [b.id, b]));
-  const userMap = new Map(s.users.map((u) => [u.id, u]));
-  const presence = new Map(mockPresence().map((p) => [p.userId, p]));
   boardStore.set({
     hydrated: true,
     offline: true,
     wsStatus: 'closed',
     meUserId: MOCK_ME_USER_ID,
     board: s.board,
-    frames: frameMap,
-    comments: commentMap,
-    branches: branchMap,
-    users: userMap,
-    presence,
+    frames: new Map(s.frames.map((f) => [f.id, f])),
+    comments: new Map(s.comments.map((c) => [c.id, c])),
+    branches: new Map(s.branches.map((b) => [b.id, b])),
+    users: new Map(s.users.map((u) => [u.id, u])),
     dispatches: new Map(),
     mcpConnected: false,
-    activeTestSessions: new Set(),
-    testsRevision: 0,
   });
 }

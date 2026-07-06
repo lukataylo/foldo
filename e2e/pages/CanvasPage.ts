@@ -30,16 +30,9 @@ export class CanvasPage {
 
   // ---------- left-rail tool selection ----------
 
-  /** Click a left-rail tool button by tool id (sticky | arrow | image | …). */
+  /** Click a left-rail tool button by tool id. */
   async selectTool(
-    tool:
-      | 'select'
-      | 'hand'
-      | 'comment'
-      | 'edit'
-      | 'sticky'
-      | 'arrow'
-      | 'image',
+    tool: 'select' | 'hand' | 'comment' | 'edit',
   ): Promise<void> {
     await this.page.getByTestId(`foldo-rail-tool-${tool}`).click();
   }
@@ -50,7 +43,9 @@ export class CanvasPage {
     return this.page.getByTestId('foldo-canvas-frames');
   }
 
-  framesOfKind(kind: 'sticky' | 'arrow' | 'image' | 'app' | 'markdown'): Locator {
+  framesOfKind(
+    kind: 'sticky' | 'arrow' | 'image' | 'app' | 'markdown' | 'walkthrough',
+  ): Locator {
     return this.page.locator(`[data-testid="foldo-canvas-frame"][data-foldo-frame-kind="${kind}"]`);
   }
 

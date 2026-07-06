@@ -227,32 +227,3 @@ button {
   animation: ghost-dash 1.4s linear infinite;
 }
 
-/*
- * DOM Editor (Inspect panel) input sizing. Wave 4 originally set inputs
- * to 16px inline to prevent iOS Safari's "auto-zoom on focus" behaviour
- * (anything under 16px triggers it and Safari doesn't always zoom back
- * out cleanly). On desktop that read as oversized — the inputs were
- * dominating the panel. Switching to a class with a media-query guard
- * keeps the iOS protection while letting desktop use a properly-scaled
- * 13px. `(hover: none)` is the canonical "touch device" detector.
- */
-.foldo-dom-editor-input,
-.foldo-dom-editor-select {
-  font-size: 13px;
-}
-@media (hover: none) {
-  .foldo-dom-editor-input,
-  .foldo-dom-editor-select {
-    font-size: 16px;
-  }
-}
-
-/*
- * Hide the right plugin panel when the AI edit panel is mounted —
- * they both want to live on the right rail and were overlapping. The
- * AI edit panel is wider + more transient, so it wins. Toggled by
- * App.tsx adding `data-edit-panel-open="true"` to <body>.
- */
-body[data-edit-panel-open="true"] [data-testid="foldo-plugin-right-panel"] {
-  display: none;
-}

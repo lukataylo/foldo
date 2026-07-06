@@ -20,22 +20,17 @@ export type {
   FrameContent,
   FrameKind,
   MarkdownFrameContent,
-  PresenceUser,
   RecipeStep,
+  StepDiff,
+  TakeStatus,
   User,
   UserId,
   Variant,
   VariantOverrides,
+  WalkthroughFrameContent,
 } from '@foldo/protocol';
 
-export type Tool =
-  | 'select'
-  | 'hand'
-  | 'comment'
-  | 'edit'
-  | 'sticky'
-  | 'arrow'
-  | 'image';
+export type Tool = 'select' | 'hand' | 'comment' | 'edit';
 
 export interface SelectedElement {
   frameId: string;

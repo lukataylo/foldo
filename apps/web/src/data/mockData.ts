@@ -8,12 +8,10 @@ import type {
   Comment,
   Frame,
   GetBoardResponse,
-  PresenceUser,
   User,
 } from '@foldo/protocol';
 
 const BOARD_ID = 'board-acme-landing';
-const NOW = '2026-05-12T12:00:00.000Z';
 const SIX_DAYS_AGO = '2026-05-06T12:00:00.000Z';
 const TWO_HRS_AGO = '2026-05-12T10:00:00.000Z';
 const HALF_HR_AGO = '2026-05-12T11:30:00.000Z';
@@ -362,17 +360,6 @@ export const mockBoardSnapshot: GetBoardResponse = {
   users,
   mcpConnected: false,
 };
-
-export function mockPresence(): PresenceUser[] {
-  return users.map((u) => ({
-    userId: u.id,
-    name: u.name,
-    initial: u.initial,
-    color: u.color,
-    online: u.id !== 'u-priya',
-    lastSeenAt: NOW,
-  }));
-}
 
 export const MOCK_ME_USER_ID = 'u-you';
 export const MOCK_BOARD_ID = BOARD_ID;

@@ -89,8 +89,7 @@ export class FoldoWsClient {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     } else {
-      // queue non-cursor messages; drop high-rate cursor moves to avoid flooding
-      if (msg.type !== 'cursor.move') this.pendingSend.push(msg);
+      this.pendingSend.push(msg);
     }
   }
 

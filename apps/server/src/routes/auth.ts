@@ -22,6 +22,7 @@ import {
   listSessionsForUser,
 } from '../repo/sessions.ts';
 import { addBoardMember } from '../repo/members.ts';
+import { trackFunnelEvent } from '../repo/analytics.ts';
 import { DEMO_BOARD_ID } from '../seed.ts';
 import { extractBearerToken, requireUser } from '../auth.ts';
 import { rateLimitPreHandler } from '../rateLimit.ts';
@@ -349,6 +350,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       // 500 the signup.
       void sendVerificationEmail(user, email, req.log);
     }
+    void trackFunnelEvent('signup', { userId: id }).catch(() => {});
     return reply.send({ token, user, createdAt: nowIso() });
     },
   );

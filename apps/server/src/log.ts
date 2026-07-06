@@ -1,6 +1,6 @@
 // Background-job logger. Request handlers get a per-request logger from
 // Fastify with reqId + userId already attached; jobs that run outside a
-// request (gc sweep, transcription, synthesis, dispatch simulator) call
+// request (gc sweep, dispatch simulator) call
 // `jobLogger(name)` to get a logger with the same shape so log filtering
 // works uniformly.
 //

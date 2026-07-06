@@ -15,6 +15,7 @@ import { simulateDispatch } from '../sim/dispatch.ts';
 import { isMcpConnected, routeDispatchToMcp } from '../ws/mcp.ts';
 import { runDispatchWithRetry } from '../jobs/dispatchJob.ts';
 import { newId } from '../util.ts';
+import { trackFunnelEvent } from '../repo/analytics.ts';
 
 export async function registerDispatchRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: CreateDispatchRequest }>('/api/dispatches', async (req, reply) => {
@@ -45,6 +46,10 @@ export async function registerDispatchRoutes(app: FastifyInstance): Promise<void
     });
 
     hub.broadcast(dispatch.boardId, { type: 'dispatch.created', dispatch });
+    void trackFunnelEvent('first_dispatch', {
+      userId: user.id,
+      boardId: dispatch.boardId,
+    }).catch(() => {});
 
     // Fire the dispatch executor under the retry/DLQ harness. The runner
     // returns a promise so retries are observable; on final failure

@@ -1,125 +1,161 @@
-import { CheckCircle, INK, MarketingLayout, MarketingPicture, PILLOW, PromptCaret, SOFT_GREY, YELLOW } from './shared';
+import { useState } from 'react';
+import { ApiClientError } from '../api/client';
+import { createCheckoutSession } from '../api/billing';
+import { readToken } from './auth';
+import {
+  CheckCircle,
+  INK,
+  MarketingLayout,
+  PILLOW,
+  PromptCaret,
+  SOFT_GREY,
+  YELLOW,
+} from './shared';
 
-interface Tier {
-  name: string;
-  tagline: string;
-  price: string;
-  cadence: string;
-  cta: string;
-  ctaHref: string;
-  /**
-   * When true the CTA is rendered as a disabled "Coming soon" pill instead
-   * of an active link. We gate every paid plan here until Stripe is wired
-   * end-to-end so a curious visitor doesn't click an Upgrade button that
-   * 404s or — worse — hits a half-implemented checkout. Free tiers stay
-   * fully live (signup + demo work today).
-   */
-  ctaDisabled?: boolean;
-  /** Optional label shown in the "Coming soon" badge next to a gated CTA. */
-  ctaPill?: string;
-  featured?: boolean;
-  features: string[];
-}
-
-const TIERS: Tier[] = [
-  {
-    name: 'Solo Pup',
-    tagline: 'For the lone dev who lets the agent write the first draft.',
-    price: '$0',
-    cadence: 'forever',
-    cta: 'Start free',
-    ctaHref: '/signup',
-    features: [
-      'Unlimited personal boards',
-      '1 reviewer (you, with snacks)',
-      'Live preview frames',
-      'Comments, pins, and replies',
-      'Chrome extension capture',
-      'Community Discord',
-    ],
-  },
-  {
-    name: 'The Pack',
-    tagline: 'For teams who ship together and disagree politely about colours.',
-    price: '$24',
-    cadence: 'per editor / month',
-    cta: 'Start the pack',
-    ctaHref: '/signup?plan=pack',
-    // A+ W2: gated until billing wiring lands — see PR notes. The disabled
-    // pill avoids dead-end clicks the audit flagged on every paid tier.
-    ctaDisabled: true,
-    ctaPill: 'Coming soon',
-    featured: true,
-    features: [
-      'Everything in Solo Pup',
-      'Unlimited reviewers (read-only)',
-      'Live multiplayer cursors + follow-me',
-      'Edit dispatches via MCP',
-      'GitHub PR + webhook sync',
-      'Slack + Linear integrations',
-      'Branded board sharing',
-    ],
-  },
-  {
-    name: 'Top Dog',
-    tagline: 'For orgs whose security team has opinions and an SSO checklist.',
-    price: "Let's talk",
-    cadence: 'per seat / month',
-    // Top Dog routes to /demo which IS implemented (demo request route +
-    // server-side persistence), so the CTA stays active. Only the paid
-    // self-serve checkout flows are gated.
-    cta: 'Book a demo',
-    ctaHref: '/demo',
-    features: [
-      'Everything in The Pack',
-      'SAML SSO + SCIM',
-      'Self-hosted option (MIT)',
-      'Audit log + data residency',
-      'Custom MCP runners',
-      'Priority support',
-      'A real human on call',
-    ],
-  },
+const FEATURES = [
+  'GitHub App install-only onboarding — nothing in your repo or CI',
+  'Walkthrough re-rendered on every merge',
+  'Only-what-changed incremental renders (unchanged takes reused byte-for-byte)',
+  'Comments dispatch change requests to your coding agent',
+  'Public share links for stakeholders',
+  'Unlimited walkthroughs, takes, viewers and commenters',
+  'Email support',
 ];
 
 const FAQ = [
   {
-    q: 'Do I have to use Claude Code?',
-    a: 'Nope. Any MCP-capable agent works. Cursor, Aider, your own homemade runner. Foldo is the surface, not the coder.',
+    q: 'What counts as a product?',
+    a: 'One repo plus its board. That includes unlimited walkthroughs, takes, viewers, and commenters — we never charge per seat. If you have three repos you want documented, that’s three products.',
   },
   {
-    q: 'What counts as an "editor"?',
-    a: 'Anyone who creates comments, sends dispatches, or accepts merges. Read-only reviewers (PMs, designers staring at things) are always free.',
-  },
-  {
-    q: 'Can I self-host?',
-    a: 'Yes. The entire stack is MIT-licensed. Clone the repo, run npm install, deploy to your platform of choice. See /docs/self-host.',
-  },
-  {
-    q: 'Is my code being sent to a third party?',
-    a: 'Only to the agent you point Foldo at, which is your call. We see frame metadata, comments, and dispatch logs. Source diffs stay in your repo.',
+    q: 'What happens after the 14-day trial?',
+    a: 'Checkout collects a card when the trial starts, and billing begins on day 15 at £79/month per product. Cancel before then and you pay nothing.',
   },
   {
     q: 'Can I cancel?',
-    a: "Anytime. We won't make you talk to a goodbye specialist. The dog will be sad. That's the only consequence.",
+    a: 'Anytime, from settings. Your board stays readable until the end of the billing period; you can export everything before it winds down.',
+  },
+  {
+    q: 'Do you need access to my source code?',
+    a: 'No. The GitHub App reads PR diffs and metadata of merged PRs only — it cannot clone your repository or read your full source tree. Walkthroughs are filmed against your deployed preview URL, not your code. See /security for the full list of what it can and cannot read.',
+  },
+  {
+    q: 'Does my team need Foldo accounts to watch?',
+    a: 'No. Public share links let anyone watch walkthroughs and leave comments without a seat. Only the person managing the product needs an account.',
   },
 ];
+
+/**
+ * The checkout CTA. Logged-out visitors go to signup (and come back here);
+ * logged-in users get a Stripe-hosted checkout session. When the server has
+ * no Stripe configured (503 BILLING_UNCONFIGURED) we say so inline instead
+ * of failing silently.
+ */
+function CheckoutButton() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const token = readToken();
+
+  if (!token) {
+    return (
+      <a
+        data-testid="foldo-pricing-checkout"
+        href="/signup?next=pricing"
+        className="btn-yellow"
+        style={{ justifyContent: 'center', width: '100%' }}
+      >
+        <PromptCaret /> Start your 14-day free trial
+      </a>
+    );
+  }
+
+  async function onClick(): Promise<void> {
+    if (busy) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const origin = window.location.origin;
+      const { url } = await createCheckoutSession({
+        successUrl: `${origin}/home?checkout=success`,
+        cancelUrl: `${origin}/pricing`,
+      });
+      window.location.href = url;
+    } catch (err) {
+      if (
+        err instanceof ApiClientError &&
+        err.status === 503 &&
+        err.code === 'BILLING_UNCONFIGURED'
+      ) {
+        setError("Checkout isn't configured in this environment");
+      } else {
+        setError(
+          err instanceof Error ? err.message : 'Checkout failed — try again',
+        );
+      }
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ width: '100%' }}>
+      <button
+        type="button"
+        data-testid="foldo-pricing-checkout"
+        className="btn-yellow"
+        onClick={onClick}
+        disabled={busy}
+        style={{
+          justifyContent: 'center',
+          width: '100%',
+          opacity: busy ? 0.6 : 1,
+        }}
+      >
+        <PromptCaret /> {busy ? 'Opening checkout…' : 'Start your 14-day free trial'}
+      </button>
+      {error && (
+        <p
+          data-testid="foldo-pricing-checkout-error"
+          role="alert"
+          style={{
+            margin: '10px 0 0',
+            fontSize: 13.5,
+            lineHeight: 1.5,
+            color: '#a02020',
+            textAlign: 'center',
+          }}
+        >
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function Pricing() {
   return (
     <MarketingLayout title="Pricing · Foldo" navCurrent="pricing">
       <section
-        style={{ maxWidth: 1240, margin: '0 auto', padding: '40px 32px 0', textAlign: 'center' }}
+        style={{
+          maxWidth: 1240,
+          margin: '0 auto',
+          padding: '40px 32px 0',
+          textAlign: 'center',
+        }}
       >
         <span className="chip">
-          <span style={{ fontSize: 14 }}>$</span> Pricing
+          <span style={{ fontSize: 14 }}>£</span> Pricing
         </span>
         <h1
           className="display h-display"
-          style={{ fontSize: 64, lineHeight: 1.04, margin: '20px 0 14px', color: INK }}
+          style={{
+            fontSize: 64,
+            lineHeight: 1.04,
+            margin: '20px 0 14px',
+            color: INK,
+          }}
         >
-          Plans that scale<br />
-          with your <span style={{ color: YELLOW }}>pack.</span>
+          One plan.<br />
+          Per <span style={{ color: YELLOW }}>product.</span>
         </h1>
         <p
           style={{
@@ -130,192 +166,110 @@ export default function Pricing() {
             margin: '0 auto 36px',
           }}
         >
-          Free for solo devs. Honest pricing for teams. No seat hoarding,
-          no surprise fees, no breath-taking renewals.
+          No seats, no tiers, no sales call. A product is one repo, one board,
+          and every walkthrough Foldo films for it.
         </p>
       </section>
 
-      <section
-        style={{ maxWidth: 1240, margin: '0 auto', padding: '0 32px 40px' }}
-      >
-        <div
-          className="stack-sm"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: 22,
-            alignItems: 'stretch',
-          }}
-        >
-          {TIERS.map((t) => (
-            <div key={t.name} className={`price-card${t.featured ? ' featured' : ''}`}>
-              {t.featured && (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
-                  <span
-                    className="chip"
-                    style={{
-                      background: YELLOW,
-                      color: INK,
-                      fontSize: 10.5,
-                    }}
-                  >
-                    Most popular
-                  </span>
-                </div>
-              )}
-              <div
-                className="display price-name"
-                style={{ fontSize: 28 }}
-              >
-                {t.name}
-              </div>
-              <p
-                className="price-note"
-                style={{
-                  fontSize: 14,
-                  lineHeight: 1.5,
-                  margin: '6px 0 22px',
-                  minHeight: 44,
-                  color: t.featured ? '#ddd' : '#666',
-                }}
-              >
-                {t.tagline}
-              </p>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
-                <span
-                  className="display price-amount"
-                  style={{ fontSize: 48 }}
-                >
-                  {t.price}
-                </span>
-                <span className="price-note" style={{ fontSize: 13, color: t.featured ? '#ccc' : '#666' }}>
-                  / {t.cadence}
-                </span>
-              </div>
-              {t.ctaDisabled ? (
-                <div
-                  data-testid="foldo-pricing-cta-disabled"
-                  style={{
-                    marginTop: 18,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: 8,
-                    width: '100%',
-                  }}
-                >
-                  <button
-                    type="button"
-                    disabled
-                    aria-disabled="true"
-                    title="Billing isn't wired up yet — leave us your email on /demo or watch the changelog."
-                    className={t.featured ? 'btn-yellow' : 'btn-primary'}
-                    style={{
-                      width: '100%',
-                      justifyContent: 'center',
-                      opacity: 0.55,
-                      cursor: 'not-allowed',
-                      pointerEvents: 'none',
-                    }}
-                  >
-                    {t.featured ? <PromptCaret /> : null} {t.cta}
-                  </button>
-                  <span
-                    data-testid="foldo-pricing-cta-pill"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      background: t.featured ? '#1f1f1f' : '#fff',
-                      color: t.featured ? YELLOW : INK,
-                      border: `1px solid ${t.featured ? '#333' : SOFT_GREY}`,
-                      borderRadius: 999,
-                      padding: '4px 10px',
-                      fontSize: 11.5,
-                      fontWeight: 600,
-                      letterSpacing: '0.02em',
-                    }}
-                  >
-                    <span
-                      aria-hidden
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: YELLOW,
-                      }}
-                    />
-                    {t.ctaPill ?? 'Coming soon'}
-                  </span>
-                </div>
-              ) : (
-                <a
-                  href={t.ctaHref}
-                  className={t.featured ? 'btn-yellow' : 'btn-primary'}
-                  style={{ marginTop: 18, justifyContent: 'center', width: '100%' }}
-                >
-                  {t.featured ? <PromptCaret /> : null} {t.cta}
-                </a>
-              )}
-              <hr style={{ margin: '24px 0', border: 'none', borderTop: `1px solid ${t.featured ? '#333' : SOFT_GREY}` }} />
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10 }}>
-                {t.features.map((f) => (
-                  <li
-                    key={f}
-                    className="price-feature"
-                    style={{ display: 'flex', gap: 10, fontSize: 14, color: t.featured ? '#ddd' : '#333' }}
-                  >
-                    <span style={{ marginTop: 1, flex: 'none' }}>
-                      <CheckCircle color={t.featured ? '#fff' : YELLOW} />
-                    </span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
+      <section style={{ maxWidth: 560, margin: '0 auto', padding: '0 32px 40px' }}>
+        <div className="price-card featured">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div className="display price-name" style={{ fontSize: 28 }}>
+              Product
             </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Compare strip */}
-      <section style={{ maxWidth: 1240, margin: '0 auto', padding: '24px 32px 24px' }}>
-        <div
-          style={{
-            background: '#fff',
-            border: `1.5px solid ${SOFT_GREY}`,
-            borderRadius: 22,
-            padding: '32px 36px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 32,
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-          }}
-        >
-          <div style={{ display: 'flex', gap: 18, alignItems: 'center' }}>
-            <MarketingPicture
-              src="/marketing/step-4-verify.png"
-              alt="Foldo verifying"
-              style={{ width: 110, height: 'auto', flex: 'none' }}
-            />
-            <div>
-              <div className="display" style={{ fontSize: 26, lineHeight: 1.05, marginBottom: 4 }}>
-                Reviewers are always free.
-              </div>
-              <p style={{ fontSize: 14.5, lineHeight: 1.55, color: '#555', margin: 0, maxWidth: 520 }}>
-                PMs, designers, founders, your aunt. Anyone can leave comments
-                without taking up an editor seat. We count editors, not eyeballs.
-              </p>
-            </div>
+            <span
+              className="chip"
+              style={{ background: YELLOW, color: INK, fontSize: 10.5 }}
+            >
+              14-day free trial
+            </span>
           </div>
-          <a href="/signup" className="btn-primary">
-            <PromptCaret /> Try free
-          </a>
+          <p
+            className="price-note"
+            style={{
+              fontSize: 14,
+              lineHeight: 1.5,
+              margin: '6px 0 22px',
+              color: '#ddd',
+            }}
+          >
+            One repo + its board + unlimited walkthroughs, takes, viewers and
+            commenters.
+          </p>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: 6,
+              marginBottom: 18,
+            }}
+          >
+            <span className="display price-amount" style={{ fontSize: 48 }}>
+              £79
+            </span>
+            <span className="price-note" style={{ fontSize: 13, color: '#ccc' }}>
+              / month per product
+            </span>
+          </div>
+          <CheckoutButton />
+          <hr
+            style={{
+              margin: '24px 0',
+              border: 'none',
+              borderTop: '1px solid #333',
+            }}
+          />
+          <ul
+            style={{
+              listStyle: 'none',
+              padding: 0,
+              margin: 0,
+              display: 'grid',
+              gap: 10,
+            }}
+          >
+            {FEATURES.map((f) => (
+              <li
+                key={f}
+                className="price-feature"
+                style={{ display: 'flex', gap: 10, fontSize: 14, color: '#ddd' }}
+              >
+                <span style={{ marginTop: 1, flex: 'none' }}>
+                  <CheckCircle color="#fff" />
+                </span>
+                {f}
+              </li>
+            ))}
+          </ul>
         </div>
+        <p
+          style={{
+            textAlign: 'center',
+            fontSize: 13.5,
+            color: '#666',
+            margin: '16px 0 0',
+            lineHeight: 1.55,
+          }}
+        >
+          Want to see it before you trial it?{' '}
+          <a
+            href="/s/demo"
+            style={{
+              color: INK,
+              fontWeight: 600,
+              textDecorationColor: YELLOW,
+              textDecorationThickness: 2,
+              textUnderlineOffset: 3,
+            }}
+          >
+            Explore a live board — no signup
+          </a>
+          .
+        </p>
       </section>
 
       {/* FAQ */}
-      <section style={{ maxWidth: 880, margin: '0 auto', padding: '64px 32px 40px' }}>
+      <section style={{ maxWidth: 880, margin: '0 auto', padding: '48px 32px 40px' }}>
         <div className="section-label" style={{ marginBottom: 22 }}>
           QUESTIONS WE GET A LOT
         </div>
@@ -355,12 +309,44 @@ export default function Pricing() {
                 {f.q}
                 <span style={{ color: PILLOW, fontSize: 22, lineHeight: 1 }}>+</span>
               </summary>
-              <p style={{ marginTop: 12, marginBottom: 0, fontSize: 15, lineHeight: 1.6, color: '#444' }}>
+              <p
+                style={{
+                  marginTop: 12,
+                  marginBottom: 0,
+                  fontSize: 15,
+                  lineHeight: 1.6,
+                  color: '#444',
+                }}
+              >
                 {f.a}
               </p>
             </details>
           ))}
         </div>
+        <p
+          style={{
+            textAlign: 'center',
+            fontSize: 14,
+            color: '#666',
+            margin: '28px 0 0',
+          }}
+        >
+          Security questions? Read{' '}
+          <a
+            href="/security"
+            style={{ color: INK, fontWeight: 600, textDecorationColor: YELLOW }}
+          >
+            what the GitHub App can and cannot read
+          </a>{' '}
+          and our{' '}
+          <a
+            href="/data-policy"
+            style={{ color: INK, fontWeight: 600, textDecorationColor: YELLOW }}
+          >
+            data policy
+          </a>
+          .
+        </p>
       </section>
     </MarketingLayout>
   );

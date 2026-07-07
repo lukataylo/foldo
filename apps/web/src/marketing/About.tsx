@@ -19,7 +19,7 @@ export default function About() {
 
       <h2>Beliefs</h2>
       <ul>
-        <li>Reviewers are always free. We bill editors.</li>
+        <li>Viewers and commenters are always free. We bill per product, not per seat.</li>
         <li>Boring UI is the right UI. The animation belongs in the code, not the chrome.</li>
         <li>Self-hostable from day one.</li>
         <li>The dog stays.</li>

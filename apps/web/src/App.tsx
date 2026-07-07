@@ -50,6 +50,7 @@ import {
   UnreachableOverlay,
 } from './components/BootOverlays';
 import { EditPanel } from './components/EditPanel';
+import { WalkthroughsModal } from './components/WalkthroughsModal';
 import { Connectors } from './components/Connectors';
 import { CommentPopover } from './components/CommentPopover';
 import { useRoute } from './routing/Router';
@@ -401,6 +402,7 @@ export default function App() {
         board={snap.board}
         meUserId={snap.meUserId}
         onSwitchUser={topBar.onSwitchUser}
+        onOpenDocs={topBar.onOpenDocs}
         wsStatus={snap.wsStatus}
         offline={boot.kind === 'offline'}
       />
@@ -527,6 +529,16 @@ export default function App() {
         frames.length > 0 &&
         !selectedElement &&
         !commentPopover && <FirstRunHint count={frames.length} />}
+
+      {/* Living documentation — create a walkthrough / trigger a render.
+          Opened from the TopBar "Docs" button; state lives in
+          useTopBarHandlers so this render site stays a one-liner. */}
+      <WalkthroughsModal
+        open={topBar.docsOpen}
+        board={snap.board}
+        onClose={topBar.onCloseDocs}
+        onNotify={pushToast}
+      />
 
       <ToastStack toasts={toasts} />
     </div>

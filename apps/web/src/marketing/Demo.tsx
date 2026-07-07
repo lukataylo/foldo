@@ -208,7 +208,7 @@ export default function Demo() {
                     name="d-msg"
                     className="field-input"
                     rows={4}
-                    placeholder="We're drowning in branch previews. Want to see how multiplayer review works for our reviewers."
+                    placeholder="Our agents merge ten PRs a week and nobody knows what shipped. Want to see the walkthroughs re-film on merge."
                   />
                 </div>
                 {error && (

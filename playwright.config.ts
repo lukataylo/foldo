@@ -13,6 +13,12 @@ export default defineConfig({
     baseURL: process.env.FOLDO_WEB ?? 'http://localhost:5173',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    // Hosts with a pre-provisioned chromium that doesn't match the pinned
+    // playwright revision can point at it (e.g. /opt/pw-browsers/chromium).
+    // Unset (the normal case, incl. CI) → playwright's own browser resolve.
+    launchOptions: process.env.FOLDO_CHROMIUM_PATH
+      ? { executablePath: process.env.FOLDO_CHROMIUM_PATH }
+      : {},
   },
   projects: [
     {

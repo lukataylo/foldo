@@ -13,6 +13,7 @@
 // to the screen it's testing.
 
 import type { BrowserContext, Page } from '@playwright/test';
+import { deleteEmail, extractLink, waitForEmail } from './email-outbox';
 
 const API = process.env.FOLDO_API ?? 'http://localhost:4000';
 const WEB = process.env.FOLDO_WEB ?? 'http://localhost:5173';
@@ -79,10 +80,9 @@ export async function createUser(opts?: {
  * can mint share links / publish tests without tripping the email gate.
  */
 async function autoVerifyEmail(email: string): Promise<void> {
-  // Lazy-import so the outbox helper isn't pulled into specs that don't
-  // need it (and so a missing outbox in some test environments doesn't
-  // crash factory load).
-  const { waitForEmail, extractLink, deleteEmail } = await import('./email-outbox');
+  // Static import above: playwright's transpiler doesn't rewrite dynamic
+  // extensionless imports (broke under 1.60), and importing the module is
+  // side-effect-free until a helper is actually called.
   const msg = await waitForEmail(
     { kind: 'email-verification', to: email },
     { timeoutMs: 5_000 },

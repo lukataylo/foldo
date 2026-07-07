@@ -2,6 +2,18 @@ import SimplePage from './SimplePage';
 
 const ENTRIES = [
   {
+    date: '2026-07-06',
+    title: 'Foldo is now living documentation',
+    items: [
+      'The pivot: every merged PR now triggers the director, which re-films a narrated video walkthrough of your product — re-rendering only the steps the diff touched — and lands it on your board beside its predecessor.',
+      'New: GitHub App install-only onboarding. It reads PR metadata + diffs of merged PRs and nothing else — see /security.',
+      'New: byte-identical takes. Unchanged steps are reused byte-for-byte, sha256 shown in the take manifest.',
+      'New: one plan — £79/month per product, 14-day free trial, Stripe checkout.',
+      'Comments on a walkthrough frame still dispatch change requests to your coding agent — that loop stays.',
+      'Removed: the Chrome extension and the User Tests flow. Entries below describe the pre-pivot product.',
+    ],
+  },
+  {
     date: '2026-05-14',
     title: 'User Tests · real users, on the canvas',
     items: [

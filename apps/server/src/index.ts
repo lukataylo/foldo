@@ -27,6 +27,7 @@ import { registerBillingRoutes } from './routes/billing.ts';
 import { registerBrowserWs } from './ws/browser.ts';
 import { registerMcpWs } from './ws/mcp.ts';
 import { startSessionGc } from './gc.ts';
+import { startLifecycleEmails } from './email/lifecycle.ts';
 import { hubInitFallback, registerMetrics } from './metrics.ts';
 import { inMemoryHub, setActiveHub } from './ws/hub.ts';
 import { RedisHub } from './ws/redisHub.ts';
@@ -301,6 +302,8 @@ async function main(): Promise<void> {
 
   // Background sweep: expired auth sessions + stale reset/verify tokens.
   startSessionGc();
+  // Background sweep: lifecycle onboarding emails (docs/EMAILS.md).
+  startLifecycleEmails();
 
   await app.listen({ port: PORT, host: '0.0.0.0' });
   // keepAliveTimeout slightly longer than the typical LB idle timeout (usually

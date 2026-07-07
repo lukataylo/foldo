@@ -21,7 +21,8 @@ const KNOWN_MARKETING_PATHS = new Set<string>([
   '/changelog',
   '/cookies',
   '/cookie-policy',
-  '/extension',
+  '/security',
+  '/data-policy',
 ]);
 
 export function isMarketingPath(pathname: string): boolean {

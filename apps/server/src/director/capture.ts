@@ -159,7 +159,12 @@ export async function captureSteps(
 
   let browser: import('playwright').Browser | null = null;
   try {
-    browser = await pw.chromium.launch({ headless: true });
+    browser = await pw.chromium.launch({
+      headless: true,
+      // Escape hatch for hosts with a pre-provisioned chromium that doesn't
+      // match the playwright package's pinned revision.
+      executablePath: process.env.FOLDO_CHROMIUM_PATH || undefined,
+    });
   } catch (err) {
     const message = firstLine(err).slice(0, 300);
     return steps.map((s) => ({

@@ -36,6 +36,7 @@ import {
   mintEmailVerificationToken,
 } from '../repo/emailVerifications.ts';
 import { getEmailSender } from '../email/index.ts';
+import { sendWelcomeEmail } from '../email/lifecycle.ts';
 
 interface ScryptParams {
   /** CPU/memory cost factor — must be a power of 2. */
@@ -349,6 +350,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       // helper handles its own errors so a transient send failure doesn't
       // 500 the signup.
       void sendVerificationEmail(user, email, req.log);
+      // Welcome email (lifecycle sequence, step 0) — same non-blocking
+      // pattern; the helper handles its own errors and records the send in
+      // lifecycle_emails so the day-N sweep knows it went out.
+      void sendWelcomeEmail(user, email);
     }
     void trackFunnelEvent('signup', { userId: id }).catch(() => {});
     return reply.send({ token, user, createdAt: nowIso() });

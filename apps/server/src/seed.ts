@@ -9,7 +9,7 @@ import type {
   MarkdownFrameContent,
   User,
 } from '@foldo/protocol';
-import { closePool, initSchema } from './db.ts';
+import { closePool, exec, initSchema, queryOne } from './db.ts';
 import { getBoardById, upsertBoard } from './repo/boards.ts';
 import { upsertBranch, upsertCommit } from './repo/branches.ts';
 import { insertFrame } from './repo/frames.ts';
@@ -17,9 +17,16 @@ import { insertComment } from './repo/comments.ts';
 import { addBoardMember } from './repo/members.ts';
 import { upsertSource } from './repo/sources.ts';
 import { upsertUser } from './repo/users.ts';
+import { insertWalkthrough } from './repo/walkthroughs.ts';
 import { nowIso } from './util.ts';
 
 export const DEMO_BOARD_ID = 'board-acme-landing';
+
+/** Fixed public share token — /s/demo is the no-signup prospect tour. */
+export const DEMO_SHARE_TOKEN = 'demo';
+
+/** The demo board's seeded walkthrough (steps grounded in the sample app). */
+export const DEMO_WALKTHROUGH_ID = 'w-demo-acme';
 
 const BOARD_ID = DEMO_BOARD_ID;
 
@@ -432,6 +439,65 @@ export async function seed(): Promise<void> {
     text: 'This is the one the current commit is failing; gradient overwhelms headline.',
     anchor: { sectionId: 'acceptance-criteria', lineStart: 2, lineEnd: 2 },
   });
+
+  // ---------- Living documentation ----------
+  // The demo walkthrough. Steps are grounded in the sample app's visible
+  // text so a real render works out of the box: hit "Render now" in the Docs
+  // modal (or POST /api/walkthroughs/w-demo-acme/takes) and a walkthrough
+  // frame lands on this board.
+  await insertWalkthrough({
+    id: DEMO_WALKTHROUGH_ID,
+    boardId: BOARD_ID,
+    title: 'Acme pricing tour',
+    targetUrl: SAMPLE_APP_URL,
+    steps: [
+      {
+        id: 'pricing_page',
+        title: 'The pricing page',
+        narration:
+          "This is Acme's pricing page — the hero promises a free start with no credit card up front.",
+        actions: [
+          { kind: 'goto', url: '/' },
+          { kind: 'wait', ms: 2500 },
+        ],
+        durationMs: 5000,
+      },
+      {
+        id: 'plans',
+        title: 'Three plans',
+        narration:
+          'Scrolling down: Starter is free, Pro carries the trial, and the team plan sits alongside.',
+        actions: [
+          { kind: 'scroll', y: 450 },
+          { kind: 'wait', ms: 2500 },
+        ],
+        durationMs: 5000,
+      },
+      {
+        id: 'pro_trial',
+        title: 'Starting a Pro trial',
+        narration:
+          'Clicking Start Pro trial opens the signup flow — this is the conversion moment the team is iterating on.',
+        actions: [
+          { kind: 'click', text: 'Start Pro trial' },
+          { kind: 'wait', ms: 2000 },
+        ],
+        durationMs: 5000,
+      },
+    ],
+  });
+
+  // Public share link so prospects can explore without signing up (/s/demo).
+  const existingShare = await queryOne(
+    `SELECT token FROM board_shares WHERE token = $1`,
+    [DEMO_SHARE_TOKEN],
+  );
+  if (!existingShare) {
+    await exec(
+      `INSERT INTO board_shares (token, board_id, created_by_user_id) VALUES ($1, $2, $3)`,
+      [DEMO_SHARE_TOKEN, BOARD_ID, 'u-mateo'],
+    );
+  }
 }
 
 // Run seed if invoked directly (`tsx src/seed.ts`)

@@ -3,8 +3,8 @@ import { CheckCircle, FoldoMark, GitHubIcon, INK, MarketingPicture, MarketingSty
 import { apiSignup, storeAuth } from './auth';
 
 const PERKS = [
-  { title: 'Free forever for solo devs', body: 'Unlimited personal boards. Bring as many AI-built branches as you can fold.' },
-  { title: 'Live multiplayer review', body: 'Pin comments, follow each other’s viewport, ship the same merge in half the time.' },
+  { title: '14-day free trial', body: 'Full product from day one — £79/month per product after, cancel anytime.' },
+  { title: 'Walkthroughs that stay current', body: 'Every merged PR is re-filmed and narrated. Stakeholders watch what changed instead of reading a changelog.' },
   { title: 'Bring your own agent', body: 'Claude Code, Cursor, custom MCP. Foldo doesn’t care which paw wrote the patch.' },
   { title: 'Open source, MIT', body: 'Self-host if you want. Read the code. PRs welcome, bring snacks.' },
 ];

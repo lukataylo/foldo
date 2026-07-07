@@ -23,15 +23,15 @@ function IndexBody() {
       <ul>
         <li><a href="/docs/getting-started">Getting started</a> · install, seed, open your first board.</li>
         <li><a href="/docs/concepts">Concepts</a> · boards, frames, dispatches, and what a "fold" is.</li>
-        <li><a href="/docs/mcp">MCP server</a> · wire Claude Code into your canvas.</li>
-        <li><a href="/docs/user-tests">User Tests</a> · put real users in front of your work and stream the evidence back.</li>
+        <li><a href="/docs/mcp">MCP server</a> · wire Claude Code into your board.</li>
         <li><a href="/docs/self-host">Self-host</a> · deploy Foldo to your own infra.</li>
       </ul>
       <h2>The short version</h2>
       <p>
-        Foldo is a multiplayer canvas for reviewing AI-generated code. You
-        connect your repo, every branch becomes a row of live frames, and you
-        leave comments that an agent can turn into commits.
+        Foldo is living documentation for agent-built software. You install
+        the GitHub App, every merged PR becomes a narrated video walkthrough
+        of what your product now does, and comments on a walkthrough dispatch
+        change requests back to your coding agent.
       </p>
       <blockquote>
         Foldo is the surface. The agent is the coder. You're the director.
@@ -197,61 +197,6 @@ function McpBody() {
   );
 }
 
-function UserTestsBody() {
-  return (
-    <>
-      <h1>User Tests.</h1>
-      <p>
-        Foldo already closes the loop between "an agent wrote code" and "a human
-        reviewed it" — but every reviewer is a <em>proxy</em> for the real user.
-        User Tests adds the loop that was missing: <strong>build → real users
-        try it → evidence → fix</strong>. It's unmoderated UX testing built into
-        the canvas, and the raw feedback connects straight to a coding agent.
-      </p>
-
-      <h2>1. Publish a test link</h2>
-      <p>
-        From a board, create a test: pick the app URL, write a short list of
-        task instructions, and optionally add a questionnaire. Foldo mints a
-        public <code>foldo.dev/t/:token</code> link you can hand to anyone — no
-        Foldo account required to take the test.
-      </p>
-
-      <h2>2. Testers record screen + voice</h2>
-      <p>
-        Testers open the link and work through your tasks while recording their
-        screen and voice (or voice-only). Foldo auto-detects one of three
-        delivery modes for the app under test:
-      </p>
-      <ul>
-        <li><strong>Embedded iframe</strong> · for apps that allow framing.</li>
-        <li><strong>New-tab handoff</strong> · for apps that block framing, the test runs in a new tab and reports back.</li>
-        <li><strong>Frozen DOM snapshot</strong> · for local apps the tester can't reach, against a captured snapshot.</li>
-      </ul>
-
-      <h2>3. Results land as frames</h2>
-      <p>
-        As sessions come in, each one streams onto the board as frames you can
-        comment on like any other: a scrubbable recording player, per-task
-        pass/skip stats, questionnaire answers, the transcript, and an AI
-        synthesis (a summary plus extracted issues).
-      </p>
-
-      <h2>4. Turn evidence into edits</h2>
-      <p>
-        Every synthesised issue carries a <em>Make this an edit</em> button —
-        the same path a comment takes. Raw user-test feedback becomes a Foldo
-        dispatch and then a Claude Code commit, without ever leaving the canvas.
-      </p>
-
-      <blockquote>
-        Comments are your team reviewing the work. User Tests are the real
-        users — and both end at the same agent.
-      </blockquote>
-    </>
-  );
-}
-
 function ClaudeInstallBody() {
   return (
     <>
@@ -323,8 +268,8 @@ function ClaudeInstallBody() {
           <code>foldo_capture_url</code> · snapshot a public URL as a new app
           frame. Args: <code>boardId</code>, <code>url</code>, optional{' '}
           <code>title</code> and <code>viewport</code>. Iframes the URL; for
-          auth-walled / X-Frame-Options-blocked pages, reach for{' '}
-          <a href="/extension">the Chrome extension</a> instead.
+          auth-walled pages, supply filming credentials in the board's
+          settings instead.
         </li>
         <li>
           <code>foldo_add_frame</code> · drop a free-form frame. Args:{' '}
@@ -463,13 +408,6 @@ const PAGES: DocPage[] = [
     title: 'MCP server',
     blurb: 'Wire Claude Code into your canvas.',
     Body: McpBody,
-  },
-  {
-    slug: 'user-tests',
-    group: 'CORE',
-    title: 'User Tests',
-    blurb: 'Put real users in front of your work, stream evidence back.',
-    Body: UserTestsBody,
   },
   {
     slug: 'claude',

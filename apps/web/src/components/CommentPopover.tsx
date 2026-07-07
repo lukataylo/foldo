@@ -259,11 +259,18 @@ export function CommentPopover({
             Delete
           </button>
         )}
-        {/* A+W1 features — disable when the comment has no element target
-            and no markdown anchor; the handler in useCommentHandlers also
-            short-circuits with a toast for keyboard / programmatic callers. */}
+        {/* A+W1 features — disable when the comment has no element target,
+            no markdown anchor, AND no pin. Pinned comments are editable via
+            the pin-fallback branches in useCommentHandlers (markdown / app /
+            walkthrough frames synthesise a SelectedElement from the pin);
+            the handler still short-circuits with a toast for frame kinds it
+            can't serve. */}
         {(() => {
-          const canMakeEdit = !!(comment.target?.elementLabel || comment.anchor);
+          const canMakeEdit = !!(
+            comment.target?.elementLabel ||
+            comment.anchor ||
+            comment.pin
+          );
           return (
             <button
               data-testid="foldo-comment-make-edit"

@@ -401,6 +401,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_once_per_user
   ON analytics_events(name, user_id) WHERE user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_analytics_name ON analytics_events(name);
 
+-- Lifecycle onboarding emails (email/lifecycle.ts). One row per (user, kind)
+-- marks that stage as sent, so the hourly sweep never double-sends. Rows are
+-- written after a successful send; a failed send is retried next sweep.
+CREATE TABLE IF NOT EXISTS lifecycle_emails (
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, kind)
+);
+
 CREATE INDEX IF NOT EXISTS idx_frames_board ON frames(board_id);
 CREATE INDEX IF NOT EXISTS idx_comments_frame ON comments(frame_id);
 CREATE INDEX IF NOT EXISTS idx_dispatches_board ON dispatches(board_id);

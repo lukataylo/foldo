@@ -598,16 +598,17 @@ export function Footer() {
               lineHeight: 1.55,
             }}
           >
-            Smart reviews. Folded to perfection.
+            Living documentation for agent-built software.
             <br />
-            Built for teams who let AI write the first draft.
+            Every merge, re-filmed and narrated.
           </p>
         </div>
         <FooterCol
           title="PRODUCT"
           links={[
             { label: 'Pricing', href: '/pricing' },
-            { label: 'Chrome extension', href: '/extension' },
+            { label: 'Live demo board', href: '/s/demo' },
+            { label: 'Security', href: '/security' },
             { label: 'Changelog', href: '/docs/changelog' },
             { label: 'Book a demo', href: '/demo' },
           ]}
@@ -649,6 +650,7 @@ export function Footer() {
         <span style={{ display: 'flex', gap: 18, alignItems: 'center' }}>
           <a href="/terms" style={{ color: '#888', textDecoration: 'none' }}>Terms</a>
           <a href="/privacy" style={{ color: '#888', textDecoration: 'none' }}>Privacy</a>
+          <a href="/data-policy" style={{ color: '#888', textDecoration: 'none' }}>Data policy</a>
           <a href="/cookies" style={{ color: '#888', textDecoration: 'none' }}>Cookies</a>
         </span>
       </div>

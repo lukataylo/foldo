@@ -9,6 +9,8 @@ interface Props {
   board: Board | null;
   meUserId: UserId | null;
   onSwitchUser: (userId: UserId) => void;
+  /** Opens the Walkthroughs ("Docs") modal — rendered by App.tsx. */
+  onOpenDocs: () => void;
   wsStatus: 'connecting' | 'open' | 'closed' | 'reconnecting' | 'offline';
   offline: boolean;
 }
@@ -17,6 +19,7 @@ export function TopBar({
   board,
   meUserId,
   onSwitchUser,
+  onOpenDocs,
   wsStatus,
   offline,
 }: Props) {
@@ -163,6 +166,14 @@ export function TopBar({
             )}
           </div>
         )}
+        <button
+          data-testid="foldo-canvas-topbar-docs"
+          onClick={onOpenDocs}
+          title="Walkthroughs — living documentation for this board"
+          className="rounded-lg border border-hairlineSoft bg-panel px-2.5 py-2 text-[12px] text-ink transition-colors hover:bg-white/5"
+        >
+          Docs
+        </button>
         <div className="relative inline-flex" ref={shareMenuRef}>
           <button
             data-testid="foldo-canvas-topbar-share"

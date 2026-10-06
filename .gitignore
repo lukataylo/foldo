@@ -20,3 +20,6 @@ playwright-report/
 
 # Editor lock files
 *~lock~
+
+data/
+*.db

@@ -150,7 +150,13 @@ const ActionList = memo(({ actions }: ActionListProps) => {
             >
               <div className="flex items-center gap-1.5 text-sm">
                 <div className={classNames('text-lg', getIconColor(action.status))}>
-                  {status === 'running' ? (
+                  {status === 'running' && type === 'shell' && isServerCommand(content) ? (
+                    // a dev server never exits, so show a steady "live" dot instead of an endless spinner
+                    <div className="relative flex h-[1em] w-[1em] items-center justify-center">
+                      <span className="absolute h-2 w-2 animate-ping rounded-full bg-bolt-elements-icon-success opacity-60" />
+                      <span className="h-2 w-2 rounded-full bg-bolt-elements-icon-success" />
+                    </div>
+                  ) : status === 'running' ? (
                     <div className="i-svg-spinners:90-ring-with-bg"></div>
                   ) : status === 'pending' ? (
                     <div className="i-ph:circle-duotone"></div>
@@ -169,10 +175,21 @@ const ActionList = memo(({ actions }: ActionListProps) => {
                   </div>
                 ) : type === 'shell' ? (
                   <div className="flex items-center w-full min-h-[28px]">
-                    <span className="flex-1">Run command</span>
+                    <span className="flex-1">
+                      {status === 'running' && isServerCommand(content)
+                        ? 'Dev server running'
+                        : status === 'failed'
+                          ? 'Command failed'
+                          : 'Run command'}
+                    </span>
                   </div>
                 ) : null}
               </div>
+              {type === 'shell' && status === 'failed' && 'error' in action && action.error && (
+                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-md border border-bolt-elements-icon-error/40 bg-bolt-elements-artifacts-inlineCode-background p-2 text-xs text-bolt-elements-textSecondary">
+                  {action.error}
+                </pre>
+              )}
               {type === 'shell' && (
                 <ShellCodeBlock
                   classsName={classNames('mt-1', {
@@ -211,3 +228,6 @@ function getIconColor(status: ActionState['status']) {
     }
   }
 }
+
+// long-running commands that keep the process alive on purpose
+const isServerCommand = (command: string) => /\b(npm run (dev|start|serve|preview)|npm start|npx vite|vite( |$)|yarn (dev|start)|pnpm (dev|start))/.test(command);

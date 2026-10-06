@@ -114,7 +114,10 @@ export class ActionRunner {
 
       this.#updateAction(actionId, { status: action.abortSignal.aborted ? 'aborted' : 'complete' });
     } catch (error) {
-      this.#updateAction(actionId, { status: 'failed', error: 'Action failed' });
+      this.#updateAction(actionId, {
+        status: 'failed',
+        error: error instanceof Error && error.message ? error.message : 'Action failed',
+      });
 
       // re-throw the error to be caught in the promise chain
       throw error;
@@ -136,10 +139,14 @@ export class ActionRunner {
       process.kill();
     });
 
+    // keep the tail of the output so a failed install/build can show why (no more silent "complete")
+    let tail = '';
+
     process.output.pipeTo(
       new WritableStream({
         write(data) {
           console.log(data);
+          tail = (tail + data).slice(-1500);
         },
       }),
     );
@@ -147,6 +154,13 @@ export class ActionRunner {
     const exitCode = await process.exit;
 
     logger.debug(`Process terminated with code ${exitCode}`);
+
+    // eslint-disable-next-line no-control-regex
+    const clean = tail.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').trim();
+
+    if (exitCode !== 0 && !action.abortSignal.aborted) {
+      throw new Error(clean.split('\n').slice(-8).join('\n') || `Command exited with code ${exitCode}`);
+    }
   }
 
   async #runFileAction(action: ActionState) {

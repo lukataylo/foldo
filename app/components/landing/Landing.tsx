@@ -27,7 +27,7 @@ export function Landing() {
 
   return (
     <div className="h-full overflow-y-auto bg-[#FDF7EF] text-[#111111]" data-testid="foldo-marketing-landing">
-      <EventBar event={event} />
+      <EventBar event={event} paper />
       <header className="mx-auto flex max-w-[1180px] items-center justify-between px-6 py-5">
         <Logo size={36} className="text-[#111111]" />
         <nav className="flex items-center gap-2 text-sm font-medium">

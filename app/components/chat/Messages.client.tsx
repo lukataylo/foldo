@@ -26,17 +26,19 @@ export const Messages = React.forwardRef<HTMLDivElement, MessagesProps>((props: 
             return (
               <div
                 key={index}
-                className={classNames('flex gap-4 p-6 w-full rounded-[calc(0.75rem-1px)]', {
+                className={classNames('flex gap-3 p-4 w-full rounded-xl border border-bolt-elements-borderColor', {
                   'bg-bolt-elements-messages-background': isUserMessage || !isStreaming || (isStreaming && !isLast),
                   'bg-gradient-to-b from-bolt-elements-messages-background from-30% to-transparent':
                     isStreaming && isLast,
                   'mt-4': !isFirst,
                 })}
               >
-                {isUserMessage && (
-                  <div className="flex items-center justify-center w-[34px] h-[34px] overflow-hidden bg-white text-gray-600 rounded-full shrink-0 self-start">
-                    <div className="i-ph:user-fill text-xl"></div>
+                {isUserMessage ? (
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center self-start overflow-hidden rounded-full bg-bolt-elements-background-depth-3 text-bolt-elements-textSecondary">
+                    <div className="i-ph:user-bold text-sm"></div>
                   </div>
+                ) : (
+                  <img src="/foldo-mark.svg" alt="" width={28} height={28} className="h-7 w-7 shrink-0 self-start rounded-lg" />
                 )}
                 <div className="grid grid-col-1 w-full">
                   {isUserMessage ? <UserMessage content={content} /> : <AssistantMessage content={content} />}

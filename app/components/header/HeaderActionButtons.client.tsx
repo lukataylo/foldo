@@ -3,66 +3,69 @@ import { chatStore } from '~/lib/stores/chat';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { classNames } from '~/utils/classNames';
 
-interface HeaderActionButtonsProps {}
-
-export function HeaderActionButtons({}: HeaderActionButtonsProps) {
+// Segmented control: show/hide the chat and the code workbench. At least one stays visible.
+export function HeaderActionButtons() {
   const showWorkbench = useStore(workbenchStore.showWorkbench);
   const { showChat } = useStore(chatStore);
-
   const canHideChat = showWorkbench || !showChat;
 
   return (
-    <div className="flex">
-      <div className="flex border border-bolt-elements-borderColor rounded-md overflow-hidden">
-        <Button
-          active={showChat}
-          disabled={!canHideChat}
-          onClick={() => {
-            if (canHideChat) {
-              chatStore.setKey('showChat', !showChat);
-            }
-          }}
-        >
-          <div className="i-bolt:chat text-sm" />
-        </Button>
-        <div className="w-[1px] bg-bolt-elements-borderColor" />
-        <Button
-          active={showWorkbench}
-          onClick={() => {
-            if (showWorkbench && !showChat) {
-              chatStore.setKey('showChat', true);
-            }
+    <div
+      role="group"
+      aria-label="Panels"
+      className="flex h-8 items-center gap-0.5 rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-0.5"
+    >
+      <Segment
+        label="Chat"
+        icon="i-ph:chat-circle-text"
+        active={showChat}
+        disabled={!canHideChat}
+        onClick={() => chatStore.setKey('showChat', !showChat)}
+      />
+      <Segment
+        label="Code and preview"
+        icon="i-ph:code"
+        active={showWorkbench}
+        onClick={() => {
+          if (showWorkbench && !showChat) {
+            chatStore.setKey('showChat', true);
+          }
 
-            workbenchStore.showWorkbench.set(!showWorkbench);
-          }}
-        >
-          <div className="i-ph:code-bold" />
-        </Button>
-      </div>
+          workbenchStore.showWorkbench.set(!showWorkbench);
+        }}
+      />
     </div>
   );
 }
 
-interface ButtonProps {
-  active?: boolean;
+function Segment({
+  label,
+  icon,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  icon: string;
+  active: boolean;
   disabled?: boolean;
-  children?: any;
-  onClick?: VoidFunction;
-}
-
-function Button({ active = false, disabled = false, children, onClick }: ButtonProps) {
+  onClick: () => void;
+}) {
   return (
     <button
-      className={classNames('flex items-center p-1.5', {
-        'bg-bolt-elements-item-backgroundDefault hover:bg-bolt-elements-item-backgroundActive text-bolt-elements-textTertiary hover:text-bolt-elements-textPrimary':
-          !active,
-        'bg-bolt-elements-item-backgroundAccent text-bolt-elements-item-contentAccent': active && !disabled,
-        'bg-bolt-elements-item-backgroundDefault text-alpha-gray-20 dark:text-alpha-white-20 cursor-not-allowed':
-          disabled,
-      })}
+      aria-label={label}
+      title={label}
+      aria-pressed={active}
+      disabled={disabled}
       onClick={onClick}
+      className={classNames(
+        'flex h-7 w-7 items-center justify-center rounded-md text-base outline-none transition-theme focus-visible:ring-2 focus-visible:ring-bolt-elements-borderColorActive disabled:cursor-default',
+        active
+          ? 'bg-bolt-elements-background-depth-3 text-bolt-elements-textPrimary'
+          : 'text-bolt-elements-textTertiary hover:text-bolt-elements-textPrimary',
+      )}
     >
-      {children}
+      <span className={icon} />
     </button>
   );
 }

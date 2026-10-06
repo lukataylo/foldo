@@ -1,7 +1,6 @@
 import { json, redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node';
 import { Form, useActionData, useLoaderData } from '@remix-run/react';
-import { Logo } from '~/components/brand/Logo';
-import { UserMenu } from '~/components/header/UserMenu';
+import { PageShell } from '~/components/PageShell';
 import {
   destroySession,
   endSessions,
@@ -78,12 +77,8 @@ export default function Settings() {
   const r = useActionData<typeof action>() as { ok?: string; error?: string } | undefined;
 
   return (
-    <div className="h-full overflow-y-auto bg-bolt-elements-background-depth-1 text-bolt-elements-textPrimary">
-      <header className="mx-auto flex max-w-[720px] items-center justify-between px-6 py-5">
-        <Logo size={32} />
-        <UserMenu email={d.email} name={d.name} admin={d.admin} remaining={d.remaining} />
-      </header>
-      <main className="mx-auto max-w-[720px] space-y-6 px-6 pb-16" data-testid="foldo-settings">
+    <PageShell data={d} active="settings" narrow>
+      <main className="space-y-6" data-testid="foldo-settings">
         <h1 className="text-3xl font-bold">Settings</h1>
         {(r?.ok || r?.error) && (
           <div role="status" className={`rounded-xl px-4 py-3 text-sm ${r.error ? 'bg-[#fdecec] text-[#b42318]' : 'bg-[#e8f6ec] text-[#14532d]'}`}>
@@ -122,6 +117,6 @@ export default function Settings() {
           </button>
         </Form>
       </main>
-    </div>
+    </PageShell>
   );
 }

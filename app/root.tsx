@@ -86,10 +86,13 @@ export default function App() {
 export function ErrorBoundary() {
   const error = useRouteError();
   const notFound = isRouteErrorResponse(error) && error.status === 404;
-  const detail = isRouteErrorResponse(error) ? String(error.data || error.statusText) : undefined;
+  const raw = isRouteErrorResponse(error) ? String(error.data || error.statusText) : '';
+  const detail = /^Error:|No route/.test(raw) ? undefined : raw || undefined;
 
+  // renderHeadToString yields an empty <head> when no route matched, so the boundary brings its own stylesheets
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 bg-bolt-elements-background-depth-1 p-6 text-center text-bolt-elements-textPrimary">
+      <Links />
       <img src={notFound ? '/art/not-found.webp' : '/art/sleepy.webp'} alt="" width={260} className="rounded-3xl" />
       <h1 className="font-display text-4xl">{notFound ? 'Nothing here.' : 'Something went wrong.'}</h1>
       <p className="max-w-sm text-bolt-elements-textSecondary">
@@ -97,10 +100,7 @@ export function ErrorBoundary() {
           ? detail || "We couldn't find that page. It may have been deleted or the link may be wrong."
           : 'Try again in a moment. If it keeps happening, let us know.'}
       </p>
-      <a
-        href="/"
-        className="rounded-lg bg-bolt-elements-button-primary-background px-5 py-2.5 text-sm font-semibold text-bolt-elements-button-primary-text hover:bg-bolt-elements-button-primary-backgroundHover"
-      >
+      <a href="/" className="btn-primary btn-lg">
         Back to Foldo
       </a>
     </div>

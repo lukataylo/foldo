@@ -15,7 +15,7 @@ export function Studio() {
       {shared && (
         <div
           data-testid="foldo-share-banner"
-          className="flex items-center justify-center gap-3 bg-[#FFC21A] px-4 py-2 text-sm font-medium text-[#111]"
+          className="flex h-10 shrink-0 items-center justify-center gap-3 bg-[#FFC21A] px-4 text-sm font-medium text-[#111]"
         >
           <span className="i-ph:eye text-base" />
           <span>
@@ -25,7 +25,7 @@ export function Studio() {
           {!email && (
             <a
               href="/login?mode=register"
-              className="rounded-md bg-[#111] px-2.5 py-1 font-semibold text-white hover:bg-black"
+              className="btn h-7 bg-[#111] px-2.5 text-xs font-semibold text-white hover:bg-black"
             >
               Sign up to remix
             </a>

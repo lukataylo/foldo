@@ -2,8 +2,7 @@ import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-r
 import { Form, useActionData, useLoaderData, useNavigation } from '@remix-run/react';
 import { generateText } from 'ai';
 import { randomBytes } from 'node:crypto';
-import { Logo } from '~/components/brand/Logo';
-import { UserMenu } from '~/components/header/UserMenu';
+import { PageShell } from '~/components/PageShell';
 import {
   activeStreams,
   endSessions,
@@ -225,18 +224,9 @@ export default function Admin() {
   const pct = Math.min(100, Math.round((d.stats.messagesToday / Math.max(1, d.stats.globalLimit)) * 100));
 
   return (
-    <div className="h-full overflow-y-auto bg-bolt-elements-background-depth-1 text-bolt-elements-textPrimary" data-testid="foldo-admin">
-      <header className="mx-auto flex max-w-[1100px] items-center justify-between px-6 py-5">
-        <div className="flex items-center gap-3">
-          <Logo size={32} />
-          <span className="rounded-full bg-bolt-elements-item-backgroundAccent px-2.5 py-0.5 text-xs font-semibold text-bolt-elements-item-contentAccent">
-            Admin
-          </span>
-        </div>
-        <UserMenu email={d.email} name={d.name} admin remaining={d.remaining} />
-      </header>
-
-      <main className="mx-auto max-w-[1100px] space-y-6 px-6 pb-20">
+    <PageShell data={d} active="admin">
+      <main className="space-y-6" data-testid="foldo-admin">
+        <h1 className="text-3xl font-bold">Admin</h1>
         {(result?.ok || result?.error) && (
           <div
             role="status"
@@ -429,6 +419,6 @@ export default function Admin() {
           )}
         </section>
       </main>
-    </div>
+    </PageShell>
   );
 }

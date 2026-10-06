@@ -2,9 +2,8 @@ import { json, type LoaderFunctionArgs } from '@remix-run/node';
 import { useLoaderData, useRevalidator } from '@remix-run/react';
 import { useState } from 'react';
 import { toast } from 'react-toastify';
-import { Logo } from '~/components/brand/Logo';
-import { EventBar, type EventInfo } from '~/components/header/EventBar';
-import { UserMenu } from '~/components/header/UserMenu';
+import { PageShell } from '~/components/PageShell';
+import type { EventInfo } from '~/components/header/EventBar';
 import { iconFor } from '~/components/landing/starters';
 import { Dialog, DialogButton, DialogDescription, DialogRoot, DialogTitle } from '~/components/ui/Dialog';
 import { requireUser, shell } from '~/lib/.server/auth';
@@ -33,6 +32,7 @@ export default function Projects() {
     event: EventInfo | null;
     projects: { id: string; description: string | null; shared: number; updated: number }[];
   };
+  const shellData = { email, name, admin, remaining, event };
   const revalidator = useRevalidator();
   const [confirm, setConfirm] = useState<(typeof projects)[number] | null>(null);
 
@@ -51,20 +51,12 @@ export default function Projects() {
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-bolt-elements-background-depth-1 text-bolt-elements-textPrimary">
-      <header className="mx-auto flex max-w-[1100px] items-center justify-between px-6 py-5">
-        <Logo size={32} />
-        <UserMenu email={email} name={name} admin={admin} remaining={remaining} />
-      </header>
-      <EventBar event={event} />
+    <PageShell data={shellData} active="projects">
 
-      <main className="mx-auto max-w-[1100px] px-6 pb-16" data-testid="foldo-projects-page">
-        <div className="mb-8 mt-4 flex items-center justify-between">
+      <main data-testid="foldo-projects-page">
+        <div className="mb-6 flex items-center justify-between">
           <h1 className="text-3xl font-bold">Your projects</h1>
-          <a
-            href="/"
-            className="flex items-center gap-1.5 rounded-lg bg-bolt-elements-button-primary-background px-4 py-2 text-sm font-semibold text-bolt-elements-button-primary-text hover:bg-bolt-elements-button-primary-backgroundHover"
-          >
+          <a href="/" className="btn-primary btn-md">
             <span className="i-ph:plus-bold" /> New project
           </a>
         </div>
@@ -76,10 +68,7 @@ export default function Projects() {
             <p className="mb-5 mt-1 max-w-sm text-bolt-elements-textSecondary">
               Describe an app and Foldo will build it. Your projects live here so you can pick them up any time.
             </p>
-            <a
-              href="/"
-              className="rounded-lg bg-bolt-elements-button-primary-background px-5 py-2.5 text-sm font-semibold text-bolt-elements-button-primary-text hover:bg-bolt-elements-button-primary-backgroundHover"
-            >
+            <a href="/" className="btn-primary btn-lg">
               Build your first app
             </a>
           </div>
@@ -146,6 +135,6 @@ export default function Projects() {
           </DialogRoot>
         )}
       </main>
-    </div>
+    </PageShell>
   );
 }

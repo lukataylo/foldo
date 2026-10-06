@@ -5,8 +5,7 @@ import { useEffect } from 'react';
 import { toggleTheme } from '~/lib/stores/theme';
 import { quota } from '~/lib/stores/ui';
 
-const item =
-  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-bolt-elements-textSecondary outline-none cursor-pointer data-[highlighted]:bg-bolt-elements-item-backgroundActive data-[highlighted]:text-bolt-elements-textPrimary';
+const item = 'menu-item';
 
 export function UserMenu({
   email,
@@ -33,7 +32,7 @@ export function UserMenu({
         <button
           aria-label="Account menu"
           data-testid="foldo-canvas-topbar-account"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--foldo-yellow)] text-sm font-bold text-[#111] outline-none focus-visible:ring-2 focus-visible:ring-bolt-elements-borderColorActive"
+          className="flex h-8 w-8 items-center justify-center rounded-full border border-bolt-elements-borderColor bg-bolt-elements-background-depth-3 text-xs font-semibold text-bolt-elements-textPrimary outline-none transition-theme hover:border-[var(--foldo-yellow)] focus-visible:ring-2 focus-visible:ring-bolt-elements-borderColorActive data-[state=open]:border-[var(--foldo-yellow)]"
         >
           {email[0]?.toUpperCase()}
         </button>
@@ -42,7 +41,7 @@ export function UserMenu({
         <DropdownMenu.Content
           align="end"
           sideOffset={8}
-          className="z-max w-60 rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-1.5 shadow-xl"
+          className="z-max w-60 rounded-xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-1.5 shadow-xl"
         >
           <div className="px-2 py-1.5">
             <div className="truncate text-sm font-medium text-bolt-elements-textPrimary">{name || email}</div>

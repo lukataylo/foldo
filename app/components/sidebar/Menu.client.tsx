@@ -179,7 +179,7 @@ export function Menu() {
           </DialogRoot>
         </div>
         <div className="flex items-center border-t border-bolt-elements-borderColor p-4">
-          <a href="/projects" className="text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary">
+          <a href="/projects" className="btn-ghost btn-md -ml-2">
             All projects
           </a>
           <ThemeSwitch className="ml-auto" />

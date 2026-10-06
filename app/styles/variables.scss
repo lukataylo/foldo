@@ -11,7 +11,7 @@
 
   --bolt-elements-textPrimary: theme('colors.gray.950');
   --bolt-elements-textSecondary: theme('colors.gray.600');
-  --bolt-elements-textTertiary: theme('colors.gray.500');
+  --bolt-elements-textTertiary: #6b6b6b;
 
   --bolt-elements-code-background: theme('colors.gray.100');
   --bolt-elements-code-text: theme('colors.gray.950');
@@ -28,9 +28,9 @@
   --bolt-elements-button-danger-backgroundHover: theme('colors.alpha.red.20');
   --bolt-elements-button-danger-text: theme('colors.red.500');
 
-  --bolt-elements-item-contentDefault: theme('colors.alpha.gray.50');
+  --bolt-elements-item-contentDefault: #6b6b6b;
   --bolt-elements-item-contentActive: theme('colors.gray.950');
-  --bolt-elements-item-contentAccent: theme('colors.accent.700');
+  --bolt-elements-item-contentAccent: theme('colors.accent.800');
   --bolt-elements-item-contentDanger: theme('colors.red.500');
   --bolt-elements-item-backgroundDefault: rgba(0, 0, 0, 0);
   --bolt-elements-item-backgroundActive: theme('colors.alpha.gray.5');
@@ -50,7 +50,7 @@
   --bolt-elements-actions-code-background: theme('colors.gray.800');
 
   --bolt-elements-messages-background: #f3ebde;
-  --bolt-elements-messages-linkColor: theme('colors.accent.700');
+  --bolt-elements-messages-linkColor: theme('colors.accent.800');
   --bolt-elements-messages-code-background: theme('colors.gray.800');
   --bolt-elements-messages-inlineCode-background: theme('colors.gray.200');
   --bolt-elements-messages-inlineCode-text: theme('colors.gray.800');
@@ -68,7 +68,7 @@
   --bolt-elements-sidebar-dropdownShadow: theme('colors.alpha.gray.10');
   --bolt-elements-sidebar-buttonBackgroundDefault: theme('colors.alpha.accent.10');
   --bolt-elements-sidebar-buttonBackgroundHover: theme('colors.alpha.accent.20');
-  --bolt-elements-sidebar-buttonText: theme('colors.accent.700');
+  --bolt-elements-sidebar-buttonText: theme('colors.accent.800');
 
   --bolt-elements-preview-addressBar-background: theme('colors.gray.100');
   --bolt-elements-preview-addressBar-backgroundHover: theme('colors.alpha.gray.5');
@@ -116,8 +116,8 @@
   --bolt-elements-bg-depth-4: theme('colors.alpha.white.5');
 
   --bolt-elements-textPrimary: theme('colors.white');
-  --bolt-elements-textSecondary: theme('colors.gray.400');
-  --bolt-elements-textTertiary: theme('colors.gray.500');
+  --bolt-elements-textSecondary: #b4b4b4;
+  --bolt-elements-textTertiary: #959595;
 
   --bolt-elements-code-background: theme('colors.gray.800');
   --bolt-elements-code-text: theme('colors.white');
@@ -134,7 +134,7 @@
   --bolt-elements-button-danger-backgroundHover: theme('colors.alpha.red.20');
   --bolt-elements-button-danger-text: theme('colors.red.500');
 
-  --bolt-elements-item-contentDefault: theme('colors.alpha.white.50');
+  --bolt-elements-item-contentDefault: #a3a3a3;
   --bolt-elements-item-contentActive: theme('colors.white');
   --bolt-elements-item-contentAccent: theme('colors.accent.500');
   --bolt-elements-item-contentDanger: theme('colors.red.500');
@@ -216,7 +216,8 @@
  * Hierarchy: Element Token -> (Element Token | Color Tokens) -> Primitives
  */
 :root {
-  --header-height: 54px;
+  
+  --header-height: 56px;
   --chat-max-width: 37rem;
   --chat-min-width: 640px;
   --workbench-width: min(calc(100% - var(--chat-min-width)), 1536px);

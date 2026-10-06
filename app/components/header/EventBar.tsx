@@ -20,7 +20,7 @@ function left(ms: number) {
 }
 
 // Thin organizer strip: event name, live countdown, announcement. Hidden when no event is configured.
-export function EventBar({ event }: { event?: EventInfo | null }) {
+export function EventBar({ event, paper }: { event?: EventInfo | null; paper?: boolean }) {
   const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
@@ -38,11 +38,18 @@ export function EventBar({ event }: { event?: EventInfo | null }) {
   return (
     <div
       data-testid="foldo-event-bar"
-      className="flex flex-wrap items-center justify-center gap-x-3 bg-[#111] px-4 py-1.5 text-xs text-white"
+      className={`flex h-8 shrink-0 items-center justify-center gap-3 border-b px-4 text-xs ${paper ? 'border-[#E6E3DE] bg-[#F6EEDF] text-[#555]' : 'border-bolt-elements-borderColor bg-bolt-elements-background-depth-2'}`}
     >
-      {event.name && <span className="font-bold text-[var(--foldo-yellow)]">{event.name}</span>}
-      {event.endsAt && now !== null && <span className="rounded-full bg-white/10 px-2 py-0.5">{left(event.endsAt - now)}</span>}
-      {event.announcement && <span className="text-white/80">{event.announcement}</span>}
+      {event.name && (
+        <span className={`flex items-center gap-1.5 font-semibold ${paper ? 'text-[#111]' : 'text-bolt-elements-textPrimary'}`}>
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--foldo-yellow)]" />
+          {event.name}
+        </span>
+      )}
+      {event.endsAt && now !== null && (
+        <span className={`font-medium tabular-nums ${paper ? 'text-[#7A5000]' : 'text-bolt-elements-item-contentAccent'}`}>{left(event.endsAt - now)}</span>
+      )}
+      {event.announcement && <span className={`min-w-0 truncate ${paper ? 'text-[#555]' : 'text-bolt-elements-textSecondary'}`}>{event.announcement}</span>}
     </div>
   );
 }

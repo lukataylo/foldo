@@ -102,6 +102,15 @@ export default defineConfig({
   shortcuts: {
     'bolt-ease-cubic-bezier': 'ease-[cubic-bezier(0.4,0,0.2,1)]',
     'transition-theme': 'transition-[background-color,border-color,color] duration-150 bolt-ease-cubic-bezier',
+    // buttons: pick one variant and one size, e.g. "btn-primary btn-md"
+    btn: 'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-theme outline-none focus-visible:ring-2 focus-visible:ring-bolt-elements-borderColorActive disabled:opacity-50',
+    'btn-md': 'h-8 px-3 text-sm',
+    'btn-lg': 'h-10 px-5 text-sm',
+    'btn-primary': 'btn bg-bolt-elements-button-primary-background text-bolt-elements-button-primary-text hover:bg-bolt-elements-button-primary-backgroundHover',
+    'btn-secondary': 'btn border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 text-bolt-elements-textPrimary hover:bg-bolt-elements-item-backgroundActive',
+    'btn-ghost': 'btn text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary hover:bg-bolt-elements-item-backgroundActive',
+    'surface': 'rounded-2xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2',
+    'menu-item': 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-bolt-elements-textSecondary outline-none cursor-pointer data-[highlighted]:bg-bolt-elements-item-backgroundActive data-[highlighted]:text-bolt-elements-textPrimary',
     kdb: 'bg-bolt-elements-code-background text-bolt-elements-code-text py-1 px-1.5 rounded-md',
     'max-w-chat': 'max-w-[var(--chat-max-width)]',
   },

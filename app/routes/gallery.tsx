@@ -2,9 +2,8 @@ import { json, type LoaderFunctionArgs } from '@remix-run/node';
 import { useLoaderData, useSearchParams } from '@remix-run/react';
 import { useState } from 'react';
 import { toast } from 'react-toastify';
-import { Logo } from '~/components/brand/Logo';
-import { EventBar, type EventInfo } from '~/components/header/EventBar';
-import { UserMenu } from '~/components/header/UserMenu';
+import { PageShell } from '~/components/PageShell';
+import type { EventInfo } from '~/components/header/EventBar';
 import { iconFor } from '~/components/landing/starters';
 import { getUser, shell } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
@@ -107,21 +106,9 @@ export default function Gallery() {
   const sort = params.get('sort') === 'new' ? 'new' : 'top';
 
   return (
-    <div className="h-full overflow-y-auto bg-bolt-elements-background-depth-1 text-bolt-elements-textPrimary">
-      <header className="mx-auto flex max-w-[1100px] items-center justify-between px-6 py-5">
-        <Logo size={32} />
-        {d.email ? (
-          <UserMenu email={d.email} name={d.name} admin={d.admin} remaining={d.remaining} />
-        ) : (
-          <a href="/login?mode=register" className="rounded-lg bg-bolt-elements-button-primary-background px-4 py-2 text-sm font-semibold text-bolt-elements-button-primary-text hover:bg-bolt-elements-button-primary-backgroundHover">
-            Sign up free
-          </a>
-        )}
-      </header>
-      <EventBar event={d.event} />
-
-      <main className="mx-auto max-w-[1100px] px-6 pb-16" data-testid="foldo-gallery">
-        <div className="mb-8 mt-6 flex flex-wrap items-center justify-between gap-3">
+    <PageShell data={d} active="gallery">
+      <main data-testid="foldo-gallery">
+        <div className="mb-6 mt-2 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="font-display text-4xl">Gallery</h1>
             <p className="mt-1 text-bolt-elements-textSecondary">Projects teams chose to show off. Run one, then like your favourites.</p>
@@ -146,7 +133,7 @@ export default function Gallery() {
             <p className="mb-5 mt-1 max-w-sm text-bolt-elements-textSecondary">
               Build something, hit Share, and tick "Show in gallery". Be the first.
             </p>
-            <a href="/" className="rounded-lg bg-bolt-elements-button-primary-background px-5 py-2.5 text-sm font-semibold text-bolt-elements-button-primary-text hover:bg-bolt-elements-button-primary-backgroundHover">
+            <a href="/" className="btn-primary btn-lg">
               Start building
             </a>
           </div>
@@ -158,6 +145,6 @@ export default function Gallery() {
           </ul>
         )}
       </main>
-    </div>
+    </PageShell>
   );
 }

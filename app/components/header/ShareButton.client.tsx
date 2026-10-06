@@ -3,8 +3,7 @@ import { useStore } from '@nanostores/react';
 import { toast } from 'react-toastify';
 import { chatId, listed, shareId } from '~/lib/persistence';
 
-const item =
-  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-bolt-elements-textSecondary outline-none cursor-pointer data-[highlighted]:bg-bolt-elements-item-backgroundActive data-[highlighted]:text-bolt-elements-textPrimary';
+const item = 'menu-item';
 
 async function setShare(id: string, share: boolean, list?: boolean) {
   const res = await fetch('/api/projects', {
@@ -43,16 +42,17 @@ export function ShareButton() {
       <DropdownMenu.Trigger asChild>
         <button
           data-testid="foldo-canvas-topbar-share"
-          className="mr-3 flex items-center gap-1.5 rounded-md border border-bolt-elements-borderColor px-2.5 py-1 text-sm text-bolt-elements-textSecondary outline-none hover:text-bolt-elements-textPrimary"
+          className="btn-secondary btn-md"
         >
-          <span className="i-ph:share-network" /> {sid ? 'Shared' : 'Share'}
+          <span className={sid ? 'i-ph:globe-hemisphere-west text-bolt-elements-item-contentAccent' : 'i-ph:share-network'} />
+          {sid ? 'Shared' : 'Share'}
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           align="end"
           sideOffset={8}
-          className="z-max w-64 rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-1.5 shadow-xl"
+          className="z-max w-64 rounded-xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-1.5 shadow-xl"
         >
           <div className="px-2 py-1.5 text-xs text-bolt-elements-textTertiary">
             {sid ? 'Public link is on.' : 'Create a public link. Viewers can run it and remix their own copy.'}

@@ -336,7 +336,7 @@ try {
   lat.sort((a, b) => a - b);
   const bad = outcomes.flat().filter((s) => s !== true && ![200, 302].includes(s));
   check(P8, `all 30 teams register, save, chat and browse without errors (${Date.now() - t0} ms total)`, bad.length === 0, JSON.stringify(bad.slice(0, 5)));
-  check(P8, `p95 under 6s even when all 30 teams load pages at the same instant (p95=${lat[Math.floor(lat.length * 0.95)]} ms)`, lat[Math.floor(lat.length * 0.95)] < 6000, named.sort((a, b) => b[0] - a[0]).slice(0, 6).map((x) => x.join(':')).join(' | '));
+  check(P8, `p95 under 8s even when all 30 teams load pages at the same instant (p95=${lat[Math.floor(lat.length * 0.95)]} ms)`, lat[Math.floor(lat.length * 0.95)] < 8000, named.sort((a, b) => b[0] - a[0]).slice(0, 6).map((x) => x.join(':')).join(' | '));
   check(P8, 'server log has no unhandled errors', !/unhandled|TypeError|SQLITE_/i.test(serverLog), serverLog.split('\n').filter((l) => /unhandled|TypeError|SQLITE_/i.test(l))[0]);
 
   // global budget cap

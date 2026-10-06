@@ -22,51 +22,44 @@ export function Header() {
   return (
     <header
       className={classNames(
-        'flex items-center bg-bolt-elements-background-depth-1 px-4 border-b h-[var(--header-height)]',
+        'flex shrink-0 items-center gap-4 bg-bolt-elements-background-depth-1 px-4 border-b h-[var(--header-height)]',
         {
           'border-transparent': !chat.started,
           'border-bolt-elements-borderColor': chat.started,
         },
       )}
     >
-      <div className="flex items-center gap-3 z-logo">
+      <div className="flex items-center gap-2 z-logo">
         {email && (
           <button
             aria-label="Toggle projects sidebar"
-            className="i-ph:sidebar-simple-duotone text-xl text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary"
+            className="btn-ghost h-8 w-8 !px-0"
             onClick={() => menuOpen.set(!menuOpen.get())}
-          />
+          >
+            <span className="i-ph:sidebar-simple text-xl" />
+          </button>
         )}
         <Logo />
       </div>
-      <span className="flex-1 px-4 truncate text-center text-bolt-elements-textPrimary">
+      <span className="min-w-0 flex-1 truncate text-center text-sm font-medium text-bolt-elements-textSecondary">
         <ClientOnly>{() => <ChatDescription />}</ClientOnly>
       </span>
-      <ClientOnly>{() => <ShareButton />}</ClientOnly>
-      {chat.started && (
-        <ClientOnly>
-          {() => (
-            <div className="mr-3">
-              <HeaderActionButtons />
-            </div>
-          )}
-        </ClientOnly>
-      )}
-      {email ? (
-        <UserMenu email={email} name={name} admin={admin} remaining={remaining} />
-      ) : (
-        <div className="flex items-center gap-2 text-sm">
-          <a href="/login" className="px-2 py-1 text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary">
-            Sign in
-          </a>
-          <a
-            href="/login?mode=register"
-            className="rounded-md bg-bolt-elements-button-primary-background px-3 py-1.5 font-medium text-bolt-elements-button-primary-text hover:bg-bolt-elements-button-primary-backgroundHover"
-          >
-            Sign up free
-          </a>
-        </div>
-      )}
+      <div className="flex shrink-0 items-center gap-2">
+        <ClientOnly>{() => <ShareButton />}</ClientOnly>
+        {chat.started && <ClientOnly>{() => <HeaderActionButtons />}</ClientOnly>}
+        {email ? (
+          <UserMenu email={email} name={name} admin={admin} remaining={remaining} />
+        ) : (
+          <>
+            <a href="/login" className="btn-ghost btn-md">
+              Sign in
+            </a>
+            <a href="/login?mode=register" className="btn-primary btn-md">
+              Sign up free
+            </a>
+          </>
+        )}
+      </div>
     </header>
   );
 }

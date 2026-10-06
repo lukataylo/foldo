@@ -196,7 +196,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                   return chatStarted ? (
                     <Messages
                       ref={messageRef}
-                      className="flex flex-col w-full flex-1 max-w-chat px-4 pb-6 mx-auto z-1"
+                      className="flex flex-col w-full flex-1 max-w-chat pb-6 mx-auto z-1"
                       messages={messages}
                       isStreaming={isStreaming}
                     />
@@ -235,7 +235,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                       minHeight: TEXTAREA_MIN_HEIGHT,
                       maxHeight: TEXTAREA_MAX_HEIGHT,
                     }}
-                    placeholder="What do you want to build?"
+                    placeholder={chatStarted ? 'Ask for a change…' : 'Describe your app, e.g. a habit tracker with streaks'}
                     translate="no"
                   />
                   <ClientOnly>
@@ -293,8 +293,10 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
               </div>
             </div>
             {!chatStarted && (
-              <div id="examples" className="relative w-full max-w-chat mx-auto mt-6 px-6 pb-16">
-                <HomeExtras sendMessage={sendMessage} />
+              <div id="examples" className="relative w-full mt-6 px-6 pb-16">
+                <div className="mx-auto w-full max-w-chat">
+                  <HomeExtras sendMessage={sendMessage} />
+                </div>
               </div>
             )}
           </div>

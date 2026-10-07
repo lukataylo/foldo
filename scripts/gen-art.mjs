@@ -60,7 +60,7 @@ async function viaOpenAI(n, { size, prompt, transparent }) {
     res = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, prompt, size, quality: 'high', background: 'transparent', output_format: 'png' }),
+      body: JSON.stringify({ model: MODEL, prompt: `${prompt} Use a plain flat pure white background that I can remove afterwards.`, size, quality: 'high', output_format: 'png' }),
     });
   }
 
@@ -111,7 +111,7 @@ for (let i = 0; i < names.length; i += 3) {
     names.slice(i, i + 3).map(async (n) => {
       try {
         const png = await (provider === 'openai' ? viaOpenAI : viaOpenRouter)(n, ALL[n]);
-        writeFileSync(`scripts/art-out/${n}${ALL[n].transparent && provider !== 'openai' ? '.white' : ''}.png`, png);
+        writeFileSync(`scripts/art-out/${n}${ALL[n].transparent ? '.white' : ''}.png`, png);
         console.log('ok  ', n);
       } catch (e) {
         failed++;

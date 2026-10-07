@@ -29,6 +29,8 @@ import {
   maxSegments,
   maxUserStreams,
   pauseState,
+  REASONING_LEVELS,
+  reasoningEffort,
   signupsOpen,
 } from '~/lib/.server/config';
 import { snapshot } from '~/lib/.server/metrics';
@@ -70,6 +72,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       max_user_streams: maxUserStreams(),
       fallback_provider: fallbackProviderId(),
       cost_per_message: costPerMessage(),
+      reasoning_effort: reasoningEffort(),
+      reasoning_levels: [...REASONING_LEVELS],
       ...pauseState(),
     },
     providers: listProviders().map((p) => ({
@@ -218,6 +222,11 @@ export async function action({ request }: ActionFunctionArgs) {
       return json({ error: 'Unknown fallback provider' }, 400);
     }
 
+    if (s('reasoning_effort') && !(REASONING_LEVELS as readonly string[]).includes(s('reasoning_effort'))) {
+      return json({ error: 'Unknown reasoning effort' }, 400);
+    }
+
+    setSetting('reasoning_effort', s('reasoning_effort'));
     setSetting('fallback_provider', s('fallback_provider'));
     setSetting('cost_per_message', Number(s('cost_per_message')) >= 0 ? s('cost_per_message') : '');
 
@@ -419,6 +428,16 @@ export default function Admin() {
                 {d.providers.filter((p: any) => p.usable).map((p: any) => (
                   <option key={p.id} value={p.id}>
                     {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              Reasoning effort (OpenRouter models)
+              <select className={`${input} mt-1`} name="reasoning_effort" defaultValue={d.controls.reasoning_effort}>
+                {(d.controls.reasoning_levels as string[]).map((l) => (
+                  <option key={l} value={l}>
+                    {l === 'default' ? "default (model's own)" : l}
                   </option>
                 ))}
               </select>

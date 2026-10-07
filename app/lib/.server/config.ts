@@ -29,11 +29,19 @@ export const signupsOpen = () => getSetting('signups_open', '1') !== '0';
 
 // output length: one model reply can be up to maxTokens, continued up to maxSegments times
 // (16000 is safe across DeepSeek/GLM-class caps; raise per model in /admin, e.g. 32000 for gpt-4.1)
-export const defaultMaxTokens = () => num(getSetting('max_tokens'), 16000);
+export const defaultMaxTokens = () => num(getSetting('max_tokens'), num(process.env.LLM_MAX_TOKENS ?? '', 16000));
 export const maxSegments = () => Math.max(1, num(getSetting('max_segments'), 3));
 export const maxUserStreams = () => Math.max(1, num(getSetting('max_user_streams'), 2));
 export const costPerMessage = () => num(getSetting('cost_per_message'), 0.01);
-export const fallbackProviderId = () => getSetting('fallback_provider');
+export const fallbackProviderId = () => getSetting('fallback_provider', process.env.FALLBACK_PROVIDER ?? '');
+
+// how hard reasoning models think before answering: 'default' leaves it to the provider (can be slow on gpt-6/deepseek-v4)
+export const REASONING_LEVELS = ['default', 'minimal', 'low', 'medium', 'high'] as const;
+export const reasoningEffort = () => {
+  const v = getSetting('reasoning_effort', process.env.REASONING_EFFORT ?? 'low');
+
+  return (REASONING_LEVELS as readonly string[]).includes(v) ? v : 'low';
+};
 
 export function pauseState() {
   return { paused: getSetting('paused') === '1', message: getSetting('pause_message') };
@@ -115,7 +123,7 @@ function decryptUncached(blob: string): string | undefined {
 
 export const CATALOG = [
   // OpenRouter fronts many models behind one key with pooled rate limits, which suits many teams at once
-  { id: 'openrouter', label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4.1-nano', env: 'OPENROUTER_API_KEY' },
+  { id: 'openrouter', label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-v4-pro-0813', env: 'OPENROUTER_API_KEY' },
   { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat', env: 'DEEPSEEK_API_KEY' },
   { id: 'openai', label: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4.1-nano', env: 'OPENAI_API_KEY' },
   { id: 'mimo', label: 'Xiaomi MiMo', baseURL: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2-flash', env: 'MIMO_API_KEY' },
@@ -125,6 +133,14 @@ export const CATALOG = [
   { id: 'minimax', label: 'MiniMax', baseURL: 'https://api.minimax.io/v1', model: 'MiniMax-M2', env: 'MINIMAX_API_KEY' },
   { id: 'custom', label: 'Custom (OpenAI-compatible)', baseURL: '', model: '', env: 'CUSTOM_API_KEY' },
 ] as const;
+
+// OpenRouter/custom cards are named after the model they run, so teams see "DeepSeek V4 Pro", not "OpenRouter"
+const FRIENDLY: Record<string, string> = {
+  'deepseek/deepseek-v4-pro-0813': 'DeepSeek V4 Pro',
+  'deepseek/deepseek-v4-pro': 'DeepSeek V4 Pro',
+  'openai/gpt-6.1-sol': 'GPT-6.1 Sol',
+  'openai/gpt-6-sol': 'GPT-6 Sol',
+};
 
 export interface Provider {
   id: string;
@@ -146,12 +162,19 @@ export function listProviders(): Provider[] {
     const envKey = process.env[c.env] || undefined;
     const key = stored || envKey;
 
+    const custom = c.id === 'custom';
+    const modelId = row?.model || (c.id === (process.env.LLM_PROVIDER || '') && process.env.LLM_MODEL) || (custom && process.env.CUSTOM_MODEL) || c.model;
+
     return {
       id: c.id,
-      label: c.label,
+      label: (custom && process.env.CUSTOM_LABEL) || ((c.id === 'openrouter' || custom) && FRIENDLY[modelId]) || c.label,
       // LLM_BASE_URL is a global override for proxies and tests
-      baseURL: process.env.LLM_BASE_URL || row?.base_url || c.baseURL,
-      model: row?.model || (c.id === (process.env.LLM_PROVIDER || '') && process.env.LLM_MODEL) || c.model,
+      baseURL: process.env.LLM_BASE_URL || row?.base_url || (custom && process.env.CUSTOM_BASE_URL) || c.baseURL,
+      model:
+        row?.model ||
+        (c.id === (process.env.LLM_PROVIDER || '') && process.env.LLM_MODEL) ||
+        (custom && process.env.CUSTOM_MODEL) ||
+        c.model,
       key,
       maxTokens: row?.max_tokens || undefined,
       keySource: stored ? 'admin' : envKey ? 'env' : 'none',
@@ -176,13 +199,22 @@ export function fallbackFor(primaryId: string): Provider | undefined {
   return id && id !== primaryId ? usableProviders().find((p) => p.id === id) : undefined;
 }
 
-export function resolveProvider(requested?: string): Provider | undefined {
+// models teams may pick: everything usable except the reserve model (unless it's the only one)
+export function selectableProviders(): Provider[] {
   const usable = usableProviders();
+  const reserve = fallbackProviderId();
+  const rest = usable.filter((p) => p.id !== reserve);
 
-  return usable.find((p) => p.id === requested) ?? usable.find((p) => p.id === defaultProviderId());
+  return rest.length ? rest : usable;
+}
+
+export function resolveProvider(requested?: string): Provider | undefined {
+  const pickable = selectableProviders();
+
+  return pickable.find((p) => p.id === requested) ?? pickable.find((p) => p.id === defaultProviderId()) ?? pickable[0];
 }
 
 // safe to send to the browser: no keys, no base URLs
 export function publicModels() {
-  return { paused: pauseState(), models: usableProviders().map((p) => ({ id: p.id, label: p.label })), defaultModel: defaultProviderId() };
+  return { paused: pauseState(), models: selectableProviders().map((p) => ({ id: p.id, label: p.label })), defaultModel: resolveProvider()?.id };
 }

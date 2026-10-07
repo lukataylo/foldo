@@ -11,6 +11,8 @@ const arg = (name, def) => {
   return i === -1 ? def : (process.argv[i + 1]?.startsWith('--') || process.argv[i + 1] === undefined ? true : process.argv[i + 1]);
 };
 
+const PRICE_IN = Number(arg('price-in', 0)); // USD per million tokens, optional
+const PRICE_OUT = Number(arg('price-out', 0));
 const BASE = String(arg('url', 'http://localhost:3000')).replace(/\/$/, '');
 const N = Number(arg('users', 10));
 const RAMP = Number(arg('ramp', 5));
@@ -97,6 +99,10 @@ async function user(i) {
 
     r.total = performance.now() - t0;
     const joined = text.split('\n').filter((l) => l.startsWith('0:')).map((l) => { try { return JSON.parse(l.slice(2)); } catch { return ''; } }).join('');
+    const fin = text.split('\n').filter((l) => l.startsWith('d:') || l.startsWith('e:')).map((l) => { try { return JSON.parse(l.slice(2)); } catch { return {}; } }).filter((x) => x.usage);
+    r.promptTokens = fin.reduce((n, x) => n + (x.usage.promptTokens || 0), 0);
+    r.completionTokens = fin.reduce((n, x) => n + (x.usage.completionTokens || 0), 0);
+    r.chars = joined.length;
     r.artifact = joined.includes('<boltArtifact') && joined.includes('</boltArtifact>');
     r.ok = r.bytes > 0 && (!EXPECT_ARTIFACT || r.artifact);
 
@@ -129,5 +135,10 @@ console.log(`  first byte     p50 ${fmt(pct(ok.map((r) => r.ttfb), 0.5))}  p95 $
 console.log(`  full reply     p50 ${fmt(pct(ok.map((r) => r.total), 0.5))}  p95 ${fmt(pct(ok.map((r) => r.total), 0.95))}  max ${fmt(Math.max(0, ...ok.map((r) => r.total)))}`);
 console.log(`  answered by    ${Object.entries(models).map(([k, v]) => `${k}: ${v}`).join(', ') || '-'}${Object.keys(models).length > 1 ? '   <- more than one model means failover kicked in' : ''}`);
 console.log(`  complete artifact in ${ok.filter((r) => r.artifact).length}/${ok.length} replies${EXPECT_ARTIFACT ? '' : ' (pass --expect-artifact to fail otherwise)'}`);
+const avg = (k) => (ok.length ? Math.round(ok.reduce((n, r) => n + (r[k] || 0), 0) / ok.length) : 0);
+console.log(`  tokens/reply   prompt ${avg('promptTokens')}  completion ${avg('completionTokens')}  (visible text ${avg('chars')} chars)`);
+if (PRICE_IN || PRICE_OUT) {
+  console.log(`  est. cost/reply $${((avg('promptTokens') * PRICE_IN + avg('completionTokens') * PRICE_OUT) / 1e6).toFixed(4)}`);
+}
 console.log(`  errors         ${bad.length ? Object.entries(errs).map(([k, v]) => `${v}x ${k}`).join(' | ') : 'none'}`);
 process.exit(bad.length ? 1 : 0);

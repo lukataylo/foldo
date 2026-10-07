@@ -39,7 +39,7 @@ import {
   signupsOpen,
 } from '~/lib/.server/config';
 import { snapshot } from '~/lib/.server/metrics';
-import { listBackups, runBackup } from '~/lib/.server/backup';
+import { autoBackupsPaused, listBackups, runBackup } from '~/lib/.server/backup';
 import { db, today } from '~/lib/.server/db';
 import { getModel } from '~/lib/.server/llm/model';
 import { timeAgo } from '~/utils/timeAgo';
@@ -58,6 +58,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     canStoreKeys,
     backups: listBackups().slice(0, 8),
     backupEveryMin: Number(process.env.BACKUP_INTERVAL_MIN ?? 10),
+    backupsPaused: autoBackupsPaused(),
     stats: {
       users: count('SELECT COUNT(*) AS n FROM users'),
       projects: count('SELECT COUNT(*) AS n FROM projects'),
@@ -277,6 +278,13 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: f.get('paused') ? 'New requests are paused.' : 'New requests are flowing again.' });
   }
 
+  if (intent === 'toggle-backups') {
+    const pause = !autoBackupsPaused();
+    setSetting('backups_paused', pause ? '1' : '');
+
+    return json({ ok: pause ? 'Automatic backups paused.' : 'Automatic backups are running again.' });
+  }
+
   if (intent === 'backup-now') {
     return json({ ok: `Backup written: ${runBackup()}` });
   }
@@ -458,8 +466,18 @@ export default function Admin() {
             </Form>
           </div>
           <div className="mt-3 text-xs text-bolt-elements-textTertiary">
-            Automatic backup every {d.backupEveryMin || 'never'} min on the volume. Restore by setting RESTORE_BACKUP to a file name below and redeploying (see the runbook).
+            {d.backupsPaused ? (
+              <strong className="text-bolt-elements-textPrimary">Automatic backups are paused. Resume them before the event starts.</strong>
+            ) : (
+              <>Automatic backup every {d.backupEveryMin || 'never'} min on the volume.</>
+            )}{' '}
+            Restore by setting RESTORE_BACKUP to a file name below and redeploying (see the runbook).
           </div>
+          <Form method="post" className="mt-2">
+            <button name="intent" value="toggle-backups" className={d.backupsPaused ? primary : btn} disabled={busy} data-testid="foldo-admin-backups-toggle">
+              {d.backupsPaused ? 'Resume automatic backups' : 'Pause automatic backups'}
+            </button>
+          </Form>
           <ul className="mt-2 space-y-1 text-sm" data-testid="foldo-backups">
             {d.backups.length === 0 && <li className="text-bolt-elements-textSecondary">No automatic backup yet (the first one is written a minute after boot).</li>}
             {d.backups.map((b: any) => (

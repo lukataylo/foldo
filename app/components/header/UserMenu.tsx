@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Form } from '@remix-run/react';
+import { useSubmit } from '@remix-run/react';
 import { useStore } from '@nanostores/react';
 import { useEffect } from 'react';
 import { toggleTheme } from '~/lib/stores/theme';
@@ -19,6 +19,7 @@ export function UserMenu({
   remaining?: number;
 }) {
   const left = useStore(quota);
+  const submit = useSubmit();
 
   useEffect(() => {
     if (remaining !== undefined) {
@@ -77,13 +78,14 @@ export function UserMenu({
             <span className="i-ph:circle-half text-base" /> Switch theme
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-bolt-elements-borderColor" />
-          <Form method="post" action="/login">
-            <DropdownMenu.Item asChild>
-              <button name="intent" value="logout" className={item}>
-                <span className="i-ph:sign-out text-base" /> Sign out
-              </button>
-            </DropdownMenu.Item>
-          </Form>
+          {/* submit from onSelect: a <Form> inside the menu unmounts when the menu closes, before it can post */}
+          <DropdownMenu.Item
+            className={item}
+            data-testid="foldo-account-signout"
+            onSelect={() => submit({ intent: 'logout' }, { method: 'post', action: '/login' })}
+          >
+            <span className="i-ph:sign-out text-base" /> Sign out
+          </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

@@ -25,7 +25,10 @@ import { recordProviderError, recordRequest } from '~/lib/.server/metrics';
 // Every request resends the whole conversation, so cap it: this is what keeps one team from burning the token budget.
 const MAX_MESSAGES = 120;
 const MAX_CHARS = 200_000;
-const FIRST_BYTE_TIMEOUT_MS = 25_000;
+// Reasoning models can think for a long time before the first visible word. With a reserve model configured we give up on
+// the main one after this long and retry; the reserve (no further fallback) gets the longer allowance.
+const FIRST_TOKEN_MS = Number(process.env.FIRST_TOKEN_TIMEOUT_MS || 40_000);
+const LAST_RESORT_MS = 120_000;
 
 // Every message below is read by someone who may never have coded: calm, plain, and one next step.
 const text = (message: string, status: number) => new Response(message, { status });
@@ -109,14 +112,44 @@ async function chatAction({ request }: ActionFunctionArgs) {
   const stream = new SwitchableStream();
 
   // one shot against a provider; gives up if it hasn't started answering within the timeout
-  const attempt = async (p: Provider) => {
+  const attempt = async (p: Provider, firstTokenMs: number): Promise<ReadableStream<Uint8Array>> => {
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(new Error('timeout')), FIRST_BYTE_TIMEOUT_MS);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        ac.abort();
+        reject(new Error(`no first token after ${Math.round(firstTokenMs / 1000)}s`));
+      }, firstTokenMs);
+    });
 
     try {
-      return await streamText(messages, p, { ...options(p), abortSignal: ac.signal });
+      const result = await Promise.race([streamText(messages, p, { ...options(p), abortSignal: ac.signal }), timeout]);
+      const reader = result.toAIStream().getReader();
+      const first = await Promise.race([reader.read(), timeout]); // wait for the first real chunk
+
+      // hand back a stream that replays the chunk we peeked at, then the rest
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (!first.done) {
+            controller.enqueue(first.value);
+          } else {
+            controller.close();
+          }
+        },
+        async pull(controller) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            controller.close();
+          } else {
+            controller.enqueue(value);
+          }
+        },
+        cancel: (reason) => reader.cancel(reason),
+      });
     } finally {
       clearTimeout(timer);
+      timeout.catch(() => undefined); // a late rejection after success must not become unhandled
     }
   };
 
@@ -144,14 +177,13 @@ async function chatAction({ request }: ActionFunctionArgs) {
   });
 
   try {
-    let result;
+    let aiStream: ReadableStream<Uint8Array>;
+    const fallback = fallbackFor(primary.id);
 
     try {
-      result = await attempt(primary);
+      aiStream = await attempt(primary, fallback ? FIRST_TOKEN_MS : LAST_RESORT_MS);
     } catch (error) {
       recordProviderError(primary.id);
-
-      const fallback = fallbackFor(primary.id);
 
       if (!fallback) {
         throw error;
@@ -159,12 +191,12 @@ async function chatAction({ request }: ActionFunctionArgs) {
 
       console.warn(`[chat] ${primary.id} failed (${(error as Error)?.message}); retrying on ${fallback.id}`);
 
-      result = await attempt(fallback);
+      aiStream = await attempt(fallback, LAST_RESORT_MS);
       served = fallback;
       moveProviderUsage(primary.id, fallback.id); // charged once, attributed to who actually answered
     }
 
-    stream.switchSource(result.toAIStream());
+    stream.switchSource(aiStream);
     request.signal.addEventListener('abort', release);
     recordRequest({ user: user.id.slice(0, 8), primary: primary.id, served: served.id, ok: true, ms: Date.now() - t0, failover: served !== primary });
 

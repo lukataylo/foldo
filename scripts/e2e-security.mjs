@@ -28,6 +28,10 @@ const llm = http
     req.on('end', async () => {
       const last = JSON.parse(b).messages.at(-1).content;
 
+      if (JSON.parse(b).model === 'stall-model') {
+        await new Promise((r) => setTimeout(r, 7000));
+      }
+
       if (JSON.parse(b).model === 'bad-model') {
         res.writeHead(503).end('{"error":{"message":"overloaded"}}');
         return;
@@ -73,6 +77,7 @@ const server = spawn('node', ['server.mjs'], {
     DEEPSEEK_API_KEY: 'k',
     LLM_PROVIDER: 'deepseek',
     APP_SECRET: 'e2e-secret',
+    FIRST_TOKEN_TIMEOUT_MS: '2500',
     NODE_ENV: 'development',
     OPENAI_API_KEY: '',
   },
@@ -318,9 +323,15 @@ try {
   check(P6B, 'usage is attributed to the model that answered', (pu.custom ?? 0) >= 1);
   check(P6B, 'admin live view reports the failover', /Failovers since start/.test((await ADM.req('/admin')).text) && />[1-9]\d*</.test((await ADM.req('/admin')).text));
   // no fallback + primary down => friendly 502 and refund
+  // main model accepts the connection but never says a word: give up after the first-token timeout and use the reserve
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-provider', id: 'deepseek', base_url: `http://localhost:${LLM_PORT}/v1`, model: 'stall-model', enabled: 'on', max_tokens: '8000' } });
+  const t1 = Date.now();
+  const stalled = await F.chat('hello stall', { provider: 'deepseek' });
+  check(P6B, 'main model stalls before first word: reserve answers within the first-token timeout', stalled.status === 200 && stalled.headers.get('x-foldo-model') === 'Custom (OpenAI-compatible)' && Date.now() - t1 < 6000, `${stalled.status} ${stalled.headers.get('x-foldo-model')} ${Date.now() - t1}ms`);
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-provider', id: 'deepseek', base_url: `http://localhost:${LLM_PORT}/v1`, model: 'bad-model', enabled: 'on', max_tokens: '8000' } });
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-limits', max_tokens: '16000', max_segments: '3', max_user_streams: '2', fallback_provider: '', cost_per_message: '0.01' } });
   const nofb = await F.chat('hello again', { provider: 'deepseek' });
-  check(P6B, 'primary down and no fallback: calm 502, message refunded', nofb.status === 502 && /Press send to try again/.test(nofb.text) && (await F.chat('x', { provider: 'custom' })).headers.get('x-foldo-remaining') === '1');
+  check(P6B, 'primary down and no fallback: calm 502, message refunded', nofb.status === 502 && /Press send to try again/.test(nofb.text) && (await F.chat('x', { provider: 'custom' })).headers.get('x-foldo-remaining') === '0');
   await ADM.req('/admin', { method: 'POST', form: { intent: 'set-default', id: 'custom' } });
   // concurrency: 2 builds per login allowed, third refused with a friendly message
   const E = new Client();

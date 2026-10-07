@@ -41,6 +41,18 @@ generations are refunded, login/sign-up/invite-code throttling, Origin checks on
 Tip: to use OpenRouter for both main and fallback, put the main model in the OpenRouter card and a second OpenRouter model
 (different id) in the Custom card with the same base URL and key, then choose Custom as the fallback.
 
+## Models for the event (researched on OpenRouter, 2026-10-07)
+
+| Role | Model id | Notes |
+|---|---|---|
+| Main | `deepseek/deepseek-v4-pro-0813` | GA slug of DeepSeek V4 Pro. About 3s to first text and 15-30s per reply at low reasoning; roughly $0.02 per reply. |
+| Reserve | `openai/gpt-6.1-sol` | About 5s to first text but 140s+ per reply and roughly $0.10 per reply, so it is failover only (hidden from the team picker). |
+
+The OpenRouter workspace guardrail on this account allows only those two models; anything else (including the undated
+`deepseek/deepseek-v4-pro` alias) returns "blocked by guardrail". Set via env: `CUSTOM_API_KEY`, `CUSTOM_BASE_URL=https://openrouter.ai/api/v1`,
+`CUSTOM_MODEL=openai/gpt-6.1-sol`, `FALLBACK_PROVIDER=custom`, `REASONING_EFFORT=low`, `LLM_MAX_TOKENS=32000`. If the main model says nothing for
+`FIRST_TOKEN_TIMEOUT_MS` (default 40s) the request is retried once on the reserve.
+
 ## Load test
 
     node scripts/stub-llm.mjs &                                   # fake model, no tokens

@@ -44,9 +44,19 @@ export type ActionStateUpdate =
 
 type ActionsMap = MapStore<Record<string, ActionState>>;
 
+/*
+ * One queue for every reply, not one per reply: when a project is reopened all its replies replay at once, and with
+ * separate queues the first reply's files (written after its npm install) landed on top of later edits and fixes.
+ */
+let queue: Promise<void> = Promise.resolve();
+
+// the dev server never exits, so it runs beside the queue; starting another one stops the previous one
+let devServer: { kill: () => void; superseded: boolean } | undefined;
+
+const DEV_SERVER_SETTLE_MS = 2000;
+
 export class ActionRunner {
   #webcontainer: Promise<WebContainer>;
-  #currentExecutionPromise: Promise<void> = Promise.resolve();
 
   actions: ActionsMap = map({});
 
@@ -78,7 +88,7 @@ export class ActionRunner {
       abortSignal: abortController.signal,
     });
 
-    this.#currentExecutionPromise.then(() => {
+    queue.then(() => {
       this.#updateAction(actionId, { status: 'running' });
     });
   }
@@ -97,7 +107,7 @@ export class ActionRunner {
 
     this.#updateAction(actionId, { ...action, ...data.action, executed: true });
 
-    this.#currentExecutionPromise = this.#currentExecutionPromise
+    queue = queue
       .then(() => {
         return this.#executeAction(actionId);
       })
@@ -114,7 +124,10 @@ export class ActionRunner {
     try {
       switch (action.type) {
         case 'shell': {
-          await this.#runShellAction(action);
+          if (await this.#runShellAction(actionId, action)) {
+            return; // a dev server keeps running (and keeps its status) after the queue moves on
+          }
+
           break;
         }
         case 'file': {
@@ -135,7 +148,8 @@ export class ActionRunner {
     }
   }
 
-  async #runShellAction(action: ActionState) {
+  /** @returns true when the command is a dev server left running in the background */
+  async #runShellAction(actionId: string, action: ActionState): Promise<boolean> {
     if (action.type !== 'shell') {
       unreachable('Expected shell action');
     }
@@ -145,11 +159,22 @@ export class ActionRunner {
 
     if (server) {
       await this.#ensureJsxRuntime(webcontainer);
+
+      if (devServer) {
+        devServer.superseded = true;
+        devServer.kill();
+      }
     }
 
     const process = await webcontainer.spawn('jsh', ['-c', action.content], {
       env: { npm_config_yes: true },
     });
+
+    const handle = { kill: () => process.kill(), superseded: false };
+
+    if (server) {
+      devServer = handle;
+    }
 
     action.abortSignal.addEventListener('abort', () => {
       process.kill();
@@ -184,20 +209,44 @@ export class ActionRunner {
       }),
     );
 
+    // a failed command leaves the preview dead: show it (and let the chat fix it) like any other app error
+    const failure = (exitCode: number) => {
+      const message = stripAnsi(tail).trim().split('\n').slice(-8).join('\n') || `Command exited with code ${exitCode}`;
+      previewError.set(`The command "${action.content.trim()}" failed:\n${message}`);
+
+      return message;
+    };
+
+    if (server) {
+      const settled = new Promise<null>((resolve) => setTimeout(() => resolve(null), DEV_SERVER_SETTLE_MS));
+      const early = await Promise.race([process.exit, settled]);
+
+      if (early === null) {
+        process.exit.then((exitCode) => {
+          if (devServer === handle) {
+            devServer = undefined;
+          }
+
+          if (exitCode !== 0 && !handle.superseded && !action.abortSignal.aborted) {
+            this.#updateAction(actionId, { status: 'failed', error: failure(exitCode) });
+          } else {
+            this.#updateAction(actionId, { status: action.abortSignal.aborted ? 'aborted' : 'complete' });
+          }
+        });
+
+        return true;
+      }
+    }
+
     const exitCode = await process.exit;
 
     logger.debug(`Process terminated with code ${exitCode}`);
 
-    const clean = stripAnsi(tail).trim();
-
     if (exitCode !== 0 && !action.abortSignal.aborted) {
-      const message = clean.split('\n').slice(-8).join('\n') || `Command exited with code ${exitCode}`;
-
-      // a failed install leaves the preview dead: show it (and let the chat fix it) like any other app error
-      previewError.set(`The command "${action.content.trim()}" failed:\n${message}`);
-
-      throw new Error(message);
+      throw new Error(failure(exitCode));
     }
+
+    return false;
   }
 
   /**

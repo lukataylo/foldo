@@ -22,7 +22,12 @@ import {
   encrypt,
   getSetting,
   globalLimit,
+  HARNESSES,
+  describeReasoning,
+  harnessId,
+  type HarnessId,
   listProviders,
+  usableProviders,
   perUserLimit,
   setSetting,
   inviteCode,
@@ -77,6 +82,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       cost_per_message: costPerMessage(),
       reasoning_effort: reasoningEffort(),
       reasoning_levels: [...REASONING_LEVELS],
+      harness: harnessId(),
+      harnesses: Object.entries(HARNESSES).map(([id, h]) => ({ id, label: h.label, main: h.main, reserve: h.reserve, reasoning: describeReasoning(h.reasoning[h.main]), note: h.note })),
       ...pauseState(),
     },
     providers: listProviders().map((p) => ({
@@ -85,7 +92,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       baseURL: p.baseURL,
       model: p.model,
       keySource: p.keySource,
-      keyHint: p.key ? `…${p.key.slice(-4)}` : '',
+      keyHint: p.key ? `…${p.key.slice(-4)}${p.keys.length > 1 ? ` +${p.keys.length - 1} more` : ''}` : '',
       maxTokens: p.maxTokens ?? '',
       enabled: p.enabled,
       isDefault: p.id === def,
@@ -156,6 +163,33 @@ export async function action({ request }: ActionFunctionArgs) {
     ).run(id, baseURL || null, s('model') || null, keyEnc, f.get('enabled') ? 1 : 0, Number(s('max_tokens')) > 0 ? Number(s('max_tokens')) : null);
 
     return json({ ok: `Saved ${id}.` });
+  }
+
+  if (intent === 'apply-harness') {
+    const id = s('harness');
+
+    if (!(id in HARNESSES)) {
+      return json({ error: 'Unknown harness' }, 400);
+    }
+
+    const h = HARNESSES[id as HarnessId];
+
+    // main model on the OpenRouter card, reserve on the Custom card (same OpenRouter endpoint), keys and limits untouched
+    db.prepare(
+      `INSERT INTO providers (id, base_url, model, enabled) VALUES ('openrouter', NULL, ?, 1) ON CONFLICT (id) DO UPDATE SET model = excluded.model`,
+    ).run(h.main);
+    db.prepare(
+      `INSERT INTO providers (id, base_url, model, enabled) VALUES ('custom', 'https://openrouter.ai/api/v1', ?, 1) ON CONFLICT (id) DO UPDATE SET model = excluded.model`,
+    ).run(h.reserve);
+    setSetting('harness', id);
+    setSetting('default_provider', 'openrouter');
+
+    const reserveReady = usableProviders().some((p) => p.id === 'custom');
+    setSetting('fallback_provider', reserveReady ? 'custom' : '');
+
+    return json({
+      ok: `Harness: ${h.label}.${reserveReady ? '' : ' No reserve model yet: put an OpenRouter key in the Custom card to enable failover.'}`,
+    });
   }
 
   if (intent === 'set-default') {
@@ -442,6 +476,47 @@ export default function Admin() {
           </ul>
         </section>
 
+        <section className={card} data-testid="foldo-admin-harness">
+          <h2 className="text-lg font-bold">Harness</h2>
+          <p className="mb-4 mt-1 text-sm text-bolt-elements-textSecondary">
+            A tested main and reserve model with the prompt rules and reasoning that suit them. Applying one sets the OpenRouter and
+            Custom model cards, the default and the fallback; API keys and limits stay as they are.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            {(d.controls.harnesses as any[]).map((h) => {
+              const active = h.id === d.controls.harness;
+
+              return (
+                <Form
+                  key={h.id}
+                  method="post"
+                  className={`flex flex-col rounded-xl border p-4 ${active ? 'border-[var(--foldo-yellow)]' : 'border-bolt-elements-borderColor'}`}
+                >
+                  <input type="hidden" name="harness" value={h.id} />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{h.label}</span>
+                    {active && <span className="rounded-full bg-[var(--foldo-yellow)] px-2 py-0.5 text-xs font-bold text-[#111]">active</span>}
+                  </div>
+                  <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-bolt-elements-textSecondary">
+                    <dt>Main</dt>
+                    <dd className="font-mono">{h.main}</dd>
+                    <dt>Reserve</dt>
+                    <dd className="font-mono">{h.reserve}</dd>
+                    <dt>Reasoning</dt>
+                    <dd>{h.reasoning}</dd>
+                  </dl>
+                  <p className="mt-2 flex-1 text-xs text-bolt-elements-textTertiary">{h.note}</p>
+                  <div className="mt-3">
+                    <button name="intent" value="apply-harness" className={active ? btn : primary} disabled={busy}>
+                      {active ? 'Re-apply' : 'Use this harness'}
+                    </button>
+                  </div>
+                </Form>
+              );
+            })}
+          </div>
+        </section>
+
         <section className={card}>
           <h2 className="mb-4 text-lg font-bold">Reply length, failover and concurrency</h2>
           <Form method="post" className="grid gap-3 md:grid-cols-3">
@@ -469,7 +544,7 @@ export default function Admin() {
               </select>
             </label>
             <label className="text-sm">
-              Reasoning effort (OpenRouter models)
+              Reasoning effort (other OpenRouter models; the harness sets its own)
               <select className={`${input} mt-1`} name="reasoning_effort" defaultValue={d.controls.reasoning_effort}>
                 {(d.controls.reasoning_levels as string[]).map((l) => (
                   <option key={l} value={l}>
@@ -496,7 +571,8 @@ export default function Admin() {
         <section className={card}>
           <h2 className="text-lg font-bold">AI models</h2>
           <p className="mb-4 mt-1 text-sm text-bolt-elements-textSecondary">
-            Paste an API key to switch a provider on. Keys are encrypted at rest and never shown again.
+            Paste an API key to switch a provider on. Keys are encrypted at rest and never shown again. Several keys separated by
+            commas are used in turn; only keys from different accounts add rate limit and credit.
             {!d.canStoreKeys && ' Set APP_SECRET in the environment to enable storing keys here (env var keys still work).'}
           </p>
           <div className="grid gap-4 md:grid-cols-2">

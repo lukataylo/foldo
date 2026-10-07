@@ -4,9 +4,20 @@ import * as nodePath from 'node:path';
 import type { BoltAction } from '~/types/actions';
 import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
+import { previewError } from '~/lib/stores/ui';
 import type { ActionCallbackData } from './message-parser';
 
 const logger = createScopedLogger('ActionRunner');
+
+// a dev server never exits, so its failures never mark the command failed
+export const isServerCommand = (command: string) =>
+  /\b(npm run (dev|start|serve|preview)|npm start|npx vite|vite( |$)|yarn (dev|start)|pnpm (dev|start))/.test(command);
+
+// compile errors (bad import, syntax error) only appear in the dev server's output, not as a preview crash
+const VITE_ERROR = /\[vite\] (Internal server error|Pre-transform error)|Failed to resolve import|\[plugin:vite:[\w-]+\]/;
+
+// eslint-disable-next-line no-control-regex
+const stripAnsi = (text: string) => text.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
 
 export type ActionStatus = 'pending' | 'running' | 'complete' | 'aborted' | 'failed';
 
@@ -130,6 +141,11 @@ export class ActionRunner {
     }
 
     const webcontainer = await this.#webcontainer;
+    const server = isServerCommand(action.content);
+
+    if (server) {
+      await this.#ensureJsxRuntime(webcontainer);
+    }
 
     const process = await webcontainer.spawn('jsh', ['-c', action.content], {
       env: { npm_config_yes: true },
@@ -147,6 +163,23 @@ export class ActionRunner {
         write(data) {
           console.log(data);
           tail = (tail + data).slice(-1500);
+
+          if (server) {
+            const at = tail.search(VITE_ERROR);
+
+            if (at !== -1) {
+              // the message and code frame help; vite's own stack frames are noise for the team and the model
+              const report = stripAnsi(tail.slice(at))
+                .split('\n')
+                .filter((line) => !/^\s*at\s/.test(line))
+                .join('\n');
+
+              previewError.set(report.trim().slice(0, 800));
+              tail = '';
+            } else if (/hmr update|page reload/.test(data)) {
+              previewError.set(undefined);
+            }
+          }
         },
       }),
     );
@@ -155,11 +188,38 @@ export class ActionRunner {
 
     logger.debug(`Process terminated with code ${exitCode}`);
 
-    // eslint-disable-next-line no-control-regex
-    const clean = tail.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').trim();
+    const clean = stripAnsi(tail).trim();
 
     if (exitCode !== 0 && !action.abortSignal.aborted) {
-      throw new Error(clean.split('\n').slice(-8).join('\n') || `Command exited with code ${exitCode}`);
+      const message = clean.split('\n').slice(-8).join('\n') || `Command exited with code ${exitCode}`;
+
+      // a failed install leaves the preview dead: show it (and let the chat fix it) like any other app error
+      previewError.set(`The command "${action.content.trim()}" failed:\n${message}`);
+
+      throw new Error(message);
+    }
+  }
+
+  /**
+   * Models often write JSX without `import React` and skip vite.config.js, so Vite compiles it with the classic runtime and
+   * the preview is a white screen ("React is not defined"). Without a config of their own, give React projects the automatic one.
+   */
+  async #ensureJsxRuntime(webcontainer: WebContainer) {
+    try {
+      const pkg = JSON.parse(await webcontainer.fs.readFile('package.json', 'utf-8'));
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      const entries = await webcontainer.fs.readdir('.');
+
+      if (!deps.vite || !deps.react || entries.some((name) => /^vite\.config\.[cm]?[jt]s$/.test(name))) {
+        return;
+      }
+
+      await webcontainer.fs.writeFile(
+        'vite.config.js',
+        "// added by Foldo so JSX works without importing React\nexport default { esbuild: { jsx: 'automatic' } };\n",
+      );
+    } catch {
+      // no package.json yet, or not JSON: nothing to do
     }
   }
 

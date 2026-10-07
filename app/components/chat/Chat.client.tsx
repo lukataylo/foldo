@@ -8,7 +8,7 @@ import { cssTransition, toast, ToastContainer } from 'react-toastify';
 import { useMessageParser, usePromptEnhancer, useShortcuts, useSnapScroll } from '~/lib/hooks';
 import { useChatHistory } from '~/lib/persistence';
 import { selectedModel } from '~/lib/stores/model';
-import { fixRequest, quota } from '~/lib/stores/ui';
+import { fixRequest, previewError, quota, requestFix } from '~/lib/stores/ui';
 import { PROMPT_KEY } from '~/components/landing/starters';
 import { chatStore } from '~/lib/stores/chat';
 import { activeTemplate, applyTemplate, prefetchSnapshots, templateStatus, type TemplateCard } from '~/lib/templates/client';
@@ -25,6 +25,8 @@ const toastAnimation = cssTransition({
 });
 
 const logger = createScopedLogger('Chat');
+
+const FIX_PROMPT = 'My app hit this error.';
 
 export function Chat() {
   renderLogger.trace('Chat');
@@ -74,6 +76,7 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
   useShortcuts();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const builtAt = useRef(0);
 
   const [chatStarted, setChatStarted] = useState(initialMessages.length > 0);
 
@@ -108,8 +111,14 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
 
       toast.error(known ? error.message : 'Something went wrong on our side. Press send to try again.');
     },
-    onFinish: () => {
+    onFinish: (message) => {
       logger.debug('Finished streaming');
+      builtAt.current = Date.now();
+
+      // the reply hit the length limit mid-build: files after the cut (and the dev server start) never arrive
+      if (workbenchStore.artifacts.get()[message.id]?.closed === false) {
+        toast.info('That reply was cut off before the app was finished. Send "continue" to finish it.', { autoClose: false });
+      }
     },
     initialMessages,
   });
@@ -224,8 +233,41 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
       return;
     }
 
-    sendMessage({} as React.UIEvent, `My app hit this error. Please fix it and tell me in one sentence what went wrong.\n\n${fix.text}`);
+    sendMessage({} as React.UIEvent, `${FIX_PROMPT} Please fix it and tell me in one sentence what went wrong.\n\n${fix.text}`);
   }, [fix?.n]);
+
+  /*
+   * An error soon after a build (compile error, crash on load, failed install) gets one automatic fix: in a 40-team test
+   * one fix repaired every broken first build, so teams rarely have to see one. Never for a reply that was itself a fix,
+   * so it can't loop.
+   */
+  const latest = useRef(messages);
+  latest.current = messages;
+
+  const autoFixedFor = useRef<string>();
+
+  useEffect(
+    () =>
+      previewError.listen((error) => {
+        const last = latest.current.at(-1);
+        const asked = latest.current.findLast((m) => m.role === 'user')?.content ?? '';
+
+        if (
+          !error ||
+          last?.role !== 'assistant' ||
+          Date.now() - builtAt.current > 180_000 ||
+          autoFixedFor.current === last.id ||
+          asked.includes(FIX_PROMPT)
+        ) {
+          return;
+        }
+
+        autoFixedFor.current = last.id;
+        toast.info('Your app hit an error after that build, so Foldo is fixing it.');
+        requestFix(error);
+      }),
+    [],
+  );
 
   // start a project from a template: instant working app, no AI call (and no tokens) until the team asks for changes
   const startTemplate = async (id: string) => {

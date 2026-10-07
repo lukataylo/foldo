@@ -36,7 +36,8 @@ generations are refunded, login/sign-up/invite-code throttling, Origin checks on
   and a fallback model that is tried once if the main model fails to start (charged once). Set a per-model max tokens in each
   model card (DeepSeek and GLM cap near 16k).
 - **Database backup:** one-click download of a consistent SQLite snapshot.
-- Teams get **Download zip** in the workbench and a **Fix this error** button on failed commands and preview crashes.
+- Teams get **Download zip** in the workbench and a **Fix this error** button on failed commands, compile errors and preview crashes.
+  An error right after a build is fixed automatically once (never for a reply that was itself a fix).
 
 Tip: to use OpenRouter for both main and fallback, put the main model in the OpenRouter card and a second OpenRouter model
 (different id) in the Custom card with the same base URL and key, then choose Custom as the fallback.
@@ -76,13 +77,26 @@ rebuild after dependency changes. Without a snapshot everything still works: the
 
 | Role | Model id | Notes |
 |---|---|---|
-| Main | `deepseek/deepseek-v4-pro-0813` | GA slug of DeepSeek V4 Pro. About 3s to first text and 15-30s per reply at low reasoning; roughly $0.02 per reply. |
-| Reserve | `openai/gpt-6.1-sol` | About 5s to first text but 140s+ per reply and roughly $0.10 per reply, so it is failover only (hidden from the team picker). |
+| Main (default harness) | `deepseek/deepseek-v4-pro-0813` | GA slug of DeepSeek V4 Pro with an 8k-token thinking budget (high). ~10s to first text and 30-40s for a new app with 40 teams building; about $0.03 per reply. |
+| Main (Sol harness) | `openai/gpt-6.1-sol` | About 3-8s to first text; 60-200s for a full new app (25-70k characters), 15-75s for a change. About $0.10 per reply. |
+
+Each harness uses the other model as its reserve (failover only, hidden from the team picker).
 
 The OpenRouter workspace guardrail on this account allows only those two models; anything else (including the undated
-`deepseek/deepseek-v4-pro` alias) returns "blocked by guardrail". Set via env: `CUSTOM_API_KEY`, `CUSTOM_BASE_URL=https://openrouter.ai/api/v1`,
-`CUSTOM_MODEL=openai/gpt-6.1-sol`, `FALLBACK_PROVIDER=custom`, `REASONING_EFFORT=low`, `LLM_MAX_TOKENS=32000`. If the main model says nothing for
-`FIRST_TOKEN_TIMEOUT_MS` (default 40s) the request is retried once on the reserve.
+`deepseek/deepseek-v4-pro` alias) returns "blocked by guardrail". Set via env: `LLM_PROVIDER=openrouter` (its default model
+follows the harness), `CUSTOM_API_KEY`, `CUSTOM_BASE_URL=https://openrouter.ai/api/v1`, `CUSTOM_MODEL=openai/gpt-6.1-sol`,
+`FALLBACK_PROVIDER=custom`, `REASONING_EFFORT=low`, `LLM_MAX_TOKENS=32000`. A model saved in the /admin card overrides the
+default. If the main model says nothing for `FIRST_TOKEN_TIMEOUT_MS` (default 40s) the request is retried once on the reserve.
+
+**Harness (in /admin):** pick *GPT-6.1 Sol* (Sol main, DeepSeek reserve, low reasoning, extra prompt rules for Sol's
+habits) or *DeepSeek V4 Pro* (DeepSeek main with high reasoning and a 120s first-token allowance, Sol reserve). Applying one
+sets the OpenRouter/Custom model cards, default and fallback. The default is DeepSeek V4 Pro; `FOLDO_HARNESS=sol|deepseek` changes the starting choice. A key
+field (or `OPENROUTER_API_KEY`) can hold several comma-separated keys, used in turn; only keys from different OpenRouter
+accounts add rate limit and credit.
+
+Before an event with GPT-6.1 Sol as main: OpenRouter caps new accounts at 20 requests per minute for this model (the 21st
+gets a rate-limit error), and it rejects requests when the balance cannot cover every in-flight request at its max tokens.
+Lift the account tier and top up credits first, or many teams building at once will see "The AI is having a moment".
 
 ## Reliability: backups, monitoring, runbook
 

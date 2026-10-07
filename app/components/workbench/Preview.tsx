@@ -141,7 +141,13 @@ export const Preview = memo(() => {
           </div>
         )}
         {activePreview ? (
-          <iframe ref={iframeRef} className="border-none w-full h-full bg-white" src={iframeUrl} />
+          <iframe
+            ref={iframeRef}
+            className="border-none w-full h-full bg-white"
+            src={iframeUrl}
+            // generated apps love "copy link" buttons, which throw without clipboard permission in a cross-origin frame
+            allow="clipboard-read; clipboard-write; fullscreen"
+          />
         ) : (
           <div className="paper-tile flex h-full w-full flex-col items-center justify-center gap-3 p-6 text-center text-[#111]">
             <img src="/art/sleepy.webp" alt="" width={180} className="rounded-2xl" />

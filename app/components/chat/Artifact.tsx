@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { computed } from 'nanostores';
 import { memo, useEffect, useRef, useState } from 'react';
 import { createHighlighter, type BundledLanguage, type BundledTheme, type HighlighterGeneric } from 'shiki';
-import type { ActionState } from '~/lib/runtime/action-runner';
+import { isServerCommand, type ActionState } from '~/lib/runtime/action-runner';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { requestFix } from '~/lib/stores/ui';
 import { classNames } from '~/utils/classNames';
@@ -236,5 +236,3 @@ function getIconColor(status: ActionState['status']) {
   }
 }
 
-// long-running commands that keep the process alive on purpose
-const isServerCommand = (command: string) => /\b(npm run (dev|start|serve|preview)|npm start|npx vite|vite( |$)|yarn (dev|start)|pnpm (dev|start))/.test(command);

@@ -245,10 +245,23 @@ Here are some examples of correct usage of artifacts:
             "devDependencies": {
               "@types/react": "^18.0.28",
               "@types/react-dom": "^18.0.11",
-              "@vitejs/plugin-react": "^3.1.0",
-              "vite": "^4.2.0"
+              "@vitejs/plugin-react": "^4.3.4",
+              "vite": "^5.4.11"
             }
           }
+        </boltAction>
+
+        <boltAction type="file" filePath="vite.config.js">
+          import { defineConfig } from 'vite';
+          import react from '@vitejs/plugin-react';
+
+          export default defineConfig({
+            plugins: [react()],
+          });
+        </boltAction>
+
+        <boltAction type="shell">
+          npm install
         </boltAction>
 
         <boltAction type="file" filePath="index.html">
@@ -289,6 +302,31 @@ export const FORMAT_REMINDER = stripIndents`
   FINAL REMINDER (highest priority): whenever the user asks you to build, create or change anything, you MUST reply with
   a single <boltArtifact> containing <boltAction type="file" filePath="..."> actions with the COMPLETE file contents and
   <boltAction type="shell"> actions for installs and starting the dev server. Never put project code in markdown
-  code fences. Always include package.json, and the LAST action of every artifact MUST be a shell action that starts the dev server (npm run dev). Even a tiny static page needs package.json with vite and that final action.
-  Prefer Vite + React unless the user asks otherwise. Only answer in plain prose for pure questions.
+  code fences. A NEW project always includes package.json, and its LAST action MUST be a shell action that starts the dev
+  server (npm run dev); even a tiny static page needs package.json with vite and that final action. When CHANGING an
+  existing project the dev server is already running: output only the files you change, do not restart it, and only
+  run npm install if you added a dependency. To change a file, ALWAYS output that file's complete new contents.
+  Prefer Vite + React unless the user asks otherwise. A React + Vite project MUST include vite.config.js with
+  @vitejs/plugin-react (listed in devDependencies), otherwise JSX crashes with "React is not defined".
+  Before closing the artifact, check every file: each component, hook and icon it uses is imported, and every import
+  points at a file you wrote or a package in package.json. A missing import is a white screen for the user. Code that
+  runs in the browser uses ES module imports only, never require().
+  The first screen must show the app working: seed it with realistic sample data (a few named entries, amounts,
+  history) instead of an empty state, so it demos well before anyone types. Never require an API key or sign-up: use
+  sample data or a keyless public API, and fall back to sample data if a request fails.
+  Only answer in plain prose for pure questions.
 `;
+
+/**
+ * GPT-6.1 Sol habits seen in testing: it crams big sections of JSX onto one line (and drops a closing tag there), and on
+ * follow-ups it writes Node scripts that regex-patch files instead of rewriting them. Added whenever Sol answers.
+ */
+export const SOL_RULES = stripIndents`
+
+  Format code normally: one JSX element per line, never a whole section of markup on one long line (long lines are
+  where unclosed tags slip in and break the build).
+  NEVER write scripts that edit other files (no find/replace or regex patching, no sed), and never run them: they break
+  silently and hide the code. Output the changed file in full instead.
+`;
+
+export const modelRules = (model: string) => (/gpt-6/.test(model) ? `\n\n${SOL_RULES}` : '');

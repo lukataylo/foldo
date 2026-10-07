@@ -10,5 +10,5 @@
     "Create a customer onboarding wizard with Carbon form components",
     "Add notifications and a side navigation to this app"
   ],
-  "guide": "Empty app using IBM Carbon ('@carbon/react', dark g100 theme, precompiled CSS, no Sass). Only src/App.jsx exists. No Tailwind in this pack: use Carbon components, inline styles or a small src/app.css. Import Carbon icons one at a time (e.g. import Add from '@carbon/icons-react/es/add/16.js')."
+  "guide": "Empty app using IBM Carbon ('@carbon/react', dark g100 theme, precompiled CSS, no Sass). Only src/App.jsx exists. No Tailwind in this pack: use Carbon components, inline styles or a small src/app.css. Import Carbon icons one at a time (e.g. import Add from '@carbon/icons-react/es/Add.js', PascalCase file name, then <Add size={16} />)."
 }

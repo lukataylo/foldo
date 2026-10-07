@@ -1,5 +1,5 @@
 import { createOpenAI } from '@ai-sdk/openai';
-import { reasoningEffort, type Provider } from '../config';
+import { pickKey, reasoningEffortFor, type Provider } from '../config';
 
 // Reasoning models (o-series, gpt-5/6...) reject `max_tokens` and sampling params. The pinned SDK only knows "o1-",
 // so for OpenAI-direct we rewrite the request body. Through OpenRouter this is normalised for us.
@@ -33,7 +33,7 @@ const reasoningFetch: typeof fetch = (url, init) => {
 // OpenRouter normalises reasoning control across models; without a cap, reasoning models can think for a minute
 // before the first visible token (and spend the token budget on thinking). Non-reasoning models ignore the field.
 const withOpenRouterOptions =
-  (effort: string): typeof fetch =>
+  (effort: string | number): typeof fetch =>
   (url, init) => {
     if (typeof init?.body === 'string') {
       try {
@@ -45,7 +45,8 @@ const withOpenRouterOptions =
           ...init,
           body: JSON.stringify({
             ...body,
-            ...(effort !== 'default' && { reasoning: { effort } }),
+            // a number is a thinking budget in tokens; a word is OpenRouter's effort level (a share of max_tokens)
+            ...(typeof effort === 'number' ? { reasoning: { max_tokens: effort } } : effort !== 'default' && { reasoning: { effort } }),
             ...(sort && sort !== 'default' && { provider: { sort, allow_fallbacks: true } }),
           }),
         });
@@ -61,11 +62,11 @@ const withOpenRouterOptions =
 // Non-OpenAI endpoints get 'compatible' mode so we don't send OpenAI-only fields (e.g. stream_options) they reject.
 export function getModel(provider: Provider) {
   return createOpenAI({
-    apiKey: provider.key,
+    apiKey: pickKey(provider),
     baseURL: provider.baseURL,
     compatibility: provider.id === 'openai' ? 'strict' : 'compatible',
     // OpenRouter uses these to attribute traffic to the app
     headers: provider.id === 'openrouter' ? { 'HTTP-Referer': 'https://foldo.dev', 'X-Title': 'Foldo' } : undefined,
-    fetch: provider.id === 'openai' ? reasoningFetch : provider.baseURL.includes('openrouter.ai') ? withOpenRouterOptions(reasoningEffort()) : undefined,
+    fetch: provider.id === 'openai' ? reasoningFetch : provider.baseURL.includes('openrouter.ai') ? withOpenRouterOptions(reasoningEffortFor(provider.model)) : undefined,
   })(provider.model);
 }

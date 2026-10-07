@@ -43,6 +43,51 @@ export const reasoningEffort = () => {
   return (REASONING_LEVELS as readonly string[]).includes(v) ? v : 'low';
 };
 
+// ---------- harnesses: a tested main/reserve model pair with the settings that suit it (picked in /admin) ----------
+
+export const SOL_MODEL = 'openai/gpt-6.1-sol';
+export const DEEPSEEK_MODEL = 'deepseek/deepseek-v4-pro-0813';
+
+export const HARNESSES = {
+  deepseek: {
+    label: 'DeepSeek V4 Pro (high reasoning)',
+    main: DEEPSEEK_MODEL,
+    reserve: SOL_MODEL,
+    /*
+     * "high" as an OpenRouter effort reserves ~80% of max_tokens for thinking, which left DeepSeek too little room for the
+     * app itself (truncated or even empty replies in testing). A fixed budget keeps both; 12k sometimes took DeepSeek past the
+     * 120s first-token window on slow providers, 8k leaves room.
+     */
+    reasoning: { [DEEPSEEK_MODEL]: 8_000, [SOL_MODEL]: 'low' } as Record<string, string | number>,
+    // high reasoning thinks before the first visible word, so give it longer before failing over
+    firstTokenMs: 120_000,
+    note: 'Cheaper: about $0.03 per reply in a 40-team test; usually ~10s to first text and 30-40s for a new app. Thinks up to 8k tokens before writing.',
+  },
+  sol: {
+    label: 'GPT-6.1 Sol',
+    main: SOL_MODEL,
+    reserve: DEEPSEEK_MODEL,
+    reasoning: { [SOL_MODEL]: 'low', [DEEPSEEK_MODEL]: 'low' } as Record<string, string | number>,
+    firstTokenMs: 40_000,
+    note: 'Best results in our tests (every app built and rendered after the prompt fixes). About $0.10 per reply, 60-200s for a new app. OpenRouter limits new accounts to 20 requests a minute on this model.',
+  },
+} as const;
+
+export type HarnessId = keyof typeof HARNESSES;
+
+export const harnessId = (): HarnessId => {
+  const v = getSetting('harness', process.env.FOLDO_HARNESS ?? 'deepseek');
+
+  return v in HARNESSES ? (v as HarnessId) : 'deepseek';
+};
+
+export const harness = () => HARNESSES[harnessId()];
+
+// the harness decides reasoning for its own models (an effort level or a token budget); others follow the admin setting
+export const reasoningEffortFor = (model: string): string | number => harness().reasoning[model] ?? reasoningEffort();
+
+export const describeReasoning = (r: string | number) => (typeof r === 'number' ? `high (${Math.round(r / 1000)}k thinking tokens)` : r);
+
 export function pauseState() {
   return { paused: getSetting('paused') === '1', message: getSetting('pause_message') };
 }
@@ -123,7 +168,7 @@ function decryptUncached(blob: string): string | undefined {
 
 export const CATALOG = [
   // OpenRouter fronts many models behind one key with pooled rate limits, which suits many teams at once
-  { id: 'openrouter', label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-v4-pro-0813', env: 'OPENROUTER_API_KEY' },
+  { id: 'openrouter', label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', model: SOL_MODEL, env: 'OPENROUTER_API_KEY' },
   { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat', env: 'DEEPSEEK_API_KEY' },
   { id: 'openai', label: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4.1-nano', env: 'OPENAI_API_KEY' },
   { id: 'mimo', label: 'Xiaomi MiMo', baseURL: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2-flash', env: 'MIMO_API_KEY' },
@@ -134,7 +179,7 @@ export const CATALOG = [
   { id: 'custom', label: 'Custom (OpenAI-compatible)', baseURL: '', model: '', env: 'CUSTOM_API_KEY' },
 ] as const;
 
-// OpenRouter/custom cards are named after the model they run, so teams see "DeepSeek V4 Pro", not "OpenRouter"
+// OpenRouter/custom cards are named after the model they run, so teams see "GPT-6.1 Sol", not "OpenRouter"
 const FRIENDLY: Record<string, string> = {
   'deepseek/deepseek-v4-pro-0813': 'DeepSeek V4 Pro',
   'deepseek/deepseek-v4-pro': 'DeepSeek V4 Pro',
@@ -148,6 +193,8 @@ export interface Provider {
   baseURL: string;
   model: string;
   key?: string;
+  // several comma-separated keys are used in turn (keys from different accounts spread rate limits and credit)
+  keys: string[];
   maxTokens?: number;
   keySource: 'admin' | 'env' | 'none';
   enabled: boolean;
@@ -160,22 +207,25 @@ export function listProviders(): Provider[] {
     const row = rows.get(c.id);
     const stored = row?.key_enc ? decrypt(row.key_enc) : undefined;
     const envKey = process.env[c.env] || undefined;
-    const key = stored || envKey;
+    const keys = (stored || envKey || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    const key = keys[0];
 
     const custom = c.id === 'custom';
-    const modelId = row?.model || (c.id === (process.env.LLM_PROVIDER || '') && process.env.LLM_MODEL) || (custom && process.env.CUSTOM_MODEL) || c.model;
+    // with nothing saved or set in env, the OpenRouter card runs the harness's main model
+    const builtIn = c.id === 'openrouter' ? harness().main : c.model;
+    const modelId = row?.model || (c.id === (process.env.LLM_PROVIDER || '') && process.env.LLM_MODEL) || (custom && process.env.CUSTOM_MODEL) || builtIn;
 
     return {
       id: c.id,
       label: (custom && process.env.CUSTOM_LABEL) || ((c.id === 'openrouter' || custom) && FRIENDLY[modelId]) || c.label,
       // LLM_BASE_URL is a global override for proxies and tests
       baseURL: process.env.LLM_BASE_URL || row?.base_url || (custom && process.env.CUSTOM_BASE_URL) || c.baseURL,
-      model:
-        row?.model ||
-        (c.id === (process.env.LLM_PROVIDER || '') && process.env.LLM_MODEL) ||
-        (custom && process.env.CUSTOM_MODEL) ||
-        c.model,
+      model: modelId,
       key,
+      keys,
       maxTokens: row?.max_tokens || undefined,
       keySource: stored ? 'admin' : envKey ? 'env' : 'none',
       enabled: row ? row.enabled === 1 : true,
@@ -217,4 +267,14 @@ export function resolveProvider(requested?: string): Provider | undefined {
 // safe to send to the browser: no keys, no base URLs
 export function publicModels() {
   return { paused: pauseState(), models: selectableProviders().map((p) => ({ id: p.id, label: p.label })), defaultModel: resolveProvider()?.id };
+}
+
+const nextKey = new Map<string, number>();
+
+/** Round-robin over a provider's keys, so simultaneous builds are spread across them. */
+export function pickKey(p: Provider): string | undefined {
+  const i = nextKey.get(p.id) ?? 0;
+  nextKey.set(p.id, i + 1);
+
+  return p.keys[i % Math.max(1, p.keys.length)] ?? p.key;
 }

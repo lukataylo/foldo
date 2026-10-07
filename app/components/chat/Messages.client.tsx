@@ -23,15 +23,14 @@ export const Messages = React.forwardRef<HTMLDivElement, MessagesProps>((props: 
             const { role, content } = message;
             const isUserMessage = role === 'user';
             const isFirst = index === 0;
-            const isLast = index === messages.length - 1;
 
             return (
               <div
                 key={index}
-                className={classNames('flex gap-3 p-4 w-full rounded-xl border border-bolt-elements-borderColor', {
-                  'bg-bolt-elements-messages-background': isUserMessage || !isStreaming || (isStreaming && !isLast),
-                  'bg-gradient-to-b from-bolt-elements-messages-background from-30% to-transparent':
-                    isStreaming && isLast,
+                // only the team's own messages get a card; replies sit on the page so the build card isn't a box in a box
+                className={classNames('flex gap-3 w-full', {
+                  'p-4 rounded-xl border border-bolt-elements-borderColor bg-bolt-elements-messages-background': isUserMessage,
+                  'px-1 py-2': !isUserMessage,
                   'mt-4': !isFirst,
                 })}
               >
@@ -57,6 +56,12 @@ export const Messages = React.forwardRef<HTMLDivElement, MessagesProps>((props: 
         : null}
       {isStreaming && (
         <div className="text-center w-full text-bolt-elements-textSecondary i-svg-spinners:3-dots-fade text-4xl mt-4"></div>
+      )}
+      {isStreaming && messages.at(-1)?.role === 'user' && (
+        // the model plans before it writes anything; under load that silence can last a minute
+        <p className="mt-1 text-center text-xs text-bolt-elements-textTertiary" data-testid="foldo-chat-thinking">
+          Planning your app. The first words can take up to a minute when lots of teams are building.
+        </p>
       )}
     </div>
   );

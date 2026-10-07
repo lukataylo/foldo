@@ -22,7 +22,8 @@ if (!import.meta.env.SSR) {
     import.meta.hot?.data.webcontainer ??
     Promise.resolve()
       .then(() => {
-        return WebContainer.boot({ workdirName: WORK_DIR_NAME });
+        // without this, preview crashes never reach the "Fix this error" banner
+        return WebContainer.boot({ workdirName: WORK_DIR_NAME, forwardPreviewErrors: 'exceptions-only' });
       })
       .then((webcontainer) => {
         webcontainerContext.loaded = true;

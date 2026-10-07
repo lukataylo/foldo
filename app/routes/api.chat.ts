@@ -11,6 +11,7 @@ import {
 import {
   defaultMaxTokens,
   fallbackFor,
+  harness,
   maxSegments,
   maxUserStreams,
   pauseState,
@@ -62,7 +63,12 @@ async function chatAction({ request }: ActionFunctionArgs) {
 
   // UI-only messages (the template intro with idea chips) never reach the model
   const messages = Array.isArray(body.messages) ? body.messages.filter((m) => !String((m as { id?: string })?.id ?? '').startsWith('tpl-')) : body.messages;
-  const guide = body.template ? templateGuide(body.template) : undefined;
+  const rewritten = new Set(
+    (Array.isArray(messages) ? messages : [])
+      .filter((m) => m?.role === 'assistant' && typeof m.content === 'string')
+      .flatMap((m) => [...m.content.matchAll(/<boltAction[^>]*filePath="([^"]+)"/g)].map((match) => match[1].replace(/^\.?\//, ''))),
+  );
+  const guide = body.template ? templateGuide(body.template, rewritten) : undefined;
   const system = guide ? getSystemPrompt() + guide + TEMPLATE_REMINDER : undefined;
   const tooLong = 'This chat has got very long. Click New project and paste your last prompt to keep going.';
 
@@ -127,18 +133,36 @@ async function chatAction({ request }: ActionFunctionArgs) {
     });
 
     try {
-      const result = await Promise.race([streamText(messages, p, { ...options(p), abortSignal: ac.signal }), timeout]);
+      const served = { live: false };
+      const result = await Promise.race([streamText(messages, p, { ...options(p, served), abortSignal: ac.signal }), timeout]);
       const reader = result.toAIStream().getReader();
-      const first = await Promise.race([reader.read(), timeout]); // wait for the first real chunk
+      // wait for the first text part ("0:..."); finish-only parts mean the model said nothing (e.g. a reasoning model that
+      // spent its whole budget thinking), which must fail over or be refunded rather than reach the team as an empty reply
+      const peeked: Uint8Array[] = [];
+      const decoder = new TextDecoder();
+      let seen = '';
 
-      // hand back a stream that replays the chunk we peeked at, then the rest
+      for (;;) {
+        const part = await Promise.race([reader.read(), timeout]);
+
+        if (part.done) {
+          throw new Error('empty reply');
+        }
+
+        peeked.push(part.value);
+        seen += decoder.decode(part.value, { stream: true });
+
+        if (/(^|\n)0:/.test(seen)) {
+          break;
+        }
+      }
+
+      served.live = true;
+
+      // hand back a stream that replays the chunks we peeked at, then the rest
       return new ReadableStream<Uint8Array>({
         start(controller) {
-          if (!first.done) {
-            controller.enqueue(first.value);
-          } else {
-            controller.close();
-          }
+          peeked.forEach((chunk) => controller.enqueue(chunk));
         },
         async pull(controller) {
           const { done, value } = await reader.read();
@@ -157,10 +181,15 @@ async function chatAction({ request }: ActionFunctionArgs) {
     }
   };
 
-  const options = (p: Provider): StreamingOptions => ({
+  // `attempt.live` is false for an attempt we gave up on (timeout, empty reply): its end must not touch the conversation
+  const options = (p: Provider, attempt = { live: true }): StreamingOptions => ({
     toolChoice: 'none',
     ...(system && { system }),
     onFinish: async ({ text: content, finishReason }) => {
+      if (!attempt.live) {
+        return;
+      }
+
       if (finishReason !== 'length') {
         return stream.close();
       }
@@ -186,7 +215,9 @@ async function chatAction({ request }: ActionFunctionArgs) {
     const fallback = fallbackFor(primary.id);
 
     try {
-      aiStream = await attempt(primary, fallback ? FIRST_TOKEN_MS : LAST_RESORT_MS);
+      // a high-reasoning harness thinks before its first word: don't fail it over for being thoughtful
+      const patience = primary.model === harness().main ? Math.max(FIRST_TOKEN_MS, harness().firstTokenMs) : FIRST_TOKEN_MS;
+      aiStream = await attempt(primary, fallback ? patience : Math.max(patience, LAST_RESORT_MS));
     } catch (error) {
       recordProviderError(primary.id);
 

@@ -10,5 +10,5 @@
     "Add a sign-up flow with a clear privacy and consent screen",
     "Create a pricing page that explains every fee in plain language"
   ],
-  "guide": "Empty app: only src/App.jsx is a placeholder. The UI kit is in src/components/ui (shadcn/ui style: button, card, input, tabs, dialog, select, table, badge, progress, switch, accordion...), finance blocks in src/components/finance (AppShell, StatCard, DemoBanner, TrustNote, EmptyState, charts), helpers in src/lib (money formatting, loan maths, Luhn, seeded fake data)."
+  "guide": "Empty app: only src/App.jsx is a placeholder. The UI kit is in src/components/ui (shadcn/ui style: button, card, input, tabs, dialog, select, table, badge, progress, switch, accordion...), finance blocks as named exports from src/components/finance/AppShell, /blocks (PageHeader, StatCard, DemoBanner, TrustNote, EmptyState) and /charts, helpers in src/lib (money formatting, loan maths, Luhn, seeded fake data)."
 }

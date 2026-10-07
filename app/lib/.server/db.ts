@@ -1,5 +1,5 @@
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 // ponytail: SQLite file on a Railway volume (set DB_PATH=/data/foldo.db); move to Postgres if we need >1 instance
@@ -7,6 +7,30 @@ const path = process.env.DB_PATH || './data/foldo.db';
 mkdirSync(dirname(path), { recursive: true });
 
 export const dataDir = dirname(path);
+
+// Disaster recovery without a shell: set RESTORE_BACKUP=<file in /data/backups> and redeploy. The current database is kept as
+// <db>.before-restore, and a marker file stops the restore from repeating on every restart (remove the variable afterwards).
+const restore = process.env.RESTORE_BACKUP;
+
+if (restore && /^foldo-[0-9-]{19}\.db$/.test(restore)) {
+  const source = join(dataDir, 'backups', restore);
+  const marker = join(dataDir, `restored-${restore}`);
+
+  if (existsSync(source) && !existsSync(marker)) {
+    if (existsSync(path)) {
+      copyFileSync(path, `${path}.before-restore`);
+    }
+
+    for (const ext of ['-wal', '-shm']) {
+      rmSync(path + ext, { force: true });
+    }
+
+    copyFileSync(source, path);
+    writeFileSync(marker, new Date().toISOString());
+    console.warn(`[restore] database restored from ${restore}`);
+  }
+}
+
 export const db = new DatabaseSync(path);
 
 db.exec(`

@@ -32,14 +32,23 @@ const reasoningFetch: typeof fetch = (url, init) => {
 
 // OpenRouter normalises reasoning control across models; without a cap, reasoning models can think for a minute
 // before the first visible token (and spend the token budget on thinking). Non-reasoning models ignore the field.
-const withReasoningEffort =
+const withOpenRouterOptions =
   (effort: string): typeof fetch =>
   (url, init) => {
-    if (effort !== 'default' && typeof init?.body === 'string') {
+    if (typeof init?.body === 'string') {
       try {
         const body = JSON.parse(init.body);
+        // "throughput": prefer the provider with the best tokens/second, which trims the slow tail when many teams build at once
+        const sort = process.env.OPENROUTER_SORT ?? 'throughput';
 
-        return fetch(url, { ...init, body: JSON.stringify({ ...body, reasoning: { effort } }) });
+        return fetch(url, {
+          ...init,
+          body: JSON.stringify({
+            ...body,
+            ...(effort !== 'default' && { reasoning: { effort } }),
+            ...(sort && sort !== 'default' && { provider: { sort, allow_fallbacks: true } }),
+          }),
+        });
       } catch {
         // not JSON: pass through
       }
@@ -57,6 +66,6 @@ export function getModel(provider: Provider) {
     compatibility: provider.id === 'openai' ? 'strict' : 'compatible',
     // OpenRouter uses these to attribute traffic to the app
     headers: provider.id === 'openrouter' ? { 'HTTP-Referer': 'https://foldo.dev', 'X-Title': 'Foldo' } : undefined,
-    fetch: provider.id === 'openai' ? reasoningFetch : provider.baseURL.includes('openrouter.ai') ? withReasoningEffort(reasoningEffort()) : undefined,
+    fetch: provider.id === 'openai' ? reasoningFetch : provider.baseURL.includes('openrouter.ai') ? withOpenRouterOptions(reasoningEffort()) : undefined,
   })(provider.model);
 }

@@ -84,11 +84,23 @@ The OpenRouter workspace guardrail on this account allows only those two models;
 `CUSTOM_MODEL=openai/gpt-6.1-sol`, `FALLBACK_PROVIDER=custom`, `REASONING_EFFORT=low`, `LLM_MAX_TOKENS=32000`. If the main model says nothing for
 `FIRST_TOKEN_TIMEOUT_MS` (default 40s) the request is retried once on the reserve.
 
+## Reliability: backups, monitoring, runbook
+
+- **Automatic backups** of the SQLite database to `/data/backups` every `BACKUP_INTERVAL_MIN` (default 10) minutes, newest
+  `BACKUP_KEEP` (default 36) kept; list, download and "back up now" in `/admin`. **Restore** by setting
+  `RESTORE_BACKUP=<file name>` on Railway and redeploying (a marker stops repeat restores).
+- **Restart policy** is *always* (`railway.json`), health check `/healthz`.
+- Teams' saves retry through a server restart, with a "Saved / Reconnecting / Not saved" indicator.
+- `node scripts/monitor.mjs --url https://foldo.dev --login monitor@x:pw --webhook <slack>` watches the site, the packages file,
+  sign-in and a real AI build, and alerts on any change.
+- **`docs/RUNBOOK-EVENT.md`**: stress-test results, pre-event checklist, roles, incident playbooks (site down, AI trouble, data
+  loss, WebContainer outage, Wi-Fi saturation, abuse) and message templates.
+
 ## Load test
 
     node scripts/stub-llm.mjs &                                   # fake model, no tokens
     LLM_BASE_URL=http://localhost:9999/v1 DEEPSEEK_API_KEY=x DAILY_MESSAGE_LIMIT=100 npm start &
-    node scripts/load-test.mjs --url http://localhost:3000 --users 25 --expect-artifact
+    node scripts/load-test.mjs --url http://localhost:3000 --users 25 --messages 3 --download --expect-artifact
 
 Against a real provider drop the stub and `LLM_BASE_URL`. Behind Railway's proxy sign-ups are throttled per real IP, so create
 logins first and pass `--accounts file.txt` (one `email:password` per line).

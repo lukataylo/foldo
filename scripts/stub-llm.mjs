@@ -7,6 +7,8 @@ import http from 'node:http';
 const PORT = Number(process.env.STUB_PORT || 9999);
 const DELAY = Number(process.env.STUB_DELAY_MS || 1200);
 const FAIL = Number(process.env.STUB_FAIL_RATE || 0);
+const CHUNK_MS = Number(process.env.STUB_CHUNK_MS || 15); // time between 40-character chunks: raise it for long, slow streams
+const REPEAT = Number(process.env.STUB_REPEAT || 1); // multiply the reply length (real replies are 10-35k characters)
 
 const ARTIFACT = `<boltArtifact id="stub-app" title="Stub app"><boltAction type="file" filePath="package.json">{"name":"stub","private":true,"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5.0.0"}}</boltAction><boltAction type="file" filePath="index.html"><h1>Hello from the stub</h1></boltAction><boltAction type="shell">npm install</boltAction><boltAction type="shell">npm run dev</boltAction></boltArtifact>`;
 
@@ -34,9 +36,11 @@ http
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const chunk = (delta, fin) => `data: ${JSON.stringify({ id: '1', object: 'chat.completion.chunk', created: 1, model: 'stub', choices: [{ index: 0, delta, finish_reason: fin }] })}\n\n`;
 
-      for (let i = 0; i < ARTIFACT.length; i += 40) {
-        res.write(chunk({ content: ARTIFACT.slice(i, i + 40) }, null));
-        await new Promise((r) => setTimeout(r, 15));
+      const body = REPEAT > 1 ? ARTIFACT.replace('</boltAction></boltArtifact>', `${'<!-- filler -->'.repeat(300 * REPEAT)}</boltAction></boltArtifact>`) : ARTIFACT;
+
+      for (let i = 0; i < body.length; i += 40) {
+        res.write(chunk({ content: body.slice(i, i + 40) }, null));
+        await new Promise((r) => setTimeout(r, CHUNK_MS));
       }
 
       res.end(chunk({}, 'stop') + 'data: [DONE]\n\n');

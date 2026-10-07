@@ -7,6 +7,7 @@ import { chatStore } from '~/lib/stores/chat';
 import { menuOpen } from '~/lib/stores/ui';
 import { classNames } from '~/utils/classNames';
 import { HeaderActionButtons } from './HeaderActionButtons.client';
+import { SaveStatus } from './SaveStatus.client';
 import { ShareButton } from './ShareButton.client';
 import { UserMenu } from './UserMenu';
 
@@ -45,6 +46,7 @@ export function Header() {
         <ClientOnly>{() => <ChatDescription />}</ClientOnly>
       </span>
       <div className="flex shrink-0 items-center gap-2">
+        {chat.started && <ClientOnly>{() => <SaveStatus />}</ClientOnly>}
         <ClientOnly>{() => <ShareButton />}</ClientOnly>
         {chat.started && <ClientOnly>{() => <HeaderActionButtons />}</ClientOnly>}
         {email ? (

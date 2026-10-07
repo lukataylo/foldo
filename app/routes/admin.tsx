@@ -34,6 +34,7 @@ import {
   signupsOpen,
 } from '~/lib/.server/config';
 import { snapshot } from '~/lib/.server/metrics';
+import { listBackups, runBackup } from '~/lib/.server/backup';
 import { db, today } from '~/lib/.server/db';
 import { getModel } from '~/lib/.server/llm/model';
 import { timeAgo } from '~/utils/timeAgo';
@@ -50,6 +51,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json({
     ...shell(admin),
     canStoreKeys,
+    backups: listBackups().slice(0, 8),
+    backupEveryMin: Number(process.env.BACKUP_INTERVAL_MIN ?? 10),
     stats: {
       users: count('SELECT COUNT(*) AS n FROM users'),
       projects: count('SELECT COUNT(*) AS n FROM projects'),
@@ -240,6 +243,10 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: f.get('paused') ? 'New requests are paused.' : 'New requests are flowing again.' });
   }
 
+  if (intent === 'backup-now') {
+    return json({ ok: `Backup written: ${runBackup()}` });
+  }
+
   if (intent === 'user-toggle') {
     if (s('id') === admin.id) {
       return json({ error: "You can't disable your own account." }, 400);
@@ -406,9 +413,33 @@ export default function Admin() {
             </div>
           </Form>
           <p className="mt-2 text-xs text-bolt-elements-textTertiary">Builds already running finish. Nobody loses saved work.</p>
-          <a href="/api/admin-backup" className={`${btn} mt-4 inline-block`} download>
-            Download database backup
-          </a>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <a href="/api/admin-backup" className={btn} download>
+              Download a fresh backup now
+            </a>
+            <Form method="post">
+              <button name="intent" value="backup-now" className={btn} disabled={busy}>
+                Save a backup on the server
+              </button>
+            </Form>
+          </div>
+          <div className="mt-3 text-xs text-bolt-elements-textTertiary">
+            Automatic backup every {d.backupEveryMin || 'never'} min on the volume. Restore by setting RESTORE_BACKUP to a file name below and redeploying (see the runbook).
+          </div>
+          <ul className="mt-2 space-y-1 text-sm" data-testid="foldo-backups">
+            {d.backups.length === 0 && <li className="text-bolt-elements-textSecondary">No automatic backup yet (the first one is written a minute after boot).</li>}
+            {d.backups.map((b: any) => (
+              <li key={b.name} className="flex items-center justify-between gap-3 text-bolt-elements-textSecondary">
+                <span className="font-mono text-xs">{b.name}</span>
+                <span className="flex items-center gap-3">
+                  <span className="tabular-nums">{(b.bytes / 1e6).toFixed(1)} MB</span>
+                  <a className="underline hover:text-bolt-elements-textPrimary" href={`/api/admin-backup?file=${b.name}`} download>
+                    download
+                  </a>
+                </span>
+              </li>
+            ))}
+          </ul>
         </section>
 
         <section className={card}>

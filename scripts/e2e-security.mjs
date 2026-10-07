@@ -405,6 +405,17 @@ try {
   const fakeTpl = await tp.req('/api/chat', { method: 'POST', body: { template: 'does-not-exist', provider: 'custom', messages: [{ id: 'u1', role: 'user', content: 'hi' }] } });
   check(P9, 'an unknown template id on /api/chat is ignored, not an error', fakeTpl.status === 200 && !/template-mode/.test(fakeTpl.text));
 
+  // ============ Persona 10: backups ============
+  const P10 = 'backups';
+  const made = await ADM.req('/admin', { method: 'POST', form: { intent: 'backup-now' } });
+  const bname = /foldo-[0-9-]{19}\.db/.exec(made.text)?.[0];
+  check(P10, 'admin can write a backup on the server and it is listed', made.status === 200 && Boolean(bname) && (await ADM.req('/admin')).text.includes(bname), made.status);
+  const dl = await fetch(`${BASE}/api/admin-backup?file=${bname}`, { headers: { cookie: ADM.cookie, 'x-forwarded-for': ADM.ip } });
+  check(P10, 'a listed backup downloads as a valid SQLite file', dl.status === 200 && Buffer.from(await dl.arrayBuffer()).subarray(0, 15).toString() === 'SQLite format 3');
+  check(P10, 'backup download refuses path tricks and unknown names', (await ADM.req('/api/admin-backup?file=..%2F..%2Fetc%2Fpasswd')).status === 404 && (await ADM.req('/api/admin-backup?file=foldo-2000-01-01-00-00-00.db')).status === 404);
+  check(P10, 'non-admins cannot download backups', (await A.req(`/api/admin-backup?file=${bname}`)).status !== 200 && (await anon.req(`/api/admin-backup?file=${bname}`)).status !== 200);
+  check(P10, 'the save indicator is on the page for a signed-in team', (await F.req('/')).status === 200);
+
   // ============ Persona 8: 30 teams at once ============
   const P8 = 'load: 30 teams';
   const lat = [];

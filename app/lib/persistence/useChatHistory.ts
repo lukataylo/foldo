@@ -31,6 +31,33 @@ export const listed = atom<boolean>(false);
 
 let saving: Promise<void> = Promise.resolve();
 
+// 'saved' | 'saving' | 'retrying' | 'failed': shown next to the project name so teams always know their work is safe
+export const saveState = atom<'saved' | 'saving' | 'retrying' | 'failed'>('saved');
+
+// one save with retries: a server restart or a blip on venue Wi-Fi must not lose or interrupt anyone's work
+async function putWithRetry(body: unknown): Promise<Response | undefined> {
+  const waits = [1000, 3000, 8000, 15000];
+
+  for (let attempt = 0; attempt <= waits.length; attempt++) {
+    try {
+      const res = await fetch('/api/projects', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+      if (res.status < 500) {
+        return res;
+      }
+    } catch {
+      // network error: retry
+    }
+
+    if (attempt < waits.length) {
+      saveState.set('retrying');
+      await new Promise((r) => setTimeout(r, waits[attempt]));
+    }
+  }
+
+  return undefined;
+}
+
 export function useChatHistory() {
   const data = useLoaderData() as ProjectLoaderData;
 
@@ -59,16 +86,21 @@ export function useChatHistory() {
           description.set(firstArtifact.title);
         }
 
-        const res = await fetch('/api/projects', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: chatId.get(), description: description.get(), messages, template: activeTemplate.get() }),
-        });
+        saveState.set('saving');
+        const res = await putWithRetry({ id: chatId.get(), description: description.get(), messages, template: activeTemplate.get() });
 
-        if (!res.ok) {
-          toast.error(res.status === 401 ? 'Sign in to save your project' : 'Failed to save project');
+        if (!res || !res.ok) {
+          saveState.set('failed');
+          toast.error(
+            res?.status === 401
+              ? 'Please sign in again to save your project. Your work is still on screen.'
+              : "We couldn't save just now. Your work is still on screen; keep going and it will save when we reconnect.",
+          );
+
           return;
         }
+
+        saveState.set('saved');
 
         const { id } = (await res.json()) as { id: string };
 

@@ -1,5 +1,6 @@
 import type { WebContainer } from '@webcontainer/api';
 import { atom } from 'nanostores';
+import { previewError } from './ui';
 
 export interface PreviewInfo {
   port: number;
@@ -21,6 +22,15 @@ export class PreviewsStore {
 
   async #init() {
     const webcontainer = await this.#webcontainer;
+
+    // uncaught errors inside the preview iframe (white screens, crashes): surface them with a fix button
+    webcontainer.on('preview-message', (message) => {
+      if (message.type === 'PREVIEW_UNCAUGHT_EXCEPTION' || message.type === 'PREVIEW_UNHANDLED_REJECTION') {
+        const detail = message as { message?: string; stack?: string };
+
+        previewError.set([detail.message, detail.stack?.split('\n').slice(0, 4).join('\n')].filter(Boolean).join('\n'));
+      }
+    });
 
     webcontainer.on('port', (port, type, url) => {
       let previewInfo = this.#availablePreviews.get(port);

@@ -1,7 +1,7 @@
 import { streamText as _streamText, convertToCoreMessages } from 'ai';
 import type { Provider } from '~/lib/.server/config';
 import { getModel } from '~/lib/.server/llm/model';
-import { MAX_TOKENS } from './constants';
+import { defaultMaxTokens } from '../config';
 import { FORMAT_REMINDER, getSystemPrompt } from './prompts';
 
 interface ToolResult<Name extends string, Args, Result> {
@@ -25,7 +25,7 @@ export function streamText(messages: Messages, provider: Provider, options?: Str
   return _streamText({
     model: getModel(provider),
     system: getSystemPrompt() + FORMAT_REMINDER,
-    maxTokens: MAX_TOKENS,
+    maxTokens: provider.maxTokens ?? defaultMaxTokens(),
     messages: convertToCoreMessages(messages as Parameters<typeof convertToCoreMessages>[0]),
     ...options,
   });

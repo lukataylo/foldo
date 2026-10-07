@@ -16,7 +16,7 @@ async function enhancerAction({ request }: ActionFunctionArgs) {
   const user = await getUser(request);
 
   if (!user) {
-    return new Response('Sign in to keep building.', { status: 401 });
+    return new Response('Please sign in again to keep building. Your work is saved.', { status: 401 });
   }
 
   const body = (await request.json().catch(() => ({}))) as { message?: unknown };
@@ -24,11 +24,11 @@ async function enhancerAction({ request }: ActionFunctionArgs) {
   const provider = resolveProvider();
 
   if (!message || !provider) {
-    return new Response('Nothing to enhance.', { status: 400 });
+    return new Response('Type your idea first, then press the sparkle to improve it.', { status: 400 });
   }
 
   if (spendQuota(user.id, provider.id) !== 'ok') {
-    return new Response('Daily message limit reached.', { status: 429 });
+    return new Response("You've used all your messages for tonight. Ask an organizer if you need more.", { status: 429 });
   }
 
   try {
@@ -71,6 +71,6 @@ async function enhancerAction({ request }: ActionFunctionArgs) {
     console.error('[enhancer] failed:', (error as Error)?.message);
     refundQuota(user.id, provider.id);
 
-    return new Response('Could not enhance the prompt.', { status: 502 });
+    return new Response("Couldn't improve that prompt just now. Press the sparkle to try again.", { status: 502 });
   }
 }

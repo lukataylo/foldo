@@ -6,11 +6,22 @@ import { EventBar, type EventInfo } from '~/components/header/EventBar';
 import { Header } from '~/components/header/Header';
 
 export function Studio() {
-  const { shared, email, event } = useLoaderData() as { shared?: boolean; email?: string; event?: EventInfo | null };
+  const { shared, email, event, paused } = useLoaderData() as {
+    shared?: boolean;
+    email?: string;
+    event?: EventInfo | null;
+    paused?: { paused: boolean; message: string };
+  };
 
   return (
     <div className="flex flex-col h-full w-full">
       <EventBar event={event} />
+      {paused?.paused && (
+        <div role="status" className="flex h-9 shrink-0 items-center justify-center gap-2 bg-[#b42318] px-4 text-sm font-medium text-white">
+          <span className="i-ph:pause-circle-bold" />
+          {paused.message || 'The organizers have paused new builds for a moment. Hang tight.'}
+        </div>
+      )}
       <Header />
       {shared && (
         <div

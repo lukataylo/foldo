@@ -27,6 +27,18 @@ export const globalLimit = () => num(getSetting('global_limit'), num(process.env
 export const inviteCode = () => getSetting('invite_code', process.env.INVITE_CODE ?? '');
 export const signupsOpen = () => getSetting('signups_open', '1') !== '0';
 
+// output length: one model reply can be up to maxTokens, continued up to maxSegments times
+// (16000 is safe across DeepSeek/GLM-class caps; raise per model in /admin, e.g. 32000 for gpt-4.1)
+export const defaultMaxTokens = () => num(getSetting('max_tokens'), 16000);
+export const maxSegments = () => Math.max(1, num(getSetting('max_segments'), 3));
+export const maxUserStreams = () => Math.max(1, num(getSetting('max_user_streams'), 2));
+export const costPerMessage = () => num(getSetting('cost_per_message'), 0.01);
+export const fallbackProviderId = () => getSetting('fallback_provider');
+
+export function pauseState() {
+  return { paused: getSetting('paused') === '1', message: getSetting('pause_message') };
+}
+
 export interface EventInfo {
   name: string;
   endsAt: number | null;
@@ -106,6 +118,7 @@ export interface Provider {
   baseURL: string;
   model: string;
   key?: string;
+  maxTokens?: number;
   keySource: 'admin' | 'env' | 'none';
   enabled: boolean;
 }
@@ -126,6 +139,7 @@ export function listProviders(): Provider[] {
       baseURL: process.env.LLM_BASE_URL || row?.base_url || c.baseURL,
       model: row?.model || (c.id === (process.env.LLM_PROVIDER || '') && process.env.LLM_MODEL) || c.model,
       key,
+      maxTokens: row?.max_tokens || undefined,
       keySource: stored ? 'admin' : envKey ? 'env' : 'none',
       enabled: row ? row.enabled === 1 : true,
     };
@@ -141,6 +155,13 @@ export function defaultProviderId(): string | undefined {
   return usable.find((p) => p.id === wanted)?.id ?? usable[0]?.id;
 }
 
+// the admin-chosen backup model, only if it is usable and not the one that just failed
+export function fallbackFor(primaryId: string): Provider | undefined {
+  const id = fallbackProviderId();
+
+  return id && id !== primaryId ? usableProviders().find((p) => p.id === id) : undefined;
+}
+
 export function resolveProvider(requested?: string): Provider | undefined {
   const usable = usableProviders();
 
@@ -149,5 +170,5 @@ export function resolveProvider(requested?: string): Provider | undefined {
 
 // safe to send to the browser: no keys, no base URLs
 export function publicModels() {
-  return { models: usableProviders().map((p) => ({ id: p.id, label: p.label })), defaultModel: defaultProviderId() };
+  return { paused: pauseState(), models: usableProviders().map((p) => ({ id: p.id, label: p.label })), defaultModel: defaultProviderId() };
 }

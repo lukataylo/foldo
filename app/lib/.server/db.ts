@@ -36,6 +36,7 @@ for (const ddl of [
   'ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE users ADD COLUMN created INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE projects ADD COLUMN listed INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE providers ADD COLUMN max_tokens INTEGER',
 ]) {
   try {
     db.exec(ddl);

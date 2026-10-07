@@ -5,6 +5,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { createHighlighter, type BundledLanguage, type BundledTheme, type HighlighterGeneric } from 'shiki';
 import type { ActionState } from '~/lib/runtime/action-runner';
 import { workbenchStore } from '~/lib/stores/workbench';
+import { requestFix } from '~/lib/stores/ui';
 import { classNames } from '~/utils/classNames';
 import { cubicEasingFn } from '~/utils/easings';
 
@@ -186,9 +187,15 @@ const ActionList = memo(({ actions }: ActionListProps) => {
                 ) : null}
               </div>
               {type === 'shell' && status === 'failed' && 'error' in action && action.error && (
-                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-md border border-bolt-elements-icon-error/40 bg-bolt-elements-artifacts-inlineCode-background p-2 text-xs text-bolt-elements-textSecondary">
-                  {action.error}
-                </pre>
+                <div className="mt-1 rounded-md border border-bolt-elements-icon-error/40 bg-bolt-elements-artifacts-inlineCode-background p-2">
+                  <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-xs text-bolt-elements-textSecondary">{action.error}</pre>
+                  <button
+                    className="btn-primary btn-md mt-2"
+                    onClick={() => requestFix(`The command "${content.trim()}" failed:\n${action.error}`)}
+                  >
+                    Fix this error
+                  </button>
+                </div>
               )}
               {type === 'shell' && (
                 <ShellCodeBlock

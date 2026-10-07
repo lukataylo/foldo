@@ -203,26 +203,53 @@ export function refundQuota(userId: string, provider: string) {
   db.prepare('UPDATE provider_usage SET n = MAX(0, n - 1) WHERE day = ? AND provider = ?').run(day, provider);
 }
 
-// ---------- concurrency: one generation per user, bounded globally ----------
+// ---------- concurrency: a few generations per login (teams share one), bounded globally ----------
 
-const active = new Map<string, number>();
-export const activeStreams = () => active.size;
+const active = new Map<string, number[]>();
+export const activeStreams = () => [...active.values()].reduce((n, v) => n + v.length, 0);
 const MAX_STREAMS = Number(process.env.MAX_CONCURRENT_STREAMS || 40);
 
-export function acquireStream(userId: string): (() => void) | 'user' | 'busy' {
-  const started = active.get(userId);
+export function acquireStream(userId: string, perUser: number): (() => void) | 'user' | 'busy' {
+  // streams older than 5 minutes are considered dead (client vanished without us noticing)
+  const live = (active.get(userId) ?? []).filter((t) => Date.now() - t < 300_000);
 
-  if (started && Date.now() - started < 300_000) {
+  if (live.length >= perUser) {
     return 'user';
   }
 
-  if (active.size >= MAX_STREAMS) {
+  if (activeStreams() >= MAX_STREAMS) {
     return 'busy';
   }
 
-  active.set(userId, Date.now());
+  const token = Date.now() + Math.random();
+  active.set(userId, [...live, token]);
 
-  return () => void active.delete(userId);
+  let done = false;
+
+  return () => {
+    if (done) {
+      return;
+    }
+
+    done = true;
+
+    const rest = (active.get(userId) ?? []).filter((t) => t !== token);
+
+    if (rest.length) {
+      active.set(userId, rest);
+    } else {
+      active.delete(userId);
+    }
+  };
+}
+
+// when a fallback model answered instead, attribute the (single) charged message to it
+export function moveProviderUsage(from: string, to: string) {
+  const day = today();
+  db.prepare('UPDATE provider_usage SET n = MAX(0, n - 1) WHERE day = ? AND provider = ?').run(day, from);
+  db.prepare(
+    'INSERT INTO provider_usage (day, provider, n) VALUES (?, ?, 1) ON CONFLICT (day, provider) DO UPDATE SET n = n + 1',
+  ).run(day, to);
 }
 
 // ---------- throttling ----------

@@ -55,6 +55,7 @@
     "date-fns": "^3.6.0",
     "diff": "^5.2.0",
     "express": "^5.2.1",
+    "fflate": "^0.8.3",
     "framer-motion": "^11.2.12",
     "isbot": "^4.1.0",
     "istextorbinary": "^9.5.0",
@@ -73,8 +74,8 @@
     "remix-utils": "^7.6.0",
     "shiki": "^1.9.1",
     "unist-util-visit": "^5.0.0",
-    "zod": "^3.23.8",
-    "vite-plugin-node-polyfills": "^0.22.0"
+    "vite-plugin-node-polyfills": "^0.22.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@remix-run/dev": "^2.10.0",

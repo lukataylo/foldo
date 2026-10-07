@@ -2,13 +2,15 @@ import { useStore } from '@nanostores/react';
 import { motion, type HTMLMotionProps, type Variants } from 'framer-motion';
 import { computed } from 'nanostores';
 import { memo, useCallback, useEffect } from 'react';
-import { toast } from 'react-toastify';
 import {
   type OnChangeCallback as OnEditorChange,
   type OnScrollCallback as OnEditorScroll,
 } from '~/components/editor/codemirror/CodeMirrorEditor';
 import { IconButton } from '~/components/ui/IconButton';
 import { PanelHeaderButton } from '~/components/ui/PanelHeaderButton';
+import { toast } from 'react-toastify';
+import { description } from '~/lib/persistence';
+import { downloadProjectZip } from '~/utils/zip';
 import { Slider, type SliderOptions } from '~/components/ui/Slider';
 import { workbenchStore, type WorkbenchViewType } from '~/lib/stores/workbench';
 import { classNames } from '~/utils/classNames';
@@ -121,6 +123,17 @@ export const Workbench = memo(({ chatStarted, isStreaming }: WorkspaceProps) => 
               <div className="flex items-center px-3 py-2 border-b border-bolt-elements-borderColor">
                 <Slider selected={selectedView} options={sliderOptions} setSelected={setSelectedView} />
                 <div className="ml-auto" />
+                <PanelHeaderButton
+                  className="mr-1 text-sm"
+                  onClick={() => {
+                    if (!downloadProjectZip(workbenchStore.files.get(), description.get() ?? 'foldo-project')) {
+                      toast.info('Nothing to download yet. Ask Foldo to build something first.');
+                    }
+                  }}
+                >
+                  <div className="i-ph:download-simple" />
+                  Download zip
+                </PanelHeaderButton>
                 {selectedView === 'code' && (
                   <PanelHeaderButton
                     className="mr-1 text-sm"

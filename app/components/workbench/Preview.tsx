@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { IconButton } from '~/components/ui/IconButton';
+import { previewError, requestFix } from '~/lib/stores/ui';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { PortDropdown } from './PortDropdown';
 
@@ -11,6 +12,7 @@ export const Preview = memo(() => {
   const [isPortDropdownOpen, setIsPortDropdownOpen] = useState(false);
   const hasSelectedPreview = useRef(false);
   const previews = useStore(workbenchStore.previews);
+  const error = useStore(previewError);
   const activePreview = previews[activePreviewIndex];
 
   const [url, setUrl] = useState('');
@@ -112,7 +114,32 @@ export const Preview = memo(() => {
           />
         )}
       </div>
-      <div className="flex-1 border-t border-bolt-elements-borderColor">
+      <div className="relative flex-1 border-t border-bolt-elements-borderColor">
+        {error && (
+          <div
+            role="alert"
+            data-testid="foldo-preview-error"
+            className="absolute inset-x-3 bottom-3 z-10 flex items-start gap-3 rounded-xl border border-[#b42318]/40 bg-bolt-elements-background-depth-2 p-3 shadow-xl"
+          >
+            <span className="i-ph:warning-circle-bold mt-0.5 text-lg text-bolt-elements-icon-error" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-bolt-elements-textPrimary">Your app hit an error</div>
+              <pre className="mt-1 max-h-16 overflow-auto whitespace-pre-wrap text-xs text-bolt-elements-textSecondary">{error}</pre>
+            </div>
+            <button
+              className="btn-primary btn-md"
+              onClick={() => {
+                requestFix(error);
+                previewError.set(undefined);
+              }}
+            >
+              Fix this error
+            </button>
+            <button aria-label="Dismiss" className="btn-ghost h-8 w-8 !px-0" onClick={() => previewError.set(undefined)}>
+              <span className="i-ph:x" />
+            </button>
+          </div>
+        )}
         {activePreview ? (
           <iframe ref={iframeRef} className="border-none w-full h-full bg-white" src={iframeUrl} />
         ) : (

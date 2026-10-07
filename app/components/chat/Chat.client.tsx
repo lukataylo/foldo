@@ -7,7 +7,7 @@ import { cssTransition, toast, ToastContainer } from 'react-toastify';
 import { useMessageParser, usePromptEnhancer, useShortcuts, useSnapScroll } from '~/lib/hooks';
 import { useChatHistory } from '~/lib/persistence';
 import { selectedModel } from '~/lib/stores/model';
-import { quota } from '~/lib/stores/ui';
+import { fixRequest, quota } from '~/lib/stores/ui';
 import { PROMPT_KEY } from '~/components/landing/starters';
 import { chatStore } from '~/lib/stores/chat';
 import { workbenchStore } from '~/lib/stores/workbench';
@@ -93,9 +93,9 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
       logger.error('Request failed\n\n', error);
 
       // our API answers with short plain-text messages written for the user; anything else is a transport error
-      const known = error.message.length < 160 && !/^[<{]/.test(error.message);
+      const known = error.message.length < 240 && !/^[<{]/.test(error.message);
 
-      toast.error(known ? error.message : 'There was an error processing your request. Please try again.');
+      toast.error(known ? error.message : 'Something went wrong on our side. Press send to try again.');
     },
     onFinish: () => {
       logger.debug('Finished streaming');
@@ -174,6 +174,23 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
 
     setChatStarted(true);
   };
+
+  // "Fix this error" buttons elsewhere in the UI land here
+  const fix = useStore(fixRequest);
+
+  useEffect(() => {
+    if (!fix) {
+      return;
+    }
+
+    if (isLoading) {
+      toast.info('Wait for the current build to finish, then press Fix this error again.');
+
+      return;
+    }
+
+    sendMessage({} as React.UIEvent, `My app hit this error. Please fix it and tell me in one sentence what went wrong.\n\n${fix.text}`);
+  }, [fix?.n]);
 
   const sendMessage = async (_event: React.UIEvent, messageInput?: string) => {
     const _input = messageInput || input;

@@ -1,0 +1,15 @@
+{
+  "id": "payments-transfer",
+  "title": "Cross-border transfers",
+  "track": "Payments",
+  "pack": "core",
+  "icon": "globe",
+  "summary": "Send money abroad with live-looking FX rates, a fee breakdown and a bank comparison.",
+  "ideas": [
+    "Add a rate alert: tell the user when GBP to NGN beats a target they set",
+    "Add recurring monthly transfers for people who support family abroad",
+    "Add a delivery tracker with push-style notifications for each stage",
+    "Show the total cost in plain language, e.g. 'You send 200, they receive 1,000'"
+  ],
+  "guide": "Pages: src/pages/Send.jsx (amount, currencies, fee breakdown, comparison chart, confirm dialog), src/pages/Activity.jsx (transfer history and tracking timeline), src/pages/Recipients.jsx. Rates and fees come from src/data.js (rates drift every few seconds to feel live). Fee transparency is the product: always show the exact fee, the rate used and what the recipient gets. All numbers are simulated; no money moves."
+}

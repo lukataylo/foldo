@@ -13,7 +13,7 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => [
 
 // Public share link: anyone can open and run the project; chatting requires an account and forks it.
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const row = db.prepare('SELECT description, messages FROM projects WHERE share_id = ?').get(params.shareId!) as any;
+  const row = db.prepare('SELECT description, messages, template FROM projects WHERE share_id = ?').get(params.shareId!) as any;
 
   if (!row) {
     throw new Response('Shared project not found', { status: 404 });
@@ -25,6 +25,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     shared: true,
     ...shell(user),
     description: row.description,
+    template: row.template ?? undefined,
     messages: JSON.parse(row.messages),
   });
 }

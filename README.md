@@ -41,6 +41,37 @@ generations are refunded, login/sign-up/invite-code throttling, Origin checks on
 Tip: to use OpenRouter for both main and fallback, put the main model in the OpenRouter card and a second OpenRouter model
 (different id) in the Custom card with the same base URL and key, then choose Custom as the fallback.
 
+## Templates (finance starters)
+
+Teams start from a ready, running app instead of waiting for an AI build and an `npm install`:
+
+| Track | Template |
+|---|---|
+| Payments | Checkout & payment links (Stripe-style), Cross-border transfers |
+| Access to Finance | Fair micro-loans, Budget & savings coach |
+| Fraud and Security | Scam message checker, Fraud monitoring console (IBM Carbon) |
+| Any | Blank finance kit, Blank IBM Carbon kit |
+
+All use shadcn/ui-style components (Vercel ecosystem), Radix, Tailwind 3, Recharts, Lucide, Sonner, Zod, Framer Motion and
+the Stripe JS packages (core pack), or IBM Carbon (carbon pack). Sources live in `templates/` (a shared `packs/<pack>` base
+plus a small overlay per template); `npm run templates` bundles them into `public/templates/` and `npm run test:templates`
+installs each pack and `vite build`s every template.
+
+**How the network stays free on the night.** A template never runs `npm install` in the team's browser. The pack's
+`node_modules` (with Vite's pre-bundle cache) is built once into a snapshot (~14 MB for core, ~33 MB for carbon, gzip),
+served by Foldo from `/snapshots/<pack>-<hash>.snap` with an immutable cache header and mounted into the WebContainer
+(2 to 3 s to a live preview locally once downloaded). The browser downloads each file once; the home page also prefetches the core one at a
+random moment in the first two minutes so a room never hits the network together. In template mode the AI edits files in
+the project instead of regenerating it, which also makes replies shorter and cheaper (a template chat costs nothing until
+the first change request).
+
+**Building the snapshots (once, before the event):** sign in as an admin, open **/admin/templates**, press **Build
+snapshot** on each pack from a fast connection (about 2-3 minutes each; the page installs the packages inside a
+WebContainer, warms Vite, packs and uploads). They are stored on the volume at `/data/snapshots`. To ship them in the Docker
+image instead (no admin step on a fresh deploy), copy the two `*.snap.gz` files into `templates/snapshots/` and commit; a
+snapshot on the volume wins over the bundled one. Changing `packs/*/package.json` or `vite.config.js` changes the hash, so
+rebuild after dependency changes. Without a snapshot everything still works: the template falls back to a normal install.
+
 ## Models for the event (researched on OpenRouter, 2026-10-07)
 
 | Role | Model id | Notes |

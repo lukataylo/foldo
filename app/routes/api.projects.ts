@@ -2,6 +2,7 @@ import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-r
 import { randomBytes } from 'node:crypto';
 import { requireApiUser } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
+import { getTemplateMeta } from '~/lib/.server/templates';
 
 const MAX_BYTES = 5_000_000;
 const newId = () => randomBytes(6).toString('hex');
@@ -27,15 +28,17 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const messages = JSON.stringify(body.messages);
+    const template = getTemplateMeta(body.template)?.id ?? null; // only known template ids are stored
     const first = body.messages.find((m: any) => m?.role === 'user' && typeof m.content === 'string');
     const description =
       (typeof body.description === 'string' && body.description.slice(0, 200)) ||
       (first ? first.content.replace(/\s+/g, ' ').trim().slice(0, 60) : null);
 
     if (owned) {
-      db.prepare('UPDATE projects SET description = ?, messages = ?, updated = ? WHERE id = ?').run(
+      db.prepare('UPDATE projects SET description = ?, messages = ?, template = COALESCE(?, template), updated = ? WHERE id = ?').run(
         description,
         messages,
+        template,
         Date.now(),
         body.id,
       );
@@ -44,11 +47,12 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const id = newId();
-    db.prepare('INSERT INTO projects (id, user_id, description, messages, updated) VALUES (?, ?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO projects (id, user_id, description, messages, template, updated) VALUES (?, ?, ?, ?, ?, ?)').run(
       id,
       user.id,
       description,
       messages,
+      template,
       Date.now(),
     );
 

@@ -1,0 +1,15 @@
+{
+  "id": "fraud-ops-console",
+  "title": "Fraud monitoring console",
+  "track": "Fraud and Security",
+  "pack": "carbon",
+  "icon": "radar",
+  "summary": "An IBM Carbon operations dashboard: live transactions, risk scores and an alert queue.",
+  "ideas": [
+    "Add a velocity rule: flag three payments from different cities within an hour",
+    "Add an analyst notes box and a case history to the alert detail panel",
+    "Show a heat-grid of risk by hour of day using plain CSS blocks",
+    "Add a 'false positive' button that lowers a rule's weight, and show how precision changes"
+  ],
+  "guide": "UI uses IBM Carbon ('@carbon/react', dark g100 theme, precompiled CSS; no Sass). Files: src/App.jsx (layout, tabs, live feed timer), src/risk.js (explainable rules with weights, scoring, toggles), src/data.js (transaction generator, fake data only), src/components/Kpis.jsx, TransactionTable.jsx (Carbon DataTable), CaseModal.jsx (alert detail with reasons and Approve/Block), RulesPanel.jsx (switch rules on and off and watch scores change). Import Carbon icons one at a time (e.g. import Warning from '@carbon/icons-react/es/warning/16.js') to keep dev start fast. This pack has no Tailwind: style with Carbon components and inline styles or a small src/app.css."
+}

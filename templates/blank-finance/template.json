@@ -1,0 +1,14 @@
+{
+  "id": "blank-finance",
+  "title": "Blank finance kit",
+  "track": "Any track",
+  "pack": "core",
+  "icon": "paper",
+  "summary": "Start from scratch with the full finance UI kit already installed.",
+  "ideas": [
+    "Build a landing page and a simple dashboard for my fintech idea",
+    "Add a sign-up flow with a clear privacy and consent screen",
+    "Create a pricing page that explains every fee in plain language"
+  ],
+  "guide": "Empty app: only src/App.jsx is a placeholder. The UI kit is in src/components/ui (shadcn/ui style: button, card, input, tabs, dialog, select, table, badge, progress, switch, accordion...), finance blocks in src/components/finance (AppShell, StatCard, DemoBanner, TrustNote, EmptyState, charts), helpers in src/lib (money formatting, loan maths, Luhn, seeded fake data)."
+}

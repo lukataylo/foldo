@@ -1,0 +1,7 @@
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; background: var(--cds-border-subtle); margin-bottom: 1.5rem; }
+.kpis .cds--tile { min-height: 7rem; }
+.kpi-value { font-size: 2rem; font-weight: 300; margin-top: 0.5rem; }
+.kpi-label { color: var(--cds-text-secondary); font-size: 0.875rem; }
+.row-clickable { cursor: pointer; }
+.reason { padding: 0.75rem 0; border-bottom: 1px solid var(--cds-border-subtle); }
+.reason:last-child { border-bottom: 0; }

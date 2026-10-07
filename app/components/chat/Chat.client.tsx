@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react';
 import type { Message } from 'ai';
 import { useChat } from 'ai/react';
+import { useLoaderData } from '@remix-run/react';
 import { useAnimate } from 'framer-motion';
 import { memo, useEffect, useRef, useState } from 'react';
 import { cssTransition, toast, ToastContainer } from 'react-toastify';
@@ -10,6 +11,8 @@ import { selectedModel } from '~/lib/stores/model';
 import { fixRequest, quota } from '~/lib/stores/ui';
 import { PROMPT_KEY } from '~/components/landing/starters';
 import { chatStore } from '~/lib/stores/chat';
+import { activeTemplate, applyTemplate, prefetchSnapshots, templateStatus, type TemplateCard } from '~/lib/templates/client';
+import { description } from '~/lib/persistence';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { fileModificationsToHTML } from '~/utils/diff';
 import { cubicEasingFn } from '~/utils/easings';
@@ -79,9 +82,17 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
   const [animationScope, animate] = useAnimate();
 
   const model = useStore(selectedModel);
-  const { messages, isLoading, input, handleInputChange, setInput, stop, append } = useChat({
+  const template = useStore(activeTemplate);
+  const status = useStore(templateStatus);
+  const loaderData = useLoaderData() as { template?: string; templates?: TemplateCard[] };
+  const templates = loaderData.templates ?? [];
+
+  // reopening a template project: put the template back before any saved edits are replayed on top of it
+  const [tplReady, setTplReady] = useState(!loaderData.template);
+
+  const { messages, isLoading, input, handleInputChange, setInput, setMessages, stop, append } = useChat({
     api: '/api/chat',
-    body: { provider: model },
+    body: { provider: model, template },
     onResponse: (response) => {
       const left = response.headers.get('X-Foldo-Remaining');
 
@@ -111,6 +122,27 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
   useEffect(() => {
     chatStore.setKey('started', initialMessages.length > 0);
 
+    if (loaderData.template) {
+      applyTemplate(loaderData.template, templates.find((t) => t.id === loaderData.template)?.title)
+        .catch(() => toast.error('Could not set up the template. Reload to try again.'))
+        .finally(() => setTplReady(true));
+    }
+
+    // warm the shared packages download a bit later, staggered so a whole room does not hit the network at once
+    prefetchSnapshots(['core']);
+
+    // a template chosen on the landing page survives sign-up too
+    try {
+      const pendingTemplate = sessionStorage.getItem('foldo_template');
+
+      if (pendingTemplate && initialMessages.length === 0) {
+        sessionStorage.removeItem('foldo_template');
+        startTemplate(pendingTemplate);
+      }
+    } catch {
+      // storage unavailable
+    }
+
     // a prompt typed on the landing page survives sign-up via sessionStorage
     try {
       const pending = sessionStorage.getItem(PROMPT_KEY);
@@ -126,12 +158,15 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
   }, []);
 
   useEffect(() => {
-    parseMessages(messages, isLoading);
+    // saved edits replay only after the template underneath them is in place
+    if (tplReady) {
+      parseMessages(messages, isLoading);
+    }
 
     if (messages.length > initialMessages.length) {
       storeMessageHistory(messages).catch((error) => toast.error(error.message));
     }
-  }, [messages, isLoading, parseMessages]);
+  }, [messages, isLoading, parseMessages, tplReady]);
 
   const scrollTextArea = () => {
     const textarea = textareaRef.current;
@@ -192,8 +227,40 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
     sendMessage({} as React.UIEvent, `My app hit this error. Please fix it and tell me in one sentence what went wrong.\n\n${fix.text}`);
   }, [fix?.n]);
 
+  // start a project from a template: instant working app, no AI call (and no tokens) until the team asks for changes
+  const startTemplate = async (id: string) => {
+    const t = templates.find((x) => x.id === id);
+
+    if (!t || isLoading) {
+      return;
+    }
+
+    activeTemplate.set(id);
+    description.set(t.title);
+    chatStore.setKey('aborted', false);
+    // switch to the chat view right away (the fade animation depends on animation frames, which a background tab never gets)
+    chatStore.setKey('started', true);
+    setChatStarted(true);
+    setMessages([{ id: 'tpl-intro', role: 'assistant', content: `__TEMPLATE__:${id}` }]);
+    setTplReady(false);
+
+    try {
+      await applyTemplate(id, t.title);
+    } catch {
+      toast.error('Could not set up the template. Please try again.');
+    } finally {
+      setTplReady(true);
+    }
+  };
+
   const sendMessage = async (_event: React.UIEvent, messageInput?: string) => {
     const _input = messageInput || input;
+
+    if (!tplReady) {
+      toast.info('Still setting up your template. One moment...');
+
+      return;
+    }
 
     if (_input.length === 0 || isLoading) {
       return;
@@ -259,6 +326,7 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
       scrollRef={scrollRef}
       handleInputChange={handleInputChange}
       handleStop={abort}
+      onStartTemplate={startTemplate}
       messages={messages.map((message, i) => {
         if (message.role === 'user') {
           return message;

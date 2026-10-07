@@ -2,6 +2,7 @@ import { createCookie, redirect } from '@remix-run/node';
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { adminEmails, getEvent, globalLimit, perUserLimit, publicModels } from './config';
+import { templateIndex } from './templates';
 import { db, today } from './db';
 
 const DAY = 86_400_000;
@@ -289,6 +290,7 @@ export function shell(user?: User) {
     admin: user?.admin,
     remaining: user ? remainingQuota(user.id) : undefined,
     event: getEvent(),
+    templates: templateIndex().templates.map(({ guide, ...rest }) => rest),
     ...publicModels(),
   };
 }

@@ -1,0 +1,15 @@
+{
+  "id": "fraud-scam-check",
+  "title": "Scam message checker",
+  "track": "Fraud and Security",
+  "pack": "core",
+  "icon": "shield",
+  "summary": "Paste a text, email or link and get an explained risk score, entirely in the browser.",
+  "ideas": [
+    "Add a screenshot upload step that extracts text and runs the same checks",
+    "Add a 'family mode': generate a short warning to send to a vulnerable relative",
+    "Check bank-name look-alikes with a bigger list of brands and typo patterns",
+    "Build a weekly 'scam of the week' feed with a quiz for older users"
+  ],
+  "guide": "Pages: src/pages/Checker.jsx (input, risk gauge, highlighted evidence, recommended actions), src/pages/Learn.jsx (common scams with warning signs), src/pages/Reports.jsx (locally saved reports). The detection logic is pure and explainable in src/analyse.js: a list of rules, each with a weight, a plain-English reason and the matching text. Rules run in the browser only (private by design). Add rules there; keep every rule's explanation understandable to a non-expert."
+}

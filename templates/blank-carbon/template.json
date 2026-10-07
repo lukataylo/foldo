@@ -1,0 +1,14 @@
+{
+  "id": "blank-carbon",
+  "title": "Blank IBM Carbon kit",
+  "track": "Any track",
+  "pack": "carbon",
+  "icon": "paper",
+  "summary": "An enterprise look: IBM Carbon Design System, dark theme, ready to build on.",
+  "ideas": [
+    "Build an internal compliance dashboard with a data table and filters",
+    "Create a customer onboarding wizard with Carbon form components",
+    "Add notifications and a side navigation to this app"
+  ],
+  "guide": "Empty app using IBM Carbon ('@carbon/react', dark g100 theme, precompiled CSS, no Sass). Only src/App.jsx exists. No Tailwind in this pack: use Carbon components, inline styles or a small src/app.css. Import Carbon icons one at a time (e.g. import Add from '@carbon/icons-react/es/add/16.js')."
+}

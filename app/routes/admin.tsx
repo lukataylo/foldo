@@ -299,7 +299,12 @@ export default function Admin() {
   return (
     <PageShell data={d} active="admin">
       <main className="space-y-6" data-testid="foldo-admin">
-        <h1 className="text-3xl font-bold">Admin</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Admin</h1>
+          <a href="/admin/templates" className={btn}>
+            Template packs
+          </a>
+        </div>
         {(result?.ok || result?.error) && (
           <div
             role="status"

@@ -1,0 +1,15 @@
+{
+  "id": "access-budget",
+  "title": "Budget & savings coach",
+  "track": "Access to Finance",
+  "pack": "core",
+  "icon": "piggy",
+  "summary": "A friendly budgeting app with savings jars, plain-language coaching and a simple mode.",
+  "ideas": [
+    "Add a 'safe to spend today' number that updates as the user logs spending",
+    "Let users set a savings goal with a date and show if they are on track",
+    "Add WhatsApp-style quick actions: 'Log £5 coffee' in one tap",
+    "Translate the whole app into Spanish, Polish and Bengali with a language picker"
+  ],
+  "guide": "Pages: src/pages/Overview.jsx (balance, spending donut, weekly trend), src/pages/Jars.jsx (savings goals with progress and a growth projection), src/pages/Coach.jsx (rule-based tips from src/coach.js). src/i18n.js holds the EN/ES/PL dictionary used via the t() helper passed down from App.jsx; the 'Simple mode' switch in App.jsx makes text larger for accessibility. All data is fake and lives in src/data.js."
+}

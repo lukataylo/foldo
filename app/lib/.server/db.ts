@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 const path = process.env.DB_PATH || './data/foldo.db';
 mkdirSync(dirname(path), { recursive: true });
 
+export const dataDir = dirname(path);
 export const db = new DatabaseSync(path);
 
 db.exec(`
@@ -37,6 +38,7 @@ for (const ddl of [
   'ALTER TABLE users ADD COLUMN created INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE projects ADD COLUMN listed INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE providers ADD COLUMN max_tokens INTEGER',
+  'ALTER TABLE projects ADD COLUMN template TEXT',
 ]) {
   try {
     db.exec(ddl);

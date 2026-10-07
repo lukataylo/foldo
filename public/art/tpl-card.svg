@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="card">
+  <path d="M14 6h50l22 22v58a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4z" fill="#FFC21A"/>
+  <path d="M64 6v18a4 4 0 0 0 4 4h18z" fill="#E09B00"/>
+  <path d="M64 6l22 22H68a4 4 0 0 1-4-4z" fill="#FFD866" opacity=".5"/>
+  <path d="M10 82h76v4a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4z" fill="#000" opacity=".08"/>
+  <rect x="22" y="38" width="52" height="34" rx="5" fill="#121212"/><rect x="22" y="46" width="52" height="7" fill="#FFC21A"/><rect x="28" y="60" width="14" height="5" rx="2" fill="#fff"/><rect x="48" y="60" width="8" height="5" rx="2" fill="#FFC21A"/>
+</svg>

@@ -26,7 +26,7 @@ app.use((req, res, next) => {
       return res.status(403).type('text').send('Cross-origin request blocked');
     }
 
-    if (Number(req.get('content-length') || 0) > MAX_BODY) {
+    if (!req.path.startsWith('/api/admin-snapshot') && Number(req.get('content-length') || 0) > MAX_BODY) {
       return res.status(413).type('text').send('Request too large');
     }
   }

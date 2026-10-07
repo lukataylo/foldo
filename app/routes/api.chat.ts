@@ -17,7 +17,8 @@ import {
   resolveProvider,
   type Provider,
 } from '~/lib/.server/config';
-import { CONTINUE_PROMPT } from '~/lib/.server/llm/prompts';
+import { CONTINUE_PROMPT, getSystemPrompt } from '~/lib/.server/llm/prompts';
+import { TEMPLATE_REMINDER, templateGuide } from '~/lib/.server/templates';
 import { streamText, type Messages, type StreamingOptions } from '~/lib/.server/llm/stream-text';
 import SwitchableStream from '~/lib/.server/llm/switchable-stream';
 import { recordProviderError, recordRequest } from '~/lib/.server/metrics';
@@ -51,7 +52,7 @@ async function chatAction({ request }: ActionFunctionArgs) {
     return text(pause.message || 'The organizers have paused new builds for a moment. Hang tight and try again soon.', 503);
   }
 
-  let body: { messages?: Messages; provider?: string };
+  let body: { messages?: Messages; provider?: string; template?: string };
 
   try {
     body = (await request.json()) as typeof body;
@@ -59,7 +60,10 @@ async function chatAction({ request }: ActionFunctionArgs) {
     return text('Something went wrong sending that. Please press send again.', 400);
   }
 
-  const messages = body.messages;
+  // UI-only messages (the template intro with idea chips) never reach the model
+  const messages = Array.isArray(body.messages) ? body.messages.filter((m) => !String((m as { id?: string })?.id ?? '').startsWith('tpl-')) : body.messages;
+  const guide = body.template ? templateGuide(body.template) : undefined;
+  const system = guide ? getSystemPrompt() + guide + TEMPLATE_REMINDER : undefined;
   const tooLong = 'This chat has got very long. Click New project and paste your last prompt to keep going.';
 
   if (
@@ -155,6 +159,7 @@ async function chatAction({ request }: ActionFunctionArgs) {
 
   const options = (p: Provider): StreamingOptions => ({
     toolChoice: 'none',
+    ...(system && { system }),
     onFinish: async ({ text: content, finishReason }) => {
       if (finishReason !== 'length') {
         return stream.close();

@@ -8,7 +8,7 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: `${data
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const user = await requireUser(request);
   const row = db
-    .prepare('SELECT id, description, messages, share_id AS shareId, listed FROM projects WHERE id = ? AND user_id = ?')
+    .prepare('SELECT id, description, messages, share_id AS shareId, listed, template FROM projects WHERE id = ? AND user_id = ?')
     .get(params.id!, user.id) as any;
 
   if (!row) {
@@ -21,6 +21,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     description: row.description,
     shareId: row.shareId,
     listed: Boolean(row.listed),
+    template: row.template ?? undefined,
     messages: JSON.parse(row.messages),
   });
 }

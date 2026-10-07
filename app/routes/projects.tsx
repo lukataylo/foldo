@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { PageShell } from '~/components/PageShell';
 import type { EventInfo } from '~/components/header/EventBar';
-import { iconFor } from '~/components/landing/starters';
+import { templateIcon } from '~/lib/templates/client';
 import { Dialog, DialogButton, DialogDescription, DialogRoot, DialogTitle } from '~/components/ui/Dialog';
 import { requireUser, shell } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
@@ -16,7 +16,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const user = await requireUser(request);
   const projects = db
     .prepare(
-      'SELECT id, description, share_id IS NOT NULL AS shared, updated FROM projects WHERE user_id = ? ORDER BY updated DESC',
+      'SELECT id, description, share_id IS NOT NULL AS shared, template, updated FROM projects WHERE user_id = ? ORDER BY updated DESC',
     )
     .all(user.id);
 
@@ -24,13 +24,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export default function Projects() {
-  const { email, name, admin, remaining, projects, event } = useLoaderData() as any as {
+  const { email, name, admin, remaining, projects, event, templates } = useLoaderData() as any as {
     email: string;
     name: string;
     admin: boolean;
     remaining: number;
     event: EventInfo | null;
-    projects: { id: string; description: string | null; shared: number; updated: number }[];
+    projects: { id: string; description: string | null; shared: number; template: string | null; updated: number }[];
+    templates: { id: string; icon: string }[];
   };
   const shellData = { email, name, admin, remaining, event };
   const revalidator = useRevalidator();
@@ -82,7 +83,7 @@ export default function Projects() {
                 >
                   <a href={`/chat/${p.id}`} className="block">
                     <div className="paper-tile flex h-36 items-center justify-center">
-                      <img src={`/art/icon-${iconFor(p.id, p.description)}.webp`} alt="" width={96} height={96} loading="lazy" />
+                      <img src={templateIcon(templates.find((t) => t.id === p.template)?.icon)} alt="" width={80} height={80} loading="lazy" />
                     </div>
                     <div className="p-4">
                       <div className="truncate font-semibold">{p.description || 'Untitled project'}</div>

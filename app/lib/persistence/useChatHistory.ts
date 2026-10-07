@@ -2,6 +2,7 @@ import { useLoaderData } from '@remix-run/react';
 import { atom } from 'nanostores';
 import type { Message } from 'ai';
 import { toast } from 'react-toastify';
+import { activeTemplate } from '~/lib/templates/client';
 import { workbenchStore } from '~/lib/stores/workbench';
 
 export interface ChatHistoryItem {
@@ -18,6 +19,7 @@ export interface ProjectLoaderData {
   id?: string;
   shareId?: string | null;
   listed?: boolean;
+  template?: string;
   description?: string;
   messages?: Message[];
 }
@@ -38,6 +40,7 @@ export function useChatHistory() {
     description.set(data.description);
     shareId.set(data.shareId);
     listed.set(Boolean(data.listed));
+    activeTemplate.set(data.template);
   }
 
   return {
@@ -59,7 +62,7 @@ export function useChatHistory() {
         const res = await fetch('/api/projects', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: chatId.get(), description: description.get(), messages }),
+          body: JSON.stringify({ id: chatId.get(), description: description.get(), messages, template: activeTemplate.get() }),
         });
 
         if (!res.ok) {

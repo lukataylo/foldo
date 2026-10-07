@@ -19,7 +19,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const user = await getUser(request);
 
   if (!user) {
-    return json({ event: shell().event });
+    return json({ event: shell().event, templates: shell().templates });
   }
 
   const recent = db

@@ -1,0 +1,15 @@
+{
+  "id": "access-loan",
+  "title": "Fair micro-loans",
+  "track": "Access to Finance",
+  "pack": "core",
+  "icon": "coins",
+  "summary": "A transparent loan application with an affordability check and a plain-language decision.",
+  "ideas": [
+    "Let people without a credit history qualify using rent and phone-bill payments instead",
+    "Add a what-if slider: show how repayment changes with a longer or shorter term",
+    "Add a 'talk to a human' step with a booking dialog for declined applicants",
+    "Translate the decision explanation into simple Spanish and Polish"
+  ],
+  "guide": "Pages: src/pages/Apply.jsx (3-step form: about you, money in and out, amount), src/pages/Decision.jsx (affordability result with a plain-language 'why', total cost, repayment chart), src/pages/Schedule.jsx (month-by-month table), src/pages/Learn.jsx (jargon buster). The decision rule lives in src/decision.js: a loan is affordable if the monthly payment is at most 35% of disposable income. Loan maths comes from src/lib/finance.js. Keep decisions explainable and never use gender, age, postcode or ethnicity as inputs."
+}

@@ -2,6 +2,7 @@ import type { Message } from 'ai';
 import React from 'react';
 import { classNames } from '~/utils/classNames';
 import { AssistantMessage } from './AssistantMessage';
+import { TemplateIntro } from './TemplateIntro';
 import { UserMessage } from './UserMessage';
 
 interface MessagesProps {
@@ -9,6 +10,7 @@ interface MessagesProps {
   className?: string;
   isStreaming?: boolean;
   messages?: Message[];
+  onSend?: (text: string) => void;
 }
 
 export const Messages = React.forwardRef<HTMLDivElement, MessagesProps>((props: MessagesProps, ref) => {
@@ -41,7 +43,13 @@ export const Messages = React.forwardRef<HTMLDivElement, MessagesProps>((props: 
                   <img src="/foldo-mark.svg" alt="" width={28} height={28} className="h-7 w-7 shrink-0 self-start rounded-lg" />
                 )}
                 <div className="grid grid-col-1 w-full">
-                  {isUserMessage ? <UserMessage content={content} /> : <AssistantMessage content={content} />}
+                  {isUserMessage ? (
+                    <UserMessage content={content} />
+                  ) : message.id === 'tpl-intro' ? (
+                    <TemplateIntro id={content.replace('__TEMPLATE__:', '')} onSend={props.onSend} />
+                  ) : (
+                    <AssistantMessage content={content} />
+                  )}
                 </div>
               </div>
             );

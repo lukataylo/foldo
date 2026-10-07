@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="piggy">
+  <path d="M14 6h50l22 22v58a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4z" fill="#FFC21A"/>
+  <path d="M64 6v18a4 4 0 0 0 4 4h18z" fill="#E09B00"/>
+  <path d="M64 6l22 22H68a4 4 0 0 1-4-4z" fill="#FFD866" opacity=".5"/>
+  <path d="M10 82h76v4a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4z" fill="#000" opacity=".08"/>
+  <ellipse cx="46" cy="56" rx="24" ry="18" fill="#121212"/><path d="M34 42l-4-9 10 4z" fill="#121212"/><circle cx="66" cy="54" r="7" fill="#121212"/><circle cx="68" cy="53" r="1.6" fill="#FFC21A"/><circle cx="64" cy="53" r="1.6" fill="#FFC21A"/><circle cx="56" cy="50" r="2.4" fill="#fff"/><rect x="34" y="70" width="6" height="9" rx="2" fill="#121212"/><rect x="52" y="70" width="6" height="9" rx="2" fill="#121212"/><rect x="40" y="39" width="14" height="3.5" rx="1.7" fill="#FFC21A"/><circle cx="46" cy="28" r="7" fill="#fff" stroke="#121212" stroke-width="2.5"/>
+</svg>

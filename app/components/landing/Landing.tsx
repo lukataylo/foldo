@@ -2,7 +2,8 @@ import { useLoaderData, useNavigate } from '@remix-run/react';
 import { useState } from 'react';
 import { Logo } from '~/components/brand/Logo';
 import { EventBar, type EventInfo } from '~/components/header/EventBar';
-import { PROMPT_KEY, STARTERS } from './starters';
+import { templateIcon, type TemplateCard } from '~/lib/templates/client';
+import { PROMPT_KEY, TEMPLATE_KEY } from './starters';
 
 const STEPS = [
   { title: '1. Describe it', body: 'Tell Foldo what you want in plain English. A todo app, a landing page, a game.' },
@@ -12,7 +13,7 @@ const STEPS = [
 
 export function Landing() {
   const navigate = useNavigate();
-  const { event } = useLoaderData() as { event?: EventInfo | null };
+  const { event, templates = [] } = useLoaderData() as { event?: EventInfo | null; templates?: TemplateCard[] };
   const [prompt, setPrompt] = useState('');
 
   const start = (text: string) => {
@@ -20,6 +21,16 @@ export function Landing() {
       sessionStorage.setItem(PROMPT_KEY, text);
     } catch {
       // private mode: they just retype the prompt after signing up
+    }
+
+    navigate('/login?mode=register');
+  };
+
+  const startTemplate = (id: string) => {
+    try {
+      sessionStorage.setItem(TEMPLATE_KEY, id);
+    } catch {
+      // private mode: they just pick it again after signing up
     }
 
     navigate('/login?mode=register');
@@ -60,13 +71,13 @@ export function Landing() {
             className="mt-7 flex max-w-lg gap-2 rounded-2xl border border-[#E6E3DE] bg-white p-2 shadow-[0_30px_60px_-40px_rgba(17,17,17,0.35)]"
             onSubmit={(e) => {
               e.preventDefault();
-              start(prompt.trim() || STARTERS[0].prompt);
+              start(prompt.trim() || 'A simple monthly budget tracker for students');
             }}
           >
             <input
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="A habit tracker with streaks…"
+              placeholder="A scam checker for text messages…"
               aria-label="What do you want to build?"
               className="min-w-0 flex-1 bg-transparent px-3 text-base outline-none placeholder:text-[#aaa]"
             />
@@ -86,17 +97,24 @@ export function Landing() {
       </section>
 
       <section className="mx-auto max-w-[1180px] px-6 pb-16">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-[#777]">Try:</span>
-          {STARTERS.map((s) => (
-            <button
-              key={s.icon}
-              onClick={() => start(s.prompt)}
-              className="flex items-center gap-1.5 rounded-full border border-[#E6E3DE] bg-white py-1 pl-1.5 pr-3 font-medium hover:border-[#FDB306]"
-            >
-              <img src={`/art/icon-${s.icon}.webp`} alt="" width={22} height={22} />
-              {s.title}
-            </button>
+        <div className="space-y-4" data-testid="foldo-landing-templates">
+          <h2 className="font-display text-2xl">Start from a finance template</h2>
+          {['Payments', 'Access to Finance', 'Fraud and Security'].map((track) => (
+            <div key={track} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="w-40 shrink-0 font-semibold text-[#555]">{track}</span>
+              {templates
+                .filter((t) => t.track === track)
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => startTemplate(t.id)}
+                    className="flex items-center gap-1.5 rounded-full border border-[#E6E3DE] bg-white py-1 pl-1.5 pr-3 font-medium hover:border-[#FDB306]"
+                  >
+                    <img src={templateIcon(t.icon)} alt="" width={22} height={22} />
+                    {t.title}
+                  </button>
+                ))}
+            </div>
           ))}
         </div>
         <ol className="mt-12 grid gap-6 border-t border-[#E6E3DE] pt-8 text-[#555] md:grid-cols-3">

@@ -1,0 +1,15 @@
+{
+  "id": "payments-checkout",
+  "title": "Checkout & payment links",
+  "track": "Payments",
+  "pack": "core",
+  "icon": "card",
+  "summary": "A Stripe-style checkout, payment-link builder and transactions dashboard.",
+  "ideas": [
+    "Add Apple Pay / Google Pay style express buttons and a tip selector",
+    "Add refunds: let the merchant refund a payment and show it in the activity feed",
+    "Add split payments so a bill can be shared between 3 friends",
+    "Add a receipt page the customer can print or email"
+  ],
+  "guide": "Pages: src/pages/Checkout.jsx (customer-facing card form with Luhn/expiry validation and a fake processing step), src/pages/Links.jsx (create and toggle payment links), src/pages/Activity.jsx (payments table with status badges). Shared state (payments, links) lives in src/App.jsx. No real payment provider is called; the package @stripe/react-stripe-js is installed if a team wants to wire Stripe Elements with their own test publishable key (never a live key)."
+}

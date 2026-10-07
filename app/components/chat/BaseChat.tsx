@@ -6,7 +6,7 @@ import { ClientOnly } from 'remix-utils/client-only';
 import { Menu } from '~/components/sidebar/Menu.client';
 import { IconButton } from '~/components/ui/IconButton';
 import { Workbench } from '~/components/workbench/Workbench.client';
-import { STARTERS } from '~/components/landing/starters';
+import { templateIcon, type TemplateCard } from '~/lib/templates/client';
 import { quota } from '~/lib/stores/ui';
 import { classNames } from '~/utils/classNames';
 import { timeAgo } from '~/utils/timeAgo';
@@ -31,6 +31,7 @@ interface BaseChatProps {
   sendMessage?: (event: React.UIEvent, messageInput?: string) => void;
   handleInputChange?: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
   enhancePrompt?: () => void;
+  onStartTemplate?: (id: string) => void;
 }
 
 interface HomeData {
@@ -91,23 +92,44 @@ function Onboarding() {
   );
 }
 
-function HomeExtras({ sendMessage }: { sendMessage?: (event: React.UIEvent, text?: string) => void }) {
-  const { recent = [], projectCount = 0 } = useLoaderData() as HomeData;
+const TRACKS = ['Payments', 'Access to Finance', 'Fraud and Security', 'Any track'];
+
+function HomeExtras({ onStartTemplate }: { onStartTemplate?: (id: string) => void }) {
+  const { recent = [], projectCount = 0, templates = [] } = useLoaderData() as HomeData & { templates?: TemplateCard[] };
 
   return (
     <>
-      <div className="grid grid-cols-3 gap-3">
-        {STARTERS.map((s) => (
-          <button
-            key={s.icon}
-            data-testid="foldo-home-starter"
-            onClick={(event) => sendMessage?.(event, s.prompt)}
-            className="paper-tile flex flex-col items-center gap-1.5 rounded-2xl border border-transparent p-3 text-sm font-semibold text-[#111] transition hover:-translate-y-0.5 hover:border-[var(--foldo-pillow)]"
-          >
-            <img src={`/art/icon-${s.icon}.webp`} alt="" width={64} height={64} />
-            {s.title}
-          </button>
-        ))}
+      <div className="space-y-5" data-testid="foldo-templates">
+        {TRACKS.map((track) => {
+          const items = templates.filter((t) => t.track === track);
+
+          if (!items.length) {
+            return null;
+          }
+
+          return (
+            <section key={track}>
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-bolt-elements-textTertiary">{track}</h2>
+              <div className="grid grid-cols-2 gap-3">
+                {items.map((t) => (
+                  <button
+                    key={t.id}
+                    data-testid="foldo-home-starter"
+                    onClick={() => onStartTemplate?.(t.id)}
+                    className="group flex items-start gap-3 rounded-2xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--foldo-yellow)]"
+                  >
+                    <img src={templateIcon(t.icon)} alt="" width={44} height={44} className="shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-bolt-elements-textPrimary">{t.title}</span>
+                      <span className="mt-0.5 block text-xs leading-snug text-bolt-elements-textSecondary">{t.summary}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+        <p className="text-center text-xs text-bolt-elements-textTertiary">Templates start instantly and cost no AI messages. Or just describe your own idea above.</p>
       </div>
 
       {recent.length > 0 && (
@@ -157,6 +179,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
       handleInputChange,
       enhancePrompt,
       handleStop,
+      onStartTemplate,
     },
     ref,
   ) => {
@@ -182,7 +205,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                   What do you want to build?
                 </h1>
                 <p className="mb-5 text-center text-bolt-elements-textSecondary">
-                  Describe it in plain English. Foldo writes the code and runs it right here.
+                  Pick a starter for your track, or describe your own idea. Foldo builds it and runs it right here.
                 </p>
               </div>
             )}
@@ -199,6 +222,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                       className="flex flex-col w-full flex-1 max-w-chat pb-6 mx-auto z-1"
                       messages={messages}
                       isStreaming={isStreaming}
+                      onSend={(text) => sendMessage?.({} as React.UIEvent, text)}
                     />
                   ) : null;
                 }}
@@ -295,7 +319,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
             {!chatStarted && (
               <div id="examples" className="relative w-full mt-6 px-6 pb-16">
                 <div className="mx-auto w-full max-w-chat">
-                  <HomeExtras sendMessage={sendMessage} />
+                  <HomeExtras onStartTemplate={onStartTemplate} />
                 </div>
               </div>
             )}

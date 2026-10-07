@@ -26,7 +26,10 @@ const llm = http
     let b = '';
     req.on('data', (c) => (b += c));
     req.on('end', async () => {
-      const last = JSON.parse(b).messages.at(-1).content;
+      const parsed = JSON.parse(b);
+      const last = parsed.messages.at(-1).content;
+      const system = String(parsed.messages.find((m) => m.role === 'system')?.content ?? '');
+      const reply = system.includes('<starter_template>') ? `template-mode msgs:${parsed.messages.filter((m) => m.role !== 'system').length}` : 'hello ';
 
       if (JSON.parse(b).model === 'stall-model') {
         await new Promise((r) => setTimeout(r, 7000));
@@ -58,7 +61,7 @@ const llm = http
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const chunk = (delta, fin) =>
         `data: ${JSON.stringify({ id: '1', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: fin }] })}\n\n`;
-      res.write(chunk({ content: 'hello ' }, null) + chunk({ content: 'world' }, null) + chunk({}, 'stop') + 'data: [DONE]\n\n');
+      res.write(chunk({ content: reply }, null) + chunk({ content: 'world' }, null) + chunk({}, 'stop') + 'data: [DONE]\n\n');
       res.end();
     });
   })
@@ -368,6 +371,39 @@ try {
   check(P7, 'new password works', (await D.login('d@t.co', 'brand-new-pw-1')).status === 302);
   await D.req('/settings', { method: 'POST', form: { intent: 'delete', current: 'brand-new-pw-1' } });
   check(P7, 'account deletion removes projects and share links', (await anon.req(`/p/${sD}`)).status === 404 && (await new Client().login('d@t.co', 'brand-new-pw-1')).status === 401);
+
+  // ============ Persona 9: templates and prebuilt packages ============
+  const P9 = 'templates';
+  const cat = (await anon.req('/api/templates')).json();
+  const ids = cat.templates.map((t) => t.id);
+  check(P9, 'catalogue lists the finance templates for all three tracks', ['payments-checkout', 'payments-transfer', 'access-loan', 'access-budget', 'fraud-scam-check', 'fraud-ops-console'].every((i) => ids.includes(i)) && ['Payments', 'Access to Finance', 'Fraud and Security'].every((tr) => cat.templates.some((t) => t.track === tr)), ids.join());
+  const spec = await anon.req('/templates/payments-checkout.json');
+  check(P9, 'template bundle serves its files', spec.status === 200 && Boolean(spec.json().files['src/App.jsx']) && Boolean(spec.json().files['package.json']));
+  const hash = cat.snapshots.core.hash;
+  check(P9, 'snapshot route rejects traversal and bad names', [404].includes((await anon.req('/snapshots/..%2F..%2Fetc%2Fpasswd')).status) && (await anon.req('/snapshots/core-0000000000.snap')).status === 404);
+  const fake = new Uint8Array(await new Response(new Blob(['not a real snapshot']).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
+  const upload = (client, h = hash) => client.req(`/api/admin-snapshot?pack=core&hash=${h}`, { method: 'PUT', raw: fake, headers: { 'content-type': 'application/octet-stream' } });
+  check(P9, 'anonymous cannot upload a snapshot', (await upload(anon)).status !== 200);
+  check(P9, 'a normal team cannot upload a snapshot', (await upload(A)).status === 404);
+  check(P9, 'admin upload with a wrong hash is refused', (await upload(ADM, '0000000000')).status === 400);
+  const up = await upload(ADM);
+  check(P9, 'admin can upload a snapshot', up.status === 200, up.status);
+  const snap = await fetch(`${BASE}/snapshots/core-${hash}.snap`);
+  check(P9, 'snapshot is served gzip-encoded and cached forever', snap.status === 200 && snap.headers.get('content-encoding') === 'gzip' && /immutable/.test(snap.headers.get('cache-control')) && (await snap.text()) === 'not a real snapshot');
+  check(P9, 'catalogue now points at the snapshot', (await anon.req('/api/templates')).json().snapshots.core.url === `/snapshots/core-${hash}.snap` || /^\/snapshots\/core-[a-f0-9]{10}\.snap\?v=\d+$/.test((await anon.req('/api/templates')).json().snapshots.core.url));
+  const tp = new Client();
+  await tp.register('Team Tango', 'tango@t.co');
+  const tId = (await tp.req('/api/projects', { method: 'PUT', body: { description: 'Tpl', template: 'payments-checkout', messages: [{ id: 'tpl-intro', role: 'assistant', content: '__TEMPLATE__:payments-checkout' }] } })).json().id;
+  const tPage = await tp.req(`/chat/${tId}`);
+  check(P9, 'a project remembers its template', tPage.status === 200 && tPage.text.includes('payments-checkout'));
+  const bogus = (await tp.req('/api/projects', { method: 'PUT', body: { description: 'Tpl2', template: 'evil<script>', messages: [{ role: 'user', content: 'x' }] } })).json().id;
+  check(P9, 'unknown template ids are never stored', !(await tp.req(`/chat/${bogus}`)).text.includes('evil<script>'));
+  const tpl = await tp.req('/api/chat', { method: 'POST', body: { template: 'payments-checkout', provider: 'custom', messages: [{ id: 'tpl-intro', role: 'assistant', content: '__TEMPLATE__:payments-checkout' }, { id: 'u1', role: 'user', content: 'add a tip selector' }] } });
+  check(P9, 'template chats use the template prompt and drop the UI-only intro', tpl.status === 200 && /template-mode msgs:1/.test(tpl.text), tpl.text.slice(0, 100));
+  const plain = await tp.req('/api/chat', { method: 'POST', body: { provider: 'custom', messages: [{ id: 'u1', role: 'user', content: 'hi' }] } });
+  check(P9, 'plain chats are unaffected', plain.status === 200 && !/template-mode/.test(plain.text));
+  const fakeTpl = await tp.req('/api/chat', { method: 'POST', body: { template: 'does-not-exist', provider: 'custom', messages: [{ id: 'u1', role: 'user', content: 'hi' }] } });
+  check(P9, 'an unknown template id on /api/chat is ignored, not an error', fakeTpl.status === 200 && !/template-mode/.test(fakeTpl.text));
 
   // ============ Persona 8: 30 teams at once ============
   const P8 = 'load: 30 teams';

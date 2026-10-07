@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { PageShell } from '~/components/PageShell';
 import type { EventInfo } from '~/components/header/EventBar';
-import { iconFor } from '~/components/landing/starters';
+import { templateIcon } from '~/lib/templates/client';
 import { getUser, shell } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
 import { timeAgo } from '~/utils/timeAgo';
@@ -21,6 +21,7 @@ interface Item {
   description: string | null;
   name: string;
   updated: number;
+  template: string | null;
   likes: number;
   liked: number;
   mine: number;
@@ -32,7 +33,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const sort = new URL(request.url).searchParams.get('sort') === 'new' ? 'new' : 'top';
   const items = db
     .prepare(
-      `SELECT p.id, p.share_id AS shareId, p.description, u.name, p.updated,
+      `SELECT p.id, p.share_id AS shareId, p.description, p.template, u.name, p.updated,
          (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id) AS likes,
          (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id AND l.user_id = ?) AS liked,
          (p.user_id = ?) AS mine
@@ -45,7 +46,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json({ ...shell(user), items });
 }
 
-function Card({ item, signedIn }: { item: Item; signedIn: boolean }) {
+function Card({ item, signedIn, templates }: { item: Item; signedIn: boolean; templates: { id: string; icon: string }[] }) {
   const [likes, setLikes] = useState(item.likes);
   const [liked, setLiked] = useState(Boolean(item.liked));
 
@@ -73,7 +74,7 @@ function Card({ item, signedIn }: { item: Item; signedIn: boolean }) {
     <li className="overflow-hidden rounded-2xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 transition hover:-translate-y-0.5 hover:border-[var(--foldo-yellow)]">
       <a href={`/p/${item.shareId}`} className="block">
         <div className="paper-tile flex h-36 items-center justify-center">
-          <img src={`/art/icon-${iconFor(item.id, item.description)}.webp`} alt="" width={96} height={96} loading="lazy" />
+          <img src={templateIcon(templates.find((t) => t.id === item.template)?.icon)} alt="" width={80} height={80} loading="lazy" />
         </div>
         <div className="px-4 pt-3">
           <div className="truncate font-semibold">{item.description || 'Untitled project'}</div>
@@ -101,7 +102,7 @@ function Card({ item, signedIn }: { item: Item; signedIn: boolean }) {
 }
 
 export default function Gallery() {
-  const d = useLoaderData<typeof loader>() as any as { email?: string; name?: string; admin?: boolean; remaining?: number; event: EventInfo | null; items: Item[] };
+  const d = useLoaderData<typeof loader>() as any as { email?: string; name?: string; admin?: boolean; remaining?: number; event: EventInfo | null; items: Item[]; templates: { id: string; icon: string }[] };
   const [params, setParams] = useSearchParams();
   const sort = params.get('sort') === 'new' ? 'new' : 'top';
 
@@ -140,7 +141,7 @@ export default function Gallery() {
         ) : (
           <ul className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {d.items.map((item) => (
-              <Card key={item.id} item={item} signedIn={Boolean(d.email)} />
+              <Card key={item.id} item={item} signedIn={Boolean(d.email)} templates={d.templates} />
             ))}
           </ul>
         )}

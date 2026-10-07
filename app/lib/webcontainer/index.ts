@@ -26,6 +26,7 @@ if (!import.meta.env.SSR) {
       })
       .then((webcontainer) => {
         webcontainerContext.loaded = true;
+        (window as unknown as { __foldoWC?: unknown }).__foldoWC = webcontainer; // debugging handle (your own sandbox only)
         return webcontainer;
       });
 

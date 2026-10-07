@@ -62,7 +62,7 @@ export async function applyTemplate(id: string, title = 'template') {
 
   const [{ snapshots }, spec] = await Promise.all([
     fetch('/api/templates').then((r) => r.json() as Promise<{ snapshots: Record<string, { url: string | null; bytes: number }> }>),
-    fetch(`/templates/${id}.json`).then((r) => {
+    fetch(`/templates/${id}.json`, { cache: 'no-cache' }).then((r) => {
       if (!r.ok) {
         throw new Error('Template not found');
       }

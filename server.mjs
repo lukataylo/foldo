@@ -37,6 +37,8 @@ app.use((req, res, next) => {
 // gzip pages and assets (venue wifi is slow) but never the streamed LLM responses, which must flush per chunk
 app.use(compression({ filter: (req, res) => !req.path.startsWith('/api/') && compression.filter(req, res) }));
 app.use('/assets', express.static('build/client/assets', { immutable: true, maxAge: '1y' }));
+// template files change with every deploy and are small: always revalidate (ETag), never serve a stale copy from the browser cache
+app.use('/templates', express.static('build/client/templates', { maxAge: 0 }));
 app.use(express.static('build/client', { maxAge: '1h' }));
 app.use(createRequestHandler({ build: await import('./build/server/index.js') }));
 

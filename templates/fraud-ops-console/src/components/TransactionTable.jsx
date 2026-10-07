@@ -1,4 +1,5 @@
-import { DataTable, Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow, Tag } from '@carbon/react';
+import { useState } from 'react';
+import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow, Tag } from '@carbon/react';
 
 const HEADERS = [
   { key: 'id', header: 'ID' },
@@ -11,41 +12,51 @@ const HEADERS = [
 ];
 const TAG = { high: 'red', medium: 'warm-gray', low: 'green' };
 const STATUS = { open: 'gray', approved: 'green', blocked: 'red' };
+const value = (t, key) => (key === 'risk' ? t.risk.score : t[key]);
 
+// Plain Carbon table parts with our own sorting. (Carbon's DataTable keeps its own copy of the rows and, fed a new list every
+// 2.5 s by the live feed, can loop or render a stale row.)
 export default function TransactionTable({ items, onSelect, title, description }) {
-  const rows = items.map((t) => ({ id: t.id, holder: t.holder, merchant: t.merchant, amount: t.amount, city: t.city, risk: t.risk.score, status: t.status }));
-  const byId = Object.fromEntries(items.map((t) => [t.id, t]));
+  const [sort, setSort] = useState(null); // { key, dir }
+  const rows = sort
+    ? [...items].sort((a, b) => {
+        const x = value(a, sort.key);
+        const y = value(b, sort.key);
+        return (x > y ? 1 : x < y ? -1 : 0) * (sort.dir === 'asc' ? 1 : -1);
+      })
+    : items;
+  const toggle = (key) => setSort((s) => (s?.key !== key ? { key, dir: 'asc' } : s.dir === 'asc' ? { key, dir: 'desc' } : null));
+
   return (
-    <DataTable rows={rows} headers={HEADERS} isSortable>
-      {({ rows, headers, getHeaderProps, getRowProps, getTableProps }) => (
-        <TableContainer title={title} description={description}>
-          <Table {...getTableProps()}>
-            <TableHead>
-              <TableRow>
-                {headers.map((h) => {
-                  const { key, ...rest } = getHeaderProps({ header: h });
-                  return <TableHeader key={key} {...rest}>{h.header}</TableHeader>;
-                })}
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {rows.map((row) => {
-                const { key, ...rest } = getRowProps({ row });
-                const t = byId[row.id];
-                return (
-                  <TableRow key={key} {...rest} className="row-clickable" onClick={() => onSelect(t)}>
-                    {row.cells.map((cell) => (
-                      <TableCell key={cell.id}>
-                        {cell.info.header === 'risk' ? <Tag type={TAG[t.risk.level]} size="sm">{t.risk.score} · {t.risk.level}</Tag> : cell.info.header === 'status' ? <Tag type={STATUS[t.status]} size="sm">{t.status}</Tag> : cell.info.header === 'amount' ? `£${Number(cell.value).toFixed(2)}` : cell.value}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
-    </DataTable>
+    <TableContainer title={title} description={description}>
+      <Table>
+        <TableHead>
+          <TableRow>
+            {HEADERS.map((h) => (
+              <TableHeader key={h.key} isSortable isSortHeader={sort?.key === h.key} sortDirection={sort?.key === h.key ? (sort.dir === 'asc' ? 'ASC' : 'DESC') : 'NONE'} onClick={() => toggle(h.key)}>
+                {h.header}
+              </TableHeader>
+            ))}
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((t) => (
+            <TableRow key={t.id} className="row-clickable" onClick={() => onSelect(t)}>
+              <TableCell>{t.id}</TableCell>
+              <TableCell>{t.holder}</TableCell>
+              <TableCell>{t.merchant}</TableCell>
+              <TableCell>{`£${Number(t.amount).toFixed(2)}`}</TableCell>
+              <TableCell>{t.city}</TableCell>
+              <TableCell>
+                <Tag type={TAG[t.risk.level]} size="sm">{t.risk.score} · {t.risk.level}</Tag>
+              </TableCell>
+              <TableCell>
+                <Tag type={STATUS[t.status]} size="sm">{t.status}</Tag>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
   );
 }

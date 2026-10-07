@@ -28,6 +28,11 @@ const llm = http
     req.on('end', async () => {
       const last = JSON.parse(b).messages.at(-1).content;
 
+      if (JSON.parse(b).model === 'bad-model') {
+        res.writeHead(503).end('{"error":{"message":"overloaded"}}');
+        return;
+      }
+
       if (String(last).includes('FAIL')) {
         res.writeHead(500).end('{"error":{"message":"boom"}}');
         return;
@@ -220,14 +225,14 @@ try {
   const before = (await C.chat('hello')).headers.get('x-foldo-remaining'); // spends 1 (limit 3 -> 2 left)
   const failed = await C.chat('please FAIL');
   const afterFail = (await C.chat('hello again')).headers.get('x-foldo-remaining');
-  check(P4, 'provider outage returns a friendly 502', failed.status === 502 && /didn't respond/.test(failed.text), `${failed.status} ${failed.text}`);
+  check(P4, 'provider outage returns a friendly 502', failed.status === 502 && /having a moment/.test(failed.text), `${failed.status} ${failed.text}`);
   check(P4, 'failed generation is refunded', before === '2' && afterFail === '1', `before=${before} after=${afterFail}`);
   // concurrency: two parallel requests from one team
   const [r1, r2] = await Promise.all([C.chat('SLOW one'), new Promise((r) => setTimeout(r, 200)).then(() => C.chat('second'))]);
   check(P4, 'second parallel generation refused (1 at a time)', [r1.status, r2.status].sort().join() === '200,429', `${r1.status},${r2.status}`);
   await new Promise((r) => setTimeout(r, 300));
   const over = await C.chat('one more');
-  check(P4, 'daily quota enforced with a clear message', over.status === 429 && /messages for today/.test(over.text), `${over.status} ${over.text}`);
+  check(P4, 'daily quota enforced with a clear message', over.status === 429 && /messages for tonight/.test(over.text), `${over.status} ${over.text}`);
   check(P4, 'client-chosen unknown provider falls back to default (no 500)', (await A.chat('hi', { provider: '../../etc' })).status === 200);
 
   // ============ Persona 5: brute-forcer ============
@@ -292,6 +297,50 @@ try {
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', signups_open: '', invite_code: 'hack26', per_user_limit: '3', global_limit: '60' } });
   check(P6, 'closed sign-ups refuse new teams', (await new Client().register('Late', 'late@t.co')).status === 403);
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', signups_open: 'on', per_user_limit: '3', global_limit: '5000' } });
+
+  // ============ Persona 6b: event night (failover, pause, backup, limits, concurrency) ============
+  const P6B = 'event night';
+  check(P6B, 'limits form rejects an absurd token value', (await ADM.req('/admin', { method: 'POST', form: { intent: 'save-limits', max_tokens: '5', max_segments: '3', max_user_streams: '2' } })).status === 400);
+  check(P6B, 'limits form rejects 0 concurrent builds', (await ADM.req('/admin', { method: 'POST', form: { intent: 'save-limits', max_tokens: '16000', max_segments: '3', max_user_streams: '0' } })).status === 400);
+  // second provider that works, primary that always fails to start
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-provider', id: 'custom', key: 'k', base_url: `http://localhost:${LLM_PORT}/v1`, model: 'good-model', enabled: 'on' } });
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-provider', id: 'deepseek', base_url: `http://localhost:${LLM_PORT}/v1`, model: 'bad-model', enabled: 'on', max_tokens: '8000' } });
+  const okLimits = await ADM.req('/admin', { method: 'POST', form: { intent: 'save-limits', max_tokens: '16000', max_segments: '3', max_user_streams: '2', fallback_provider: 'custom', cost_per_message: '0.01' } });
+  check(P6B, 'admin saves limits and a fallback model', okLimits.status === 200 && /Limits saved/.test(okLimits.text.replace(/<[^>]+>/g, ' ')), okLimits.status);
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'set-default', id: 'deepseek' } });
+  const F = new Client();
+  await F.register('Team Foxtrot', 'f@t.co');
+  const fo = await F.chat('hello from fox', { provider: 'deepseek' });
+  check(P6B, 'primary down: request is answered by the fallback model', fo.status === 200 && fo.headers.get('x-foldo-model') === 'Custom (OpenAI-compatible)', `${fo.status} ${fo.headers.get('x-foldo-model')} ${fo.text.slice(0, 60)}`);
+  check(P6B, 'failover charges the team exactly once', fo.headers.get('x-foldo-remaining') === '2', fo.headers.get('x-foldo-remaining'));
+  const dbq = new DatabaseSync(DB);
+  const pu = Object.fromEntries(dbq.prepare('SELECT provider, n FROM provider_usage').all().map((r) => [r.provider, r.n]));
+  check(P6B, 'usage is attributed to the model that answered', (pu.custom ?? 0) >= 1);
+  check(P6B, 'admin live view reports the failover', /Failovers since start/.test((await ADM.req('/admin')).text) && />[1-9]\d*</.test((await ADM.req('/admin')).text));
+  // no fallback + primary down => friendly 502 and refund
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-limits', max_tokens: '16000', max_segments: '3', max_user_streams: '2', fallback_provider: '', cost_per_message: '0.01' } });
+  const nofb = await F.chat('hello again', { provider: 'deepseek' });
+  check(P6B, 'primary down and no fallback: calm 502, message refunded', nofb.status === 502 && /Press send to try again/.test(nofb.text) && (await F.chat('x', { provider: 'custom' })).headers.get('x-foldo-remaining') === '1');
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'set-default', id: 'custom' } });
+  // concurrency: 2 builds per login allowed, third refused with a friendly message
+  const E = new Client();
+  await E.register('Team Echo', 'e@t.co');
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', signups_open: 'on', invite_code: 'hack26', per_user_limit: '10', global_limit: '5000' } });
+  const trio = await Promise.all([E.chat('SLOW a', { provider: 'custom' }), new Promise((r) => setTimeout(r, 100)).then(() => E.chat('SLOW b', { provider: 'custom' })), new Promise((r) => setTimeout(r, 200)).then(() => E.chat('SLOW c', { provider: 'custom' }))]);
+  check(P6B, 'a shared login can run 2 builds at once; the 3rd is told to wait', trio.map((r) => r.status).sort().join() === '200,200,429' && /already has 2 builds running/.test(trio.find((r) => r.status === 429).text), trio.map((r) => r.status).join());
+  // pause switch
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-pause', paused: 'on', pause_message: 'Fixing Wi-Fi, back in 5 minutes' } });
+  const paused = await F.chat('hi', { provider: 'custom' });
+  check(P6B, 'pause switch blocks new builds with the organizer message', paused.status === 503 && /Fixing Wi-Fi/.test(paused.text));
+  check(P6B, 'teams see a banner while paused', (await F.req('/')).text.includes('Fixing Wi-Fi'));
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-pause', pause_message: '' } });
+  check(P6B, 'unpausing restores service', (await F.chat('hi again', { provider: 'custom' })).status === 200);
+  // backup
+  const bk = await ADM.req('/api/admin-backup');
+  check(P6B, 'admin can download a valid SQLite backup', bk.status === 200 && bk.text.startsWith('SQLite format 3'), bk.status);
+  check(P6B, 'non-admins cannot download the backup', [302, 404].includes((await A.req('/api/admin-backup')).status));
+  check(P6B, 'anonymous cannot download the backup', (await anon.req('/api/admin-backup')).status !== 200);
+  check(P6B, 'over-long chat gives the calm "New project" next step', /New project/.test((await F.chat('x'.repeat(250_000), { provider: 'custom' })).text));
 
   // ============ Persona 7: account owner ============
   const D = new Client();

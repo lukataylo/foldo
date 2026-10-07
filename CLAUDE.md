@@ -14,4 +14,6 @@ Vibe-coding platform on a Node port of bolt.new (Remix + Vite, React 18). See RE
 - Provider catalog, settings, key encryption: `app/lib/.server/config.ts`. Quotas, sessions, throttles, stream concurrency: `auth.ts`. Admin UI: `routes/admin.tsx`.
 - Password hashing must stay async (`scrypt`); the sync version froze the event loop under load.
 - `npm run test:e2e` (after `npm run build`) is the regression suite; extend it when adding routes. `.npmrc` has legacy-peer-deps because @remix-run/express wants express 4.
+- Reply length, continuations, per-login concurrency, fallback model, pause switch live in `settings` (see `config.ts`); `routes/api.chat.ts` owns failover and the user-facing error copy (keep it calm, one next step).
+- Never call `scryptSync` per request (derive keys once). `scripts/load-test.mjs` + `scripts/stub-llm.mjs` are the load tools.
 - Everything the server imports at runtime must be in `dependencies` (the Docker image prunes devDependencies).

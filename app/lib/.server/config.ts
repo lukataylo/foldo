@@ -73,7 +73,10 @@ if (!secret && process.env.NODE_ENV === 'production') {
   console.warn('APP_SECRET is not set: provider keys can only come from environment variables.');
 }
 
-const aesKey = () => scryptSync(secret || 'foldo-dev-secret', 'foldo-provider-keys', 32);
+// scrypt is deliberately slow: derive once, not on every page load (listProviders runs per request)
+let derived: Buffer | undefined;
+const aesKey = () => (derived ??= scryptSync(secret || 'foldo-dev-secret', 'foldo-provider-keys', 32));
+const decrypted = new Map<string, string | undefined>();
 
 export function encrypt(plain: string): string {
   const iv = randomBytes(12);
@@ -84,6 +87,17 @@ export function encrypt(plain: string): string {
 }
 
 export function decrypt(blob: string): string | undefined {
+  if (decrypted.has(blob)) {
+    return decrypted.get(blob);
+  }
+
+  const out = decryptUncached(blob);
+  decrypted.set(blob, out);
+
+  return out;
+}
+
+function decryptUncached(blob: string): string | undefined {
   try {
     const [iv, tag, ct] = blob.split(':').map((h) => Buffer.from(h, 'hex'));
     const d = createDecipheriv('aes-256-gcm', aesKey(), iv);

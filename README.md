@@ -28,6 +28,28 @@ the admin card if they differ. Teams can pick between enabled models in the prom
 Safeguards: per-team daily quota, a global daily cap, one generation at a time per team, conversation size caps, failed
 generations are refunded, login/sign-up/invite-code throttling, Origin checks on writes, encrypted provider keys.
 
+## Event-night controls (/admin)
+
+- **Live:** builds running, requests per minute, failovers, errors and answers per model, top teams, estimated spend.
+- **Emergency pause:** one switch plus a message teams see; running builds finish, saved work is untouched.
+- **Reply length / failover / concurrency:** default max tokens, continuations, builds per login (teams share logins, default 2),
+  and a fallback model that is tried once if the main model fails to start (charged once). Set a per-model max tokens in each
+  model card (DeepSeek and GLM cap near 16k).
+- **Database backup:** one-click download of a consistent SQLite snapshot.
+- Teams get **Download zip** in the workbench and a **Fix this error** button on failed commands and preview crashes.
+
+Tip: to use OpenRouter for both main and fallback, put the main model in the OpenRouter card and a second OpenRouter model
+(different id) in the Custom card with the same base URL and key, then choose Custom as the fallback.
+
+## Load test
+
+    node scripts/stub-llm.mjs &                                   # fake model, no tokens
+    LLM_BASE_URL=http://localhost:9999/v1 DEEPSEEK_API_KEY=x DAILY_MESSAGE_LIMIT=100 npm start &
+    node scripts/load-test.mjs --url http://localhost:3000 --users 25 --expect-artifact
+
+Against a real provider drop the stub and `LLM_BASE_URL`. Behind Railway's proxy sign-ups are throttled per real IP, so create
+logins first and pass `--accounts file.txt` (one `email:password` per line).
+
 ## Test
 
     npm run build && npm run test:e2e

@@ -8,5 +8,7 @@ export function getModel(provider: Provider) {
     apiKey: provider.key,
     baseURL: provider.baseURL,
     compatibility: provider.id === 'openai' ? 'strict' : 'compatible',
+    // OpenRouter uses these to attribute traffic to the app
+    headers: provider.id === 'openrouter' ? { 'HTTP-Referer': 'https://foldo.dev', 'X-Title': 'Foldo' } : undefined,
   })(provider.model);
 }

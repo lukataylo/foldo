@@ -88,6 +88,8 @@ export function decrypt(blob: string): string | undefined {
 // can override in /admin without a redeploy (the Chinese-provider defaults in particular should be verified).
 
 export const CATALOG = [
+  // OpenRouter fronts many models behind one key with pooled rate limits, which suits many teams at once
+  { id: 'openrouter', label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4.1-nano', env: 'OPENROUTER_API_KEY' },
   { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat', env: 'DEEPSEEK_API_KEY' },
   { id: 'openai', label: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4.1-nano', env: 'OPENAI_API_KEY' },
   { id: 'mimo', label: 'Xiaomi MiMo', baseURL: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2-flash', env: 'MIMO_API_KEY' },

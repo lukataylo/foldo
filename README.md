@@ -19,7 +19,7 @@ and an organizer console. Based on [bolt.new](https://github.com/stackblitz/bolt
 
 ## Running a hackathon
 
-Everything is in **/admin**: paste provider keys (DeepSeek, OpenAI, Xiaomi MiMo, Qwen, Kimi, GLM, MiniMax, or any
+Everything is in **/admin**: paste provider keys (OpenRouter, DeepSeek, OpenAI, Xiaomi MiMo, Qwen, Kimi, GLM, MiniMax, or any
 OpenAI-compatible endpoint), press **Test**, pick the default, set an invite code, event name + countdown, an
 announcement banner, per-team and global daily message caps, and manage teams (disable, reset password) and the gallery.
 The base URLs and model ids for the Chinese providers are defaults to verify against each provider's docs; edit them in

@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react';
 import { useLoaderData } from '@remix-run/react';
-import { templateIcon, templateStatus, type TemplateCard } from '~/lib/templates/client';
+import { iconProps, templateStatus, type TemplateCard } from '~/lib/templates/client';
 
 // The first message of a template project. It is UI only: the model never sees it (see api.chat).
 export function TemplateIntro({ id, onSend }: { id: string; onSend?: (text: string) => void }) {
@@ -15,7 +15,7 @@ export function TemplateIntro({ id, onSend }: { id: string; onSend?: (text: stri
   return (
     <div className="space-y-3" data-testid="foldo-template-intro">
       <div className="flex items-center gap-3">
-        <img src={templateIcon(t.icon)} alt="" width={40} height={40} />
+        <img {...iconProps(t.icon)} alt="" width={40} height={40} />
         <div>
           <div className="font-semibold text-bolt-elements-textPrimary">{t.title}</div>
           <div className="text-xs text-bolt-elements-textTertiary">{t.track} starter</div>

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { PageShell } from '~/components/PageShell';
 import type { EventInfo } from '~/components/header/EventBar';
-import { templateIcon } from '~/lib/templates/client';
+import { iconProps } from '~/lib/templates/client';
 import { Dialog, DialogButton, DialogDescription, DialogRoot, DialogTitle } from '~/components/ui/Dialog';
 import { requireUser, shell } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
@@ -83,7 +83,7 @@ export default function Projects() {
                 >
                   <a href={`/chat/${p.id}`} className="block">
                     <div className="paper-tile flex h-36 items-center justify-center">
-                      <img src={templateIcon(templates.find((t) => t.id === p.template)?.icon)} alt="" width={80} height={80} loading="lazy" />
+                      <img {...iconProps(templates.find((t) => t.id === p.template)?.icon)} alt="" width={80} height={80} loading="lazy" />
                     </div>
                     <div className="p-4">
                       <div className="truncate font-semibold">{p.description || 'Untitled project'}</div>

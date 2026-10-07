@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { PageShell } from '~/components/PageShell';
 import type { EventInfo } from '~/components/header/EventBar';
-import { templateIcon } from '~/lib/templates/client';
+import { iconProps } from '~/lib/templates/client';
 import { getUser, shell } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
 import { timeAgo } from '~/utils/timeAgo';
@@ -74,7 +74,7 @@ function Card({ item, signedIn, templates }: { item: Item; signedIn: boolean; te
     <li className="overflow-hidden rounded-2xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 transition hover:-translate-y-0.5 hover:border-[var(--foldo-yellow)]">
       <a href={`/p/${item.shareId}`} className="block">
         <div className="paper-tile flex h-36 items-center justify-center">
-          <img src={templateIcon(templates.find((t) => t.id === item.template)?.icon)} alt="" width={80} height={80} loading="lazy" />
+          <img {...iconProps(templates.find((t) => t.id === item.template)?.icon)} alt="" width={80} height={80} loading="lazy" />
         </div>
         <div className="px-4 pt-3">
           <div className="truncate font-semibold">{item.description || 'Untitled project'}</div>

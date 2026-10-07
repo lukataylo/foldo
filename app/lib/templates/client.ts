@@ -16,7 +16,28 @@ export interface TemplateCard {
 export const templateStatus = atom<string | undefined>(undefined);
 export const activeTemplate = atom<string | undefined>(undefined);
 
-export const templateIcon = (icon?: string) => `/art/tpl-${icon || 'paper'}.svg`;
+export const templateIcon = (icon?: string) => `/art/tpl-${icon || 'paper'}.webp`;
+
+// generated artwork (webp) when it exists, the hand-drawn SVG otherwise. The ref catches images that already failed to
+// load before React attached onError (server-rendered pages).
+export const iconProps = (icon?: string) => {
+  const fallback = (el: HTMLImageElement) => {
+    if (!el.dataset.fallback) {
+      el.dataset.fallback = '1';
+      el.src = `/art/tpl-${icon || 'paper'}.svg`;
+    }
+  };
+
+  return {
+    src: templateIcon(icon),
+    ref: (el: HTMLImageElement | null) => {
+      if (el && el.complete && el.naturalWidth === 0) {
+        fallback(el);
+      }
+    },
+    onError: (e: { currentTarget: HTMLImageElement }) => fallback(e.currentTarget),
+  };
+};
 
 const mb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1_000_000))} MB`;
 

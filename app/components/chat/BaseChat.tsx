@@ -6,7 +6,7 @@ import { ClientOnly } from 'remix-utils/client-only';
 import { Menu } from '~/components/sidebar/Menu.client';
 import { IconButton } from '~/components/ui/IconButton';
 import { Workbench } from '~/components/workbench/Workbench.client';
-import { templateIcon, type TemplateCard } from '~/lib/templates/client';
+import { iconProps, type TemplateCard } from '~/lib/templates/client';
 import { quota } from '~/lib/stores/ui';
 import { classNames } from '~/utils/classNames';
 import { timeAgo } from '~/utils/timeAgo';
@@ -118,7 +118,7 @@ function HomeExtras({ onStartTemplate }: { onStartTemplate?: (id: string) => voi
                     onClick={() => onStartTemplate?.(t.id)}
                     className="group flex items-start gap-3 rounded-2xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--foldo-yellow)]"
                   >
-                    <img src={templateIcon(t.icon)} alt="" width={44} height={44} className="shrink-0" />
+                    <img {...iconProps(t.icon)} alt="" width={44} height={44} className="shrink-0" />
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-bolt-elements-textPrimary">{t.title}</span>
                       <span className="mt-0.5 block text-xs leading-snug text-bolt-elements-textSecondary">{t.summary}</span>

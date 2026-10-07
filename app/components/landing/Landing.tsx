@@ -2,13 +2,19 @@ import { useLoaderData, useNavigate } from '@remix-run/react';
 import { useState } from 'react';
 import { Logo } from '~/components/brand/Logo';
 import { EventBar, type EventInfo } from '~/components/header/EventBar';
-import { templateIcon, type TemplateCard } from '~/lib/templates/client';
+import { iconProps, type TemplateCard } from '~/lib/templates/client';
 import { PROMPT_KEY, TEMPLATE_KEY } from './starters';
 
 const STEPS = [
   { title: '1. Describe it', body: 'Tell Foldo what you want in plain English. A todo app, a landing page, a game.' },
   { title: '2. Watch it build', body: 'The code is written and the app runs live in your browser. No setup, no installs.' },
   { title: '3. Share the link', body: 'Send a link. Anyone can run your project and remix their own copy.' },
+];
+
+const TRACKS = [
+  { name: 'Payments', art: 'track-payments', blurb: 'Make moving money faster, cheaper and clearer.' },
+  { name: 'Access to Finance', art: 'track-access', blurb: 'Open doors for people banks overlook.' },
+  { name: 'Fraud and Security', art: 'track-fraud', blurb: 'Spot the scam before it costs someone.' },
 ];
 
 export function Landing() {
@@ -97,25 +103,41 @@ export function Landing() {
       </section>
 
       <section className="mx-auto max-w-[1180px] px-6 pb-16">
-        <div className="space-y-4" data-testid="foldo-landing-templates">
-          <h2 className="font-display text-2xl">Start from a finance template</h2>
-          {['Payments', 'Access to Finance', 'Fraud and Security'].map((track) => (
-            <div key={track} className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="w-40 shrink-0 font-semibold text-[#555]">{track}</span>
-              {templates
-                .filter((t) => t.track === track)
-                .map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => startTemplate(t.id)}
-                    className="flex items-center gap-1.5 rounded-full border border-[#E6E3DE] bg-white py-1 pl-1.5 pr-3 font-medium hover:border-[#FDB306]"
-                  >
-                    <img src={templateIcon(t.icon)} alt="" width={22} height={22} />
-                    {t.title}
-                  </button>
-                ))}
-            </div>
-          ))}
+        <div data-testid="foldo-landing-templates">
+          <h2 className="font-display text-2xl md:text-3xl">Pick your track, start in seconds</h2>
+          <div className="mt-6 grid gap-5 md:grid-cols-3">
+            {TRACKS.map((track) => (
+              <div key={track.name} className="overflow-hidden rounded-3xl border border-[#E6E3DE] bg-white">
+                <img
+                  src={`/art/${track.art}.webp`}
+                  alt=""
+                  width={800}
+                  height={800}
+                  loading="lazy"
+                  className="aspect-[4/3] w-full bg-[#FDF7EF] object-cover"
+                  onError={(e) => (e.currentTarget.style.display = 'none')}
+                />
+                <div className="p-5">
+                  <h3 className="text-lg font-bold">{track.name}</h3>
+                  <p className="mt-1 text-sm text-[#555]">{track.blurb}</p>
+                  <div className="mt-4 flex flex-col gap-2 text-sm">
+                    {templates
+                      .filter((t) => t.track === track.name)
+                      .map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => startTemplate(t.id)}
+                          className="flex items-center gap-2 rounded-xl border border-[#E6E3DE] bg-[#FDF7EF] py-1.5 pl-1.5 pr-3 text-left font-medium hover:border-[#FDB306]"
+                        >
+                          <img {...iconProps(t.icon)} alt="" width={28} height={28} />
+                          {t.title}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
         <ol className="mt-12 grid gap-6 border-t border-[#E6E3DE] pt-8 text-[#555] md:grid-cols-3">
           {STEPS.map((s) => (

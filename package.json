@@ -12,7 +12,7 @@
     "test:watch": "vitest",
     "start": "node --env-file-if-exists=.env server.mjs",
     "typecheck": "tsc",
-    "art": "node --env-file=.env scripts/gen-art.mjs",
+    "art": "node scripts/gen-art.mjs && python3 scripts/art-postprocess.py",
     "test:e2e": "node scripts/e2e-security.mjs",
     "templates": "node scripts/build-templates.mjs",
     "prebuild": "node scripts/build-templates.mjs",

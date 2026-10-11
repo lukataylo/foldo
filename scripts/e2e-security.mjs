@@ -203,6 +203,7 @@ try {
 
   check(P1, 'GET /api/projects is 401 (not a redirect)', (await anon.req('/api/projects')).status === 401);
   check(P1, 'POST /api/chat is 401', (await anon.chat('hi')).status === 401);
+  check(P1, 'Origin: null POST is refused, not a server error', (await anon.req('/login', { method: 'POST', form: { intent: 'login', email: 'a@b.co', password: 'x' }, headers: { origin: 'null' } })).status === 403);
   check(P1, 'cross-origin POST blocked (CSRF)', (await anon.req('/login', { method: 'POST', form: { intent: 'login', email: 'a@b.co', password: 'x' }, headers: { origin: 'https://evil.example' } })).status === 403);
   check(P1, '6.5MB body rejected before parsing', (await anon.req('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, raw: 'x'.repeat(6_500_000) })).status === 413);
   check(P1, 'register without invite code refused', (await anon.register('Evil', 'e@e.co', 'correct-horse-9', '')).status === 403);
@@ -352,8 +353,19 @@ try {
   await ADM.req('/admin', { method: 'POST', form: { intent: 'user-toggle', id: bId } }); // re-enable
   const B2 = new Client();
   check(P6, 'temp password from reset signs the team back in', Boolean(temp) && (await B2.login('b@t.co', temp)).status === 302, String(temp));
-  await ADM.req('/admin', { method: 'POST', form: { intent: 'unlist', id: idA } });
-  check(P6, 'moderation: unlisting removes it from gallery and kills the link', !(await anon.req('/gallery')).text.includes('Alpha app') && (await anon.req(`/p/${shareA.shareId}`)).status === 404);
+  check(P6, 'non-admin cannot hide gallery items', (await A.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: idA } })).status === 404);
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: idA } });
+  check(P6, 'moderation: hiding removes it from the gallery, the share link keeps working', !(await anon.req('/gallery')).text.includes('Alpha app') && (await anon.req(`/p/${shareA.shareId}`)).status === 200);
+  const relist = await A.req('/api/projects', { method: 'POST', body: { id: idA, share: true, listed: true } });
+  check(P6, 'a team cannot re-list a project organizers hid (calm 403)', relist.status === 403 && relist.json().hidden === true && /organizers removed this project/.test(relist.text), relist.status);
+  check(P6, 'still out of the gallery after the re-list attempt', !(await anon.req('/gallery')).text.includes('Alpha app'));
+  const unshared = await A.save('Never shared', 'x');
+  check(P6, 'only shared projects can be hidden', (await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: unshared } })).status === 400);
+  check(P6, 'unknown project id is a 404', (await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: 'nope' } })).status === 404);
+  check(P6, 'hidden item is listed for organizers with Show', /Show Alpha app in the gallery again/.test((await ADM.req('/admin')).text));
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-show', id: idA } });
+  check(P6, 'moderation: Show puts it back in the gallery', (await anon.req('/gallery')).text.includes('Alpha app'));
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: idA } });
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', signups_open: '', invite_code: 'hack26', per_user_limit: '3', global_limit: '60' } });
   check(P6, 'closed sign-ups refuse new teams', (await new Client().register('Late', 'late@t.co')).status === 403);
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', signups_open: 'on', per_user_limit: '3', global_limit: '5000' } });
@@ -376,7 +388,7 @@ try {
   const dbq = new DatabaseSync(DB);
   const pu = Object.fromEntries(dbq.prepare('SELECT provider, n FROM provider_usage').all().map((r) => [r.provider, r.n]));
   check(P6B, 'usage is attributed to the model that answered', (pu.custom ?? 0) >= 1);
-  check(P6B, 'admin live view reports the failover', /Failovers since start/.test((await ADM.req('/admin')).text) && />[1-9]\d*</.test((await ADM.req('/admin')).text));
+  check(P6B, 'admin live view reports the failover', /[1-9]\d* failovers? since start/.test((await ADM.req('/admin')).text) && />[1-9]\d*</.test((await ADM.req('/admin')).text));
   // no fallback + primary down => friendly 502 and refund
   // main model accepts the connection but never says a word: give up after the first-token timeout and use the reserve
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-provider', id: 'deepseek', base_url: `http://localhost:${LLM_PORT}/v1`, model: 'stall-model', enabled: 'on', max_tokens: '8000' } });
@@ -387,6 +399,27 @@ try {
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-limits', max_tokens: '16000', max_segments: '3', max_user_streams: '2', fallback_provider: '', cost_per_message: '0.01' } });
   const nofb = await F.chat('hello again', { provider: 'deepseek' });
   check(P6B, 'primary down and no fallback: calm 502, message refunded', nofb.status === 502 && /Press send to try again/.test(nofb.text) && (await F.chat('x', { provider: 'custom' })).headers.get('x-foldo-remaining') === '0');
+  // Adjust quota: extra messages for today, then reset today's count
+  const fId = new DatabaseSync(DB).prepare("SELECT id FROM users WHERE email='f@t.co'").get().id;
+  check(P6B, 'non-admin cannot grant extra messages', (await F.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: fId, extra: '50' } })).status === 404);
+  check(P6B, 'extra messages must be a sane number', (await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: fId, extra: '-5' } })).status === 400);
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: fId, extra: '2' } });
+  check(P6B, 'organizer adds 2 messages for today: the team can send again', (await F.chat('x', { provider: 'custom' })).headers.get('x-foldo-remaining') === '1');
+  check(P6B, 'non-admin cannot reset a count', (await F.req('/admin', { method: 'POST', form: { intent: 'quota-reset', id: fId } })).status === 404);
+  const globalUsed = () => new DatabaseSync(DB).prepare('SELECT SUM(n) AS n FROM usage').get().n;
+  const usedBefore = globalUsed();
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-reset', id: fId } });
+  check(P6B, "reset today's count keeps usage (global cap, spend) truthful", globalUsed() === usedBefore, `${usedBefore} -> ${globalUsed()}`);
+  check(P6B, "reset today's count: limit + extra available again", (await F.chat('x', { provider: 'custom' })).headers.get('x-foldo-remaining') === '4');
+  const admId = new DatabaseSync(DB).prepare("SELECT id FROM users WHERE email='admin@t.co'").get().id;
+  check(P6B, 'organizer accounts are refused by team actions', (await Promise.all(['quota-add', 'quota-reset', 'user-reset', 'user-toggle'].map((intent) => ADM.req('/admin', { method: 'POST', form: { intent, id: admId, extra: '5' } })))).every((r) => r.status === 400));
+  check(P6B, 'team actions on unknown ids are 404', (await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: 'nope', extra: '5' } })).status === 404);
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: fId, extra: '998' } });
+  check(P6B, 'extra messages are capped at 1000 a day', (await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: fId, extra: '1' } })).status === 400);
+  // a failed provider test is remembered and shown
+  const failedTest = await ADM.req('/admin', { method: 'POST', form: { intent: 'test-provider', id: 'deepseek' } });
+  check(P6B, 'failed provider test is reported and shown in the table', failedTest.status === 400 && /Test failed/.test((await ADM.req('/admin')).text), failedTest.status);
+  check(P6B, 'non-admin cannot enable providers', (await F.req('/admin', { method: 'POST', form: { intent: 'provider-enable', id: 'deepseek' } })).status === 404);
   await ADM.req('/admin', { method: 'POST', form: { intent: 'set-default', id: 'custom' } });
   // concurrency: 2 builds per login allowed, third refused with a friendly message
   const E = new Client();
@@ -401,6 +434,12 @@ try {
   check(P6B, 'teams see a banner while paused', (await F.req('/')).text.includes('Fixing Wi-Fi'));
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-pause', pause_message: '' } });
   check(P6B, 'unpausing restores service', (await F.chat('hi again', { provider: 'custom' })).status === 200);
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'pause-on', pause_message: 'Lunch break, back at 1' } });
+  check(P6B, '"Pause and apply message" pauses with the new message', /Lunch break/.test((await F.chat('hi', { provider: 'custom' })).text));
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-pause-message', pause_message: 'Edited while paused' } });
+  check(P6B, '"Save message only" keeps the pause on', /Edited while paused/.test((await F.chat('hi', { provider: 'custom' })).text));
+  check(P6B, 'non-admin cannot pause', (await F.req('/admin', { method: 'POST', form: { intent: 'pause-on' } })).status === 404);
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-pause', pause_message: '' } });
   // backup
   const bk = await ADM.req('/api/admin-backup');
   check(P6B, 'admin can download a valid SQLite backup', bk.status === 200 && bk.text.startsWith('SQLite format 3'), bk.status);

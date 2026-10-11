@@ -24,10 +24,15 @@ export async function updateShare(id: string, share: boolean, listed?: boolean):
       return (await res.json()) as ShareState;
     }
 
+    // 403 + hidden: the organizers took it out of the gallery; the server explains (the link still works)
+    const body = (await res.json().catch(() => ({}))) as { error?: string; hidden?: boolean };
+
     toast.error(
       res.status === 401
         ? 'Please sign in again to keep sharing. Your work is saved.'
-        : 'Something went wrong on our side. Try again in a moment.',
+        : body.hidden && body.error
+          ? body.error
+          : 'Something went wrong on our side. Try again in a moment.',
     );
   } catch {
     toast.error("Couldn't update sharing. Check your connection and try again.");

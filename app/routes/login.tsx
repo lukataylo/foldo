@@ -1,6 +1,7 @@
 import { json, redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node';
 import { LoginPage } from '~/components/auth/LoginPage';
 import { getEvent, inviteCode, signupsOpen } from '~/lib/.server/config';
+import { cleanName, teamNameError } from '~/lib/.server/names';
 import {
   clientIp,
   createSession,
@@ -69,10 +70,16 @@ export async function action({ request }: ActionFunctionArgs) {
       return json({ error: 'That invite code is not valid. Ask an organizer for the right one.', field: 'invite' }, 403);
     }
 
-    const name = String(form.get('name') ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    const name = cleanName(form.get('name'), 40);
 
-    if (name.length < 2) {
+    if ([...name].length < 2) {
       return json({ error: 'Add your name or team name (2+ characters).', field: 'name' }, 400);
+    }
+
+    const nameError = teamNameError(name);
+
+    if (nameError) {
+      return json({ error: nameError, field: 'name' }, 400);
     }
 
     if (password.length < 8) {

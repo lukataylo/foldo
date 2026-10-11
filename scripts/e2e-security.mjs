@@ -487,6 +487,8 @@ try {
   check(P7, 'a one-letter team name is refused', badName.status === 400 && badName.json().field === 'name');
   const taken = await D.req(SETTINGS_DATA, { method: 'POST', form: { intent: 'profile', name: 'team ALPHA' } });
   check(P7, 'a team name another team uses is refused', taken.status === 400 && /Another team/.test(taken.json().error), taken.text);
+  const dupSignup = await new Client().req('/login?_data=routes%2Flogin', { method: 'POST', form: { intent: 'register', name: 'TEAM alpha', email: 'dup-name@t.co', password: 'correct-horse-9', invite: 'hack26' } });
+  check(P7, 'sign-up with a team name another team uses is refused on the name field', dupSignup.status === 400 && dupSignup.json().field === 'name' && /Another team/.test(dupSignup.json().error), dupSignup.text);
   const renamed = await D.req('/settings', { method: 'POST', form: { intent: 'profile', name: '  Team   Delta Prime ' } });
   check(P7, 'profile save updates the team name', renamed.status === 200 && (await D.req('/settings')).text.includes('Team Delta Prime'));
   const other = new Client();

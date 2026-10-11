@@ -7,7 +7,7 @@ Vibe-coding platform on a Node port of bolt.new (Remix + Vite, React 18). See RE
 - Projects are the chat messages; reopening re-runs the `<boltArtifact>` actions in the WebContainer, so no file snapshot is stored.
 - `server.mjs` uses `installGlobals({ nativeFetch: true })` — remix-serve's polyfilled fetch breaks the AI SDK streams.
 - vite `nodePolyfills` has `process: false`; the shim hides `process.env` on the server.
-- Check: `npm run build` then `npm start`; `npx vitest run` (parser tests). `tsc` has a few upstream type errors (Markdown, unist).
+- Check: `npm run build` then `npm start`; `npm test` (vitest, scoped to app/). `tsc` has a few upstream type errors (Markdown, unist).
 - `/` is the landing page for visitors and the studio home when signed in; `chat.$id` and `p.$shareId` render the same `Studio`.
 - Non-Claude models ignore bolt's artifact format unless `FORMAT_REMINDER` (prompts.ts) is appended; default OpenAI model is gpt-4.1.
 - API routes use `requireApiUser` (401), page routes use `requireUser` (redirect).

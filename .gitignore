@@ -28,3 +28,6 @@ data/
 public/templates/
 !templates/snapshots/
 scripts/art-out/
+
+# local agent worktrees
+.claude/

@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react';
 import { useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { Icon } from '~/components/ui/icons';
-import { chatId, description, lastSaved, saveState, shareId } from '~/lib/persistence';
+import { chatId, description, lastSaved, saveState } from '~/lib/persistence';
 
 const MAX = 80;
 const FAILED = "Couldn't rename. Try again.";
@@ -52,11 +52,7 @@ export function ProjectTitle({ fallback }: { fallback?: string }) {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        /*
-         * share repeats the current state: a server without the rename action treats this POST as a share update, and
-         * share: true keeps an existing link (and its gallery listing) exactly as it is instead of revoking it
-         */
-        body: JSON.stringify({ id, rename: next, share: Boolean(shareId.get()) }),
+body: JSON.stringify({ id, rename: next }),
       });
       const body = res.ok ? ((await res.json()) as { ok?: boolean; description?: string }) : undefined;
 

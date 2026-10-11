@@ -3,7 +3,9 @@ import { useLoaderData } from '@remix-run/react';
 import { Studio } from '~/components/Studio';
 import { Landing } from '~/components/landing/Landing';
 import { getUser, shell } from '~/lib/.server/auth';
+import { inviteCode } from '~/lib/.server/config';
 import { db } from '~/lib/.server/db';
+import { galleryItems } from '~/lib/.server/gallery';
 
 export const meta: MetaFunction = () => [
   { title: 'Foldo · Describe it. Watch it build. Share the link.' },
@@ -19,15 +21,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const user = await getUser(request);
 
   if (!user) {
-    return json({ event: shell().event, templates: shell().templates });
+    const { event, templates } = shell();
+
+    return json({
+      event,
+      templates,
+      gallery: galleryItems(undefined, { sort: 'top', limit: 3 }),
+      inviteRequired: inviteCode() !== '',
+      now: Date.now(), // "2h ago" is computed against this on both server and client
+    });
   }
 
   const recent = db
-    .prepare('SELECT id, description, updated FROM projects WHERE user_id = ? ORDER BY updated DESC LIMIT 3')
+    .prepare('SELECT id, description, share_id AS shareId, template, updated FROM projects WHERE user_id = ? ORDER BY updated DESC LIMIT 3')
     .all(user.id);
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM projects WHERE user_id = ?').get(user.id) as { n: number };
 
-  return json({ ...shell(user), recent, projectCount: n });
+  return json({ ...shell(user), recent, projectCount: n, now: Date.now() });
 }
 
 export default function Index() {

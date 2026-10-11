@@ -1,7 +1,9 @@
 import { useLoaderData } from '@remix-run/react';
 import { atom } from 'nanostores';
+import { createElement } from 'react';
 import type { Message } from 'ai';
 import { toast } from 'react-toastify';
+import { Icon } from '~/components/ui/icons';
 import { activeTemplate } from '~/lib/templates/client';
 import { workbenchStore } from '~/lib/stores/workbench';
 
@@ -41,6 +43,8 @@ export const lastSaved = atom<number | undefined>(undefined);
 // "Try now" while reconnecting: skip the rest of the current wait and retry at once
 let wake: (() => void) | undefined;
 
+const cloudOff = () => createElement(Icon.CloudOff, { size: 18 });
+
 const SAVE_FAILED = "We couldn't save just now. Your work is still on screen; keep going and it will save when we reconnect.";
 
 // one save with retries: a server restart or a blip on venue Wi-Fi must not lose or interrupt anyone's work
@@ -61,7 +65,7 @@ async function putWithRetry(body: unknown): Promise<Response | undefined> {
     if (attempt < waits.length) {
       if (attempt === 0) {
         // say so on the first miss (the strip and header keep showing it while we retry)
-        toast.error(SAVE_FAILED, { toastId: 'save-failed' });
+        toast.error(SAVE_FAILED, { toastId: 'save-failed', icon: cloudOff });
       }
 
       saveState.set('retrying');
@@ -86,7 +90,11 @@ async function putWithRetry(body: unknown): Promise<Response | undefined> {
  * The studio calls this before its header renders (browser only: on the server these atoms are shared by every request).
  */
 export function seedProjectStores(data: ProjectLoaderData) {
-  if (!seeded || data.id !== chatId.get()) {
+  /*
+   * A page without an id (`/`, a share link) gets one from its first save, without a navigation; the loader data still
+   * has no id then, and must not wipe the new project's stores on the next render.
+   */
+  if (!seeded || (data.id !== undefined && data.id !== chatId.get())) {
     seeded = true;
     chatId.set(data.id);
     description.set(data.description);
@@ -137,6 +145,7 @@ function storeMessages(messages: Message[]) {
       saveState.set('failed');
       toast.error(res?.status === 401 ? 'Please sign in again to save your project. Your work is still on screen.' : SAVE_FAILED, {
         toastId: res?.status === 401 ? 'save-signin' : 'save-failed',
+        icon: res?.status === 401 ? undefined : cloudOff,
       });
 
       return;

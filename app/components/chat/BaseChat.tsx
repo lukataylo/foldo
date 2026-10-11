@@ -16,7 +16,7 @@ import { Composer } from './Composer';
 import { Messages } from './Messages.client';
 import { SharedAbout, useSharedMeta } from './SharedAbout';
 import { CutOffCard, OriginalConversation, PausedCard, QuotaCard, RemixCard, RemixNote, UsedUpBar } from './StudioCards';
-import { cutOffShown, useLayout, useOnline } from './studio-state';
+import { cutOffShown, useLayout, useOnline, usePause } from './studio-state';
 
 interface BaseChatProps {
   textareaRef?: React.RefObject<HTMLTextAreaElement> | undefined;
@@ -41,7 +41,7 @@ interface LoaderBits {
   remaining?: number;
   template?: string;
   messages?: Message[];
-  paused?: { paused: boolean; since?: number | null };
+  paused?: { paused: boolean; message: string; since?: number | null };
 }
 
 export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
@@ -73,6 +73,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     const [showOriginal, setShowOriginal] = useState(false);
     const template = useStore(activeTemplate) ?? data.template;
     const shared = useSharedMeta();
+    const pause = usePause(data.paused);
     const lastMessage = messages.at(-1);
     const { aborted } = useStore(chatStore);
     // a reply the team stopped on purpose is not "cut off"
@@ -114,7 +115,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     const viewer = Boolean(data.shared) && !data.email;
     const remixing = Boolean(data.shared) && Boolean(data.email) && !id;
     const original = data.messages?.length ?? 0;
-    const paused = data.paused?.paused;
+    const paused = pause?.paused;
 
     // cutOff: the reply ended before its closing tag (length limit), so the card offers to continue it
     const blocked = !isOnline ? 'Waiting for connection' : paused ? 'Builds are paused' : undefined;
@@ -141,7 +142,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     let composer: React.ReactNode;
 
     if (paused && !isStreaming) {
-      composer = <PausedCard since={data.paused?.since} />;
+      composer = <PausedCard since={pause?.since} />;
     } else if (left === 0 && !isStreaming) {
       composer = (
         <>

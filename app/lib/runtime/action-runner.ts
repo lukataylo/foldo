@@ -6,8 +6,12 @@ import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
 import { previewError } from '~/lib/stores/ui';
 import type { ActionCallbackData } from './message-parser';
+import { keepPackDependencies } from './package-merge';
 
 const logger = createScopedLogger('ActionRunner');
+
+// imported lazily: the templates client imports the workbench store, which imports this file
+const isTemplateProject = async () => Boolean((await import('~/lib/templates/client')).activeTemplate.get());
 
 // a dev server never exits, so its failures never mark the command failed
 export const isServerCommand = (command: string) =>
@@ -409,8 +413,18 @@ export class ActionRunner {
       }
     }
 
+    let content = action.content;
+
+    if (/^(\.\/)?package\.json$/.test(action.filePath) && (await isTemplateProject())) {
+      try {
+        content = keepPackDependencies(await webcontainer.fs.readFile('package.json', 'utf-8'), content);
+      } catch {
+        // no package.json yet: write the reply's
+      }
+    }
+
     try {
-      await webcontainer.fs.writeFile(action.filePath, action.content);
+      await webcontainer.fs.writeFile(action.filePath, content);
       logger.debug(`File written ${action.filePath}`);
     } catch (error) {
       // shown as failed instead of a green tick on a file that isn't there

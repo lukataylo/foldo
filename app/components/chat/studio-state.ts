@@ -61,3 +61,67 @@ export function useOnline() {
 
 export const clock = (t: number) =>
   new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(/\s?([AP])M$/, (_, x) => ` ${x.toLowerCase()}m`);
+
+export interface PauseInfo {
+  paused: boolean;
+  message: string;
+  since?: number | null;
+}
+
+// the organizer pause as last polled (/api/status); undefined until the first poll, then it wins over the loader's copy
+export const livePause = atom<PauseInfo | undefined>(undefined);
+
+export function usePause(fromLoader?: PauseInfo) {
+  return useStore(livePause) ?? fromLoader;
+}
+
+const POLL_MS = 20_000;
+
+/*
+ * A pause (or the end of one) reaches open studios within 20s, and the messages-left count stays honest. Only while the
+ * tab is visible; a hidden tab catches up the moment it is shown again.
+ */
+export function useStatusPoll(enabled: boolean, onRemaining: (left: number) => void) {
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+
+    const tick = async () => {
+      clearTimeout(timer);
+
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        try {
+          const res = await fetch('/api/status', { cache: 'no-store' });
+
+          if (res.ok) {
+            const s = (await res.json()) as PauseInfo & { remaining: number };
+
+            livePause.set({ paused: s.paused, message: s.message, since: s.since });
+            onRemaining(s.remaining);
+          }
+        } catch {
+          // offline or a server restart: the next tick tries again
+        }
+      }
+
+      if (!stopped) {
+        timer = setTimeout(tick, POLL_MS);
+      }
+    };
+
+    const onVisible = () => document.visibilityState === 'visible' && tick();
+
+    timer = setTimeout(tick, POLL_MS);
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [enabled]);
+}

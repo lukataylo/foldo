@@ -115,10 +115,12 @@ interface DialogProps {
   className?: string;
   onBackdrop?: (event: React.UIEvent) => void;
   onClose?: (event: React.UIEvent) => void;
+  // render your own RadixDialog.Close instead (e.g. to place it earlier in the tab order)
+  hideClose?: boolean;
 }
 
 // Sheet, 1px Rule, radius 14, floating shadow, over an Ink scrim at 42%
-export const Dialog = memo(({ className, children, onBackdrop, onClose }: DialogProps) => {
+export const Dialog = memo(({ className, children, onBackdrop, onClose, hideClose }: DialogProps) => {
   return (
     <RadixDialog.Portal>
       <RadixDialog.Overlay onClick={onBackdrop} asChild>
@@ -142,11 +144,13 @@ export const Dialog = memo(({ className, children, onBackdrop, onClose }: Dialog
           variants={dialogVariants}
         >
           {children}
-          <RadixDialog.Close asChild onClick={onClose}>
-            <button type="button" aria-label="Close" className="btn-icon absolute right-4 top-4 h-[36px] w-[36px]">
-              <Icon.Close size={18} />
-            </button>
-          </RadixDialog.Close>
+          {!hideClose && (
+            <RadixDialog.Close asChild onClick={onClose}>
+              <button type="button" aria-label="Close" className="btn-icon absolute right-4 top-4 h-[36px] w-[36px]">
+                <Icon.Close size={18} />
+              </button>
+            </RadixDialog.Close>
+          )}
         </motion.div>
       </RadixDialog.Content>
     </RadixDialog.Portal>

@@ -8,7 +8,7 @@
   "scripts": {
     "build": "remix vite:build",
     "dev": "node --env-file-if-exists=.env node_modules/@remix-run/dev/dist/cli.js vite:dev",
-    "test": "vitest --run",
+    "test": "vitest --run --dir app",
     "test:watch": "vitest",
     "start": "node --env-file-if-exists=.env server.mjs",
     "typecheck": "tsc",

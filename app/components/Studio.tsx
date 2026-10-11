@@ -7,13 +7,14 @@ import { AppHeader, type ShellData } from '~/components/PageShell';
 import { BaseChat } from '~/components/chat/BaseChat';
 import { Chat } from '~/components/chat/Chat.client';
 import { SIcon } from '~/components/chat/studio-icons';
-import { clock, online, useOnline } from '~/components/chat/studio-state';
+import { clock, online, useOnline, usePause, useStatusPoll } from '~/components/chat/studio-state';
 import { EventBar } from '~/components/header/EventBar';
 import { Header } from '~/components/header/Header';
 import { copyText } from '~/components/share/ShareDialog';
 import { Icon } from '~/components/ui/icons';
 import { chatId, retrySaveNow, saveState, seedProjectStores, type ProjectLoaderData } from '~/lib/persistence';
 import { chatStore } from '~/lib/stores/chat';
+import { quota } from '~/lib/stores/ui';
 import { workbenchStore } from '~/lib/stores/workbench';
 
 export interface StudioData extends ShellData {
@@ -38,6 +39,10 @@ export function Studio() {
   }
 
   const chat = useStore(chatStore);
+  const pause = usePause(data.paused);
+
+  useStatusPoll(Boolean(data.email), (left) => quota.set(left));
+
   const started = chat.started || (data.messages?.length ?? 0) > 0 || Boolean(data.shared);
 
   return (
@@ -51,7 +56,7 @@ export function Studio() {
         </>
       )}
       {data.shared ? <SharedBanner signedIn={Boolean(data.email)} url={data.url} /> : null}
-      {data.paused?.paused ? <PausedStrip message={data.paused.message} since={data.paused.since} /> : null}
+      {pause?.paused ? <PausedStrip message={pause.message} since={pause.since} /> : null}
       {started ? <ClientOnly>{() => <OfflineStrip />}</ClientOnly> : null}
       <ClientOnly fallback={<BaseChat chatStarted={started} />}>{() => <Chat />}</ClientOnly>
     </div>

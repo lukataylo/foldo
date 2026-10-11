@@ -20,6 +20,10 @@ export function setSetting(key: string, value: string) {
   }
 }
 
+// like setSetting, but an empty value is stored, so a blank field overrides the env fallback instead of reverting to it
+export const storeSetting = (key: string, value: string) =>
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, value);
+
 const num = (v: string, d: number) => (Number.isFinite(Number(v)) && v !== '' ? Number(v) : d);
 
 export const perUserLimit = () => num(getSetting('per_user_limit'), num(process.env.DAILY_MESSAGE_LIMIT ?? '', 50));
@@ -244,6 +248,23 @@ export function listProviders(): Provider[] {
     };
   });
 }
+
+// the last admin "Test" result per provider (a failed test shows in /admin and blocks making it the default)
+export interface ProviderTest {
+  ok: boolean;
+  note: string;
+  at: number;
+}
+
+export function providerTest(id: string): ProviderTest | undefined {
+  try {
+    return JSON.parse(getSetting(`provider_test:${id}`) || 'null') ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const setProviderTest = (id: string, t?: ProviderTest) => setSetting(`provider_test:${id}`, t ? JSON.stringify(t) : '');
 
 export const usableProviders = () => listProviders().filter((p) => p.key && p.enabled && p.baseURL && p.model);
 

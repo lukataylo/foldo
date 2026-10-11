@@ -2,6 +2,7 @@ import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-r
 import { randomBytes } from 'node:crypto';
 import { requireApiUser } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
+import { cleanName } from '~/lib/.server/names';
 import { getTemplateMeta } from '~/lib/.server/templates';
 
 const MAX_BYTES = 5_000_000;
@@ -16,7 +17,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json(rows.map((r) => ({ ...r, urlId: r.id, timestamp: new Date(r.updated).toISOString() })));
 }
 
-// PUT {id?, description, messages} = save · POST {id, share} = (un)share · DELETE {id}
+// PUT {id?, description, messages} = save · POST {id, share} = (un)share · POST {id, rename} = rename · DELETE {id}
 export async function action({ request }: ActionFunctionArgs) {
   const user = await requireApiUser(request);
   const body = (await request.json()) as any;
@@ -35,7 +36,10 @@ export async function action({ request }: ActionFunctionArgs) {
       (first ? first.content.replace(/\s+/g, ' ').trim().slice(0, 60) : null);
 
     if (owned) {
-      db.prepare('UPDATE projects SET description = ?, messages = ?, template = COALESCE(?, template), updated = ? WHERE id = ?').run(
+      // a name the team chose (rename) wins over whatever description the autosave sends
+      db.prepare(
+        'UPDATE projects SET description = CASE WHEN renamed = 1 THEN description ELSE ? END, messages = ?, template = COALESCE(?, template), updated = ? WHERE id = ?',
+      ).run(
         description,
         messages,
         template,
@@ -70,9 +74,28 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: true });
   }
 
+  if (request.method === 'POST' && 'rename' in body) {
+    const description = cleanName(body.rename, 80);
+
+    if (!description) {
+      return json({ error: 'Give your project a name.' }, 400);
+    }
+
+    db.prepare('UPDATE projects SET description = ?, renamed = 1, updated = ? WHERE id = ?').run(description, Date.now(), body.id);
+
+    return json({ ok: true, description });
+  }
+
   if (request.method === 'POST') {
     // share: true keeps an existing link stable; share: false also removes it from the gallery
-    const existing = (db.prepare('SELECT share_id FROM projects WHERE id = ?').get(body.id) as any)?.share_id;
+    const row = db.prepare('SELECT share_id, hidden_at FROM projects WHERE id = ?').get(body.id) as any;
+
+    // an organizer hid it from the gallery: sharing still works, listing doesn't
+    if (body.listed && row?.hidden_at) {
+      return json({ error: 'The organizers removed this project from the gallery. Your share link still works.', hidden: true }, 403);
+    }
+
+    const existing = row?.share_id;
     const shareId = body.share ? existing || newId() + newId() : null;
     const listed = shareId ? (body.listed === undefined ? undefined : body.listed ? 1 : 0) : 0;
 

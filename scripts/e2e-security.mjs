@@ -206,7 +206,9 @@ try {
   check(P1, 'cross-origin POST blocked (CSRF)', (await anon.req('/login', { method: 'POST', form: { intent: 'login', email: 'a@b.co', password: 'x' }, headers: { origin: 'https://evil.example' } })).status === 403);
   check(P1, '6.5MB body rejected before parsing', (await anon.req('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, raw: 'x'.repeat(6_500_000) })).status === 413);
   check(P1, 'register without invite code refused', (await anon.register('Evil', 'e@e.co', 'correct-horse-9', '')).status === 403);
-  check(P1, 'register with wrong invite refused', (await anon.register('Evil', 'e@e.co', 'correct-horse-9', 'nope')).status === 403);
+  const wrongInvite = await anon.register('Evil', 'e@e.co', 'correct-horse-9', 'nope');
+  check(P1, 'register with wrong invite refused', wrongInvite.status === 403);
+  check(P1, 'wrong invite says why, under the invite field', wrongInvite.text.includes('That invite code is not valid') && wrongInvite.text.includes('"field":"invite"'));
   check(P1, 'register without name refused', (await anon.register('', 'e2@e.co')).status === 400);
   check(P1, 'weak password refused', (await anon.register('Weak', 'w@e.co', 'short')).status === 400);
   const sqli = await anon.register("x'); DROP TABLE users;--", "a'--@x.co");
@@ -232,6 +234,7 @@ try {
   check(P2, 'quota header counts down', c1.headers.get('x-foldo-remaining') === '2', c1.headers.get('x-foldo-remaining'));
   const gal = await anon.req('/gallery');
   check(P2, 'gallery shows the listed project to anonymous visitors', gal.status === 200 && gal.text.includes('Alpha app') && gal.text.includes('Team Alpha'));
+  check(P2, 'landing shows the gallery strip to visitors', (await new Client().req('/')).text.includes('Alpha app'));
   const sharePage = await anon.req(`/p/${shareA.shareId}`);
   check(P2, 'public share page loads without login', sharePage.status === 200);
   check(P2, 'share page has absolute link-preview tags', sharePage.text.includes(`property="og:image" content="${BASE}/og.jpg"`) && sharePage.text.includes(`property="og:url" content="${BASE}/p/${shareA.shareId}"`) && sharePage.text.includes('property="og:title" content="Alpha app"'));

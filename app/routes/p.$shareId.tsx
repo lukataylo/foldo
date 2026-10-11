@@ -30,9 +30,10 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
 function publicOrigin(request: Request) {
   const url = new URL(request.url);
   const host = request.headers.get('x-forwarded-host')?.split(',')[0].trim() || request.headers.get('host') || url.host;
-  const proto = request.headers.get('x-forwarded-proto')?.split(',')[0].trim() || url.protocol.replace(':', '');
+  const proto = request.headers.get('x-forwarded-proto')?.split(',')[0].trim().toLowerCase();
 
-  return `${proto}://${host}`;
+  // the headers are client-controlled, so only a plain hostname and http(s) make it into the page
+  return `${proto === 'https' || proto === 'http' ? proto : url.protocol.replace(':', '')}://${/^[a-z0-9.-]+(:\d{1,5})?$/i.test(host) ? host : url.host}`;
 }
 
 // Public share link: anyone can open and run the project; chatting requires an account and forks it.

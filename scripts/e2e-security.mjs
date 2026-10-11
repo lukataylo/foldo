@@ -193,6 +193,14 @@ try {
   const sharePage = await anon.req(`/p/${shareA.shareId}`);
   check(P2, 'public share page loads without login', sharePage.status === 200);
   check(P2, 'share page has absolute link-preview tags', sharePage.text.includes(`property="og:image" content="${BASE}/og.jpg"`) && sharePage.text.includes(`property="og:url" content="${BASE}/p/${shareA.shareId}"`) && sharePage.text.includes('property="og:title" content="Alpha app"'));
+  const forgedHost = await anon.req(`/p/${shareA.shareId}`, { headers: { 'x-forwarded-host': 'evil.example"><script>x</script>', 'x-forwarded-proto': 'javascript' } });
+  check(P2, 'forged forwarded headers cannot inject into link-preview tags', forgedHost.status === 200 && !forgedHost.text.includes('evil.example"') && !forgedHost.text.includes('<script>x') && !forgedHost.text.includes('javascript://'), forgedHost.text.match(/og:url" content="[^"]*"/)?.[0]);
+  const xssId = await A.save('"><script>alert(1)</script>');
+  const xssShare = (await A.req('/api/projects', { method: 'POST', body: { id: xssId, share: true } })).json();
+  const xssPage = await anon.req(`/p/${xssShare.shareId}`);
+  check(P2, 'a hostile project title is escaped in share page meta', xssPage.status === 200 && !xssPage.text.includes('<script>alert(1)'));
+  await A.req('/api/projects', { method: 'POST', body: { id: xssId, share: false } });
+  check(P2, 'a revoked share link 404s', (await anon.req(`/p/${xssShare.shareId}`)).status === 404);
 
   // ============ Persona 3: malicious teammate B ============
   const B = new Client();

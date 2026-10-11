@@ -157,7 +157,8 @@ export default function Projects() {
             title={sharing.description ?? undefined}
             state={{ shareId: sharing.shareId, listed: Boolean(sharing.listed) }}
             onChange={(next) => {
-              setSharing({ ...sharing, shareId: next.shareId, listed: next.listed ? 1 : 0 });
+              // functional: a reply landing after the dialog was closed must not reopen it
+              setSharing((cur) => (cur?.id === sharing.id ? { ...cur, shareId: next.shareId, listed: next.listed ? 1 : 0 } : cur));
               revalidator.revalidate();
             }}
           />

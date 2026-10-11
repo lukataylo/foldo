@@ -33,13 +33,16 @@ export async function updateShare(id: string, share: boolean, listed?: boolean):
 
 export const shareUrl = (shareId: string) => `${location.origin}/p/${shareId}`;
 
-export async function copyText(text: string) {
+export async function copyText(text: string, { quiet = false } = {}) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
     // clipboard needs a secure context and focus; the link field stays selectable as a fallback
-    toast.error("Couldn't reach the clipboard. Select the link and copy it manually.");
+    if (!quiet) {
+      toast.error("Couldn't reach the clipboard. Select the link and copy it manually.");
+    }
+
     return false;
   }
 }
@@ -102,8 +105,15 @@ function ShareBody({ projectId, title, state, onChange }: Omit<ShareDialogProps,
   const create = async () => {
     const next = await run('create', true);
 
-    if (next?.shareId && (await copyText(shareUrl(next.shareId)))) {
+    if (!next?.shareId) {
+      return;
+    }
+
+    // Safari and Firefox drop the user gesture across the fetch, so the auto-copy may be refused; that's not an error
+    if (await copyText(shareUrl(next.shareId), { quiet: true })) {
       setCopied(true);
+    } else {
+      toast.success('Link created. Copy it below.');
     }
   };
 
@@ -308,7 +318,7 @@ function ShareTargets({ url, name, qr, onQr }: { url: string; name: string; qr: 
         <a
           key={t.label}
           href={t.href}
-          target="_blank"
+          target={t.href.startsWith('mailto:') ? undefined : '_blank'}
           rel="noopener noreferrer"
           aria-label={`Share on ${t.label}`}
           className={tile}

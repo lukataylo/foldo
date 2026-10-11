@@ -4,7 +4,7 @@ import { EventBar, type EventInfo } from '~/components/header/EventBar';
 import { SiteHeader } from '~/components/PageShell';
 import { Icon } from '~/components/ui/icons';
 import type { TemplateCard } from '~/lib/templates/client';
-import { MobileNav, SiteFooter } from './MarketingNav';
+import { SiteFooter } from './MarketingNav';
 import { ProjectCard, type GalleryItem } from './ProjectCard';
 import { PROMPT_KEY, TEMPLATE_KEY } from './starters';
 
@@ -86,6 +86,14 @@ function remember(key: string, value: string) {
   }
 }
 
+function forget(key: string) {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // storage unavailable: nothing was kept
+  }
+}
+
 function SectionHead({ id, eyebrow, title, aside }: { id: string; eyebrow: string; title: ReactNode; aside?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-end justify-between gap-6">
@@ -106,15 +114,17 @@ function Hero({ onStart }: { onStart: (prompt: string) => void }) {
   const [prompt, setPrompt] = useState('');
   const field = useRef<HTMLTextAreaElement>(null);
 
-  const submit = () => onStart(prompt.trim() || PLACEHOLDER.replace('…', ''));
+  // an empty box just takes focus; we never invent a prompt for them
+  const submit = () => (prompt.trim() ? onStart(prompt.trim()) : field.current?.focus());
 
   return (
     <section
       aria-labelledby="hero-title"
-      className="xl:flex xl:min-h-[716px] xl:items-center xl:bg-[url(/art/hero-band.webp)] xl:bg-[length:auto_100%] xl:bg-right-bottom xl:bg-no-repeat"
+      className="lg:grid lg:grid-cols-2 lg:items-center min-[1360px]:!flex min-[1360px]:min-h-[716px] min-[1360px]:bg-[url(/art/hero-band.webp)] min-[1360px]:bg-[length:auto_100%] min-[1360px]:bg-right-bottom min-[1360px]:bg-no-repeat"
     >
-      <div className="container-marketing pt-5 xl:pb-24 xl:pt-12">
-        <div className="flex max-w-[580px] flex-col gap-4 md:gap-5 xl:max-w-[min(580px,calc(100vw-760px))]">
+      <div className="container-marketing pt-5 lg:pb-12 lg:pt-8 min-[1360px]:!pb-24 min-[1360px]:!pt-12">
+        {/* on the band, the column stops >= 24px short of the dog's tail (art starts ~713px from the right edge) */}
+        <div className="flex max-w-[580px] flex-col gap-4 md:gap-5 min-[1360px]:max-w-[min(580px,calc(100vw-800px))]">
           <h1 id="hero-title" className="m-0 text-balance font-serif text-[56px] font-normal leading-[.92] tracking-[-.02em] text-ink md:text-[clamp(56px,7vw,100px)]">
             Describe it. Watch it <em>build.</em>
           </h1>
@@ -187,7 +197,7 @@ function Hero({ onStart }: { onStart: (prompt: string) => void }) {
         alt="Foldo, a paper-folded dachshund, typing on a paper laptop while a little app pops up out of the screen"
         width={1536}
         height={1024}
-        className="mt-2 block aspect-[3/2] h-auto w-full md:ml-auto md:max-w-[880px] xl:hidden"
+        className="mt-2 block aspect-[3/2] h-auto w-full md:ml-auto md:max-w-[640px] lg:mt-0 lg:max-w-none min-[1360px]:!hidden"
       />
     </section>
   );
@@ -197,8 +207,8 @@ function Tracks({ onTrack }: { onTrack: (track: string) => void }) {
   const [active, setActive] = useState(0);
 
   return (
-    <section aria-labelledby="tracks-title" className="border-t border-solid border-rule md:border-t-0">
-      <div className="container-marketing flex flex-col gap-6 py-12 md:gap-12 md:pb-[104px] md:pt-24">
+    <section aria-labelledby="tracks-title" className="border-t border-solid border-rule lg:border-t-0">
+      <div className="container-marketing flex flex-col gap-6 py-12 lg:gap-12 lg:pb-[104px] lg:pt-24">
         <SectionHead
           id="tracks-title"
           eyebrow="Tracks"
@@ -215,10 +225,10 @@ function Tracks({ onTrack }: { onTrack: (track: string) => void }) {
             const el = e.currentTarget;
             setActive(Math.round(el.scrollLeft / 300));
           }}
-          className="-mx-4 m-0 flex snap-x snap-mandatory list-none gap-3 overflow-x-auto px-4 pb-1 [scroll-padding:16px] [scrollbar-width:none] md:mx-0 md:grid md:grid-cols-[repeat(auto-fit,minmax(min(320px,100%),1fr))] md:gap-6 md:overflow-visible md:p-0"
+          className="-mx-4 m-0 flex snap-x snap-mandatory list-none gap-3 overflow-x-auto px-4 pb-1 [scroll-padding:16px] [scrollbar-width:none] lg:mx-0 lg:grid lg:grid-cols-3 lg:gap-6 lg:overflow-visible lg:p-0"
         >
           {TRACKS.map((t, i) => (
-            <li key={t.name} className="flex-[0_0_288px] snap-start md:flex-auto">
+            <li key={t.name} className="flex-[0_0_288px] snap-start lg:flex-auto">
               <a
                 href="/login?mode=register"
                 onClick={(e) => {
@@ -235,21 +245,21 @@ function Tracks({ onTrack }: { onTrack: (track: string) => void }) {
                   loading="lazy"
                   className="block aspect-[4/3] h-auto w-full border-b border-solid border-rule object-cover"
                 />
-                <div className="flex flex-1 flex-col gap-2 px-[18px] pb-[18px] pt-4 md:gap-[10px] md:px-6 md:pb-7 md:pt-6">
-                  <span className="font-mono text-[12px] text-pencil md:hidden">
+                <div className="flex flex-1 flex-col gap-2 px-[18px] pb-[18px] pt-4 lg:gap-[10px] lg:px-6 lg:pb-7 lg:pt-6">
+                  <span className="font-mono text-[12px] text-pencil lg:hidden">
                     0{i + 1} · {t.name}
                   </span>
-                  <h3 className="m-0 text-balance font-serif text-[28px] font-normal leading-none md:text-[36px]">
-                    <span className="md:hidden">{t.phoneTitle}</span>
-                    <span className="hidden md:inline">{t.name}</span>
+                  <h3 className="m-0 text-balance font-serif text-[28px] font-normal leading-none lg:text-[36px]">
+                    <span className="lg:hidden">{t.phoneTitle}</span>
+                    <span className="hidden lg:inline">{t.name}</span>
                   </h3>
-                  <p className="m-0 text-[14px] text-ink2 md:text-balance md:text-[16px]">
-                    <span className="md:hidden">{t.phoneBlurb}</span>
-                    <span className="hidden md:inline">{t.blurb}</span>
+                  <p className="m-0 text-[14px] text-ink2 lg:text-balance lg:text-[16px]">
+                    <span className="lg:hidden">{t.phoneBlurb}</span>
+                    <span className="hidden lg:inline">{t.blurb}</span>
                   </p>
-                  <span className="inline-flex items-center gap-[6px] pt-1 text-[14px] font-semibold group-hover:underline md:mt-auto md:pt-[10px] md:text-[15px]">
-                    <span className="md:hidden">Start with {t.short}</span>
-                    <span className="hidden md:inline">Start with {t.name}</span>
+                  <span className="inline-flex items-center gap-[6px] pt-1 text-[14px] font-semibold group-hover:underline lg:mt-auto lg:pt-[10px] lg:text-[15px]">
+                    <span className="lg:hidden">Start with {t.short}</span>
+                    <span className="hidden lg:inline">Start with {t.name}</span>
                     <Icon.ArrowRight />
                   </span>
                 </div>
@@ -257,7 +267,7 @@ function Tracks({ onTrack }: { onTrack: (track: string) => void }) {
             </li>
           ))}
         </ul>
-        <div aria-hidden="true" className="flex items-center gap-[6px] md:hidden">
+        <div aria-hidden="true" className="flex items-center gap-[6px] lg:hidden">
           {TRACKS.map((t, i) => (
             <span key={t.name} className={`h-[4px] rounded-full transition-all duration-base ${i === active ? 'w-[20px] bg-ink' : 'w-[6px] bg-field'}`} />
           ))}
@@ -270,7 +280,7 @@ function Tracks({ onTrack }: { onTrack: (track: string) => void }) {
 function Steps() {
   return (
     <section aria-labelledby="steps-title" className="border-t border-solid border-rule bg-sheet">
-      <div className="container-marketing flex flex-col gap-7 py-12 md:gap-14 md:pb-[104px] md:pt-24">
+      <div className="container-marketing flex flex-col gap-7 py-12 lg:gap-14 lg:pb-[104px] lg:pt-24">
         <SectionHead
           id="steps-title"
           eyebrow="How it works"
@@ -281,11 +291,11 @@ function Steps() {
           }
           aside={<Lead>Everything runs in the browser tab you already have open. Nothing to install, nothing to deploy.</Lead>}
         />
-        <ol className="m-0 flex list-none flex-col p-0 md:grid md:grid-cols-[repeat(auto-fit,minmax(min(320px,100%),1fr))] md:gap-x-8 md:gap-y-10">
+        <ol className="m-0 flex list-none flex-col p-0 lg:grid lg:grid-cols-3 lg:gap-x-8 lg:gap-y-10">
           {STEPS.map((s, i) => (
             <li
               key={s.art}
-              className={`grid grid-cols-[104px_1fr] items-start gap-4 border-t border-solid py-4 last:pb-0 md:flex md:flex-col md:gap-5 md:border-t-0 md:py-0 ${i === 0 ? 'border-ink' : 'border-rule'}`}
+              className={`grid grid-cols-[104px_1fr] items-start gap-4 border-t border-solid py-4 last:pb-0 lg:flex lg:flex-col lg:gap-5 lg:border-t-0 lg:py-0 ${i === 0 ? 'border-ink' : 'border-rule'}`}
             >
               <img
                 src={`/art/${s.art}.webp`}
@@ -293,15 +303,15 @@ function Steps() {
                 width={1024}
                 height={1024}
                 loading="lazy"
-                className="block aspect-square h-[104px] w-[104px] rounded-[12px] border border-solid border-rule object-cover md:h-auto md:w-full md:rounded-[14px]"
+                className="block aspect-square h-[104px] w-[104px] rounded-[12px] border border-solid border-rule object-cover lg:h-auto lg:w-full lg:rounded-[14px]"
               />
-              <div className="flex flex-col gap-1 md:grid md:grid-cols-[48px_1fr] md:gap-x-3 md:gap-y-2 md:border-t md:border-solid md:border-ink md:pt-5">
-                <span className="font-mono text-[12px] text-pencil md:hidden">Step {i + 1}</span>
-                <span aria-hidden="true" className="row-span-2 hidden font-serif text-[44px] leading-[.8] text-pencil md:block">
+              <div className="flex flex-col gap-1 lg:grid lg:grid-cols-[48px_1fr] lg:gap-x-3 lg:gap-y-2 lg:border-t lg:border-solid lg:border-ink lg:pt-5">
+                <span className="font-mono text-[12px] text-pencil lg:hidden">Step {i + 1}</span>
+                <span aria-hidden="true" className="row-span-2 hidden font-serif text-[44px] leading-[.8] text-pencil lg:block">
                   {i + 1}
                 </span>
-                <h3 className="m-0 font-serif text-[26px] font-normal leading-none md:text-[32px]">{s.title}</h3>
-                <p className="m-0 text-[14px] leading-[1.45] text-ink2 md:text-pretty md:text-[16px] md:leading-[1.55]">{s.body}</p>
+                <h3 className="m-0 font-serif text-[26px] font-normal leading-none lg:text-[32px]">{s.title}</h3>
+                <p className="m-0 text-[14px] leading-[1.45] text-ink2 lg:text-pretty lg:text-[16px] lg:leading-[1.55]">{s.body}</p>
               </div>
             </li>
           ))}
@@ -311,13 +321,13 @@ function Steps() {
   );
 }
 
-function GalleryStrip({ items }: { items: GalleryItem[] }) {
+function GalleryStrip({ items, now }: { items: GalleryItem[]; now: number }) {
   if (!items.length) {
     return null;
   }
 
   return (
-    <section aria-labelledby="gallery-title" className="hidden border-t border-solid border-rule md:block">
+    <section aria-labelledby="gallery-title" className="hidden border-t border-solid border-rule lg:block">
       <div className="container-marketing flex flex-col gap-12 pb-[104px] pt-24">
         <SectionHead
           id="gallery-title"
@@ -336,9 +346,9 @@ function GalleryStrip({ items }: { items: GalleryItem[] }) {
             </>
           }
         />
-        <ul className="m-0 grid list-none grid-cols-[repeat(auto-fit,minmax(min(320px,100%),1fr))] gap-6 p-0">
+        <ul className="m-0 grid list-none grid-cols-3 gap-6 p-0">
           {items.map((item) => (
-            <ProjectCard key={item.id} item={item} signedIn={false} size="strip" />
+            <ProjectCard key={item.id} item={item} signedIn={false} now={now} size="strip" />
           ))}
         </ul>
       </div>
@@ -349,7 +359,7 @@ function GalleryStrip({ items }: { items: GalleryItem[] }) {
 function Closing({ inviteRequired }: { inviteRequired: boolean }) {
   return (
     <section aria-labelledby="closing-title" className="border-t border-solid border-rule md:bg-sheet">
-      <div className="container-marketing grid items-center gap-5 py-12 md:grid-cols-[repeat(auto-fit,minmax(min(480px,100%),1fr))] md:gap-[clamp(32px,5vw,72px)] md:py-[104px]">
+      <div className="container-marketing grid items-center gap-5 py-12 md:grid-cols-2 md:gap-[clamp(32px,5vw,72px)] md:py-[104px]">
         <img
           src="/art/closing.webp"
           alt="Foldo in a sweatband sprinting for the finish tape, a giant paper stopwatch behind it"
@@ -387,47 +397,25 @@ function Closing({ inviteRequired }: { inviteRequired: boolean }) {
   );
 }
 
-function Sponsors({ names }: { names: string[] }) {
-  if (!names.length) {
-    return null;
-  }
-
-  return (
-    <section aria-label="Sponsors" className="hidden border-t border-solid border-rule md:block">
-      <div className="container-marketing flex flex-wrap items-center justify-between gap-6 py-10">
-        <span className="eyebrow">Hosted with</span>
-        <ul className="m-0 flex list-none flex-wrap gap-4 p-0">
-          {names.map((name) => (
-            <li
-              key={name}
-              className="inline-flex h-[48px] min-w-[168px] items-center justify-center rounded-[6px] border border-dashed border-field px-6 font-mono text-[12px] text-pencil"
-            >
-              {name}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </section>
-  );
-}
-
 export function Landing() {
   const navigate = useNavigate();
   const {
     event,
     templates = [],
     gallery = [],
-    sponsors = [],
+    now = 0,
     inviteRequired = false,
   } = useLoaderData() as {
     event?: EventInfo | null;
     templates?: TemplateCard[];
     gallery?: GalleryItem[];
-    sponsors?: string[];
+    now?: number;
     inviteRequired?: boolean;
   };
 
   const start = (text: string) => {
+    // the latest choice wins: a typed prompt replaces a starter picked earlier, and the other way round
+    forget(TEMPLATE_KEY);
     remember(PROMPT_KEY, text);
     navigate('/login?mode=register');
   };
@@ -436,8 +424,12 @@ export function Landing() {
   const startTrack = (track: string) => {
     const first = templates.find((t) => t.track === track);
 
+    forget(PROMPT_KEY);
+
     if (first) {
       remember(TEMPLATE_KEY, first.id);
+    } else {
+      forget(TEMPLATE_KEY);
     }
 
     navigate('/login?mode=register');
@@ -447,12 +439,7 @@ export function Landing() {
     <div className="h-full overflow-y-auto bg-paper font-sans text-[16px] leading-[1.55] text-ink" data-testid="foldo-marketing-landing">
       <EventBar event={event} variant="marketing" />
       <div className="bg-heroyellow">
-        <div className="hidden md:block">
-          <SiteHeader tone="yellow" />
-        </div>
-        <div className="md:hidden">
-          <MobileNav />
-        </div>
+        <SiteHeader tone="yellow" />
       </div>
       <main>
         <div className="bg-heroyellow">
@@ -460,9 +447,8 @@ export function Landing() {
         </div>
         <Tracks onTrack={startTrack} />
         <Steps />
-        <GalleryStrip items={gallery} />
+        <GalleryStrip items={gallery} now={now} />
         <Closing inviteRequired={inviteRequired} />
-        <Sponsors names={sponsors} />
       </main>
       <SiteFooter />
     </div>

@@ -7,19 +7,29 @@ import { Logo } from '~/components/brand/Logo';
  */
 export type AuthPanel = 'welcome' | 'invite' | 'closed';
 
-const PANELS: Record<AuthPanel, { bg: string; label: string; alt: string }> = {
+/*
+ * The art is a tall 1100x1500 panel on a flat field colour. From xl the panel is close to that shape, so it covers;
+ * on narrower tablets it would crop the dog, so it is shown whole (full width, centred) on the same field colour.
+ */
+const PANELS: Record<AuthPanel, { field: string; art: string; pos: string; label: string; alt: string }> = {
   welcome: {
-    bg: "#FDB10B url('/art/signup-panel.webp') center 62%/cover no-repeat",
+    field: '#FDB10B',
+    art: '/art/signup-panel.webp',
+    pos: 'center 62%',
     label: 'Welcome',
     alt: 'Foldo the paper dachshund on a cushion, wearing one name badge and holding out a second one',
   },
   invite: {
-    bg: "#FEFCF6 url('/art/invite-invalid-panel.webp') center 45%/cover no-repeat",
+    field: '#FEFCF6',
+    art: '/art/invite-invalid-panel.webp',
+    pos: 'center 45%',
     label: 'Invite code help',
     alt: 'Detective Foldo in a deerstalker peering through a magnifying glass at a blank ticket, a question mark above',
   },
   closed: {
-    bg: "#FDFBF5 url('/art/signups-closed-panel.webp') center 45%/cover no-repeat",
+    field: '#FDFBF5',
+    art: '/art/signups-closed-panel.webp',
+    pos: 'center 45%',
     label: 'Sign-ups closed',
     alt: 'Foldo as a doorman in a bow tie, standing politely beside a velvet rope',
   },
@@ -55,8 +65,8 @@ export function AuthSplit({
 
       <aside
         aria-label={p.label}
-        className={`relative hidden min-w-0 flex-col px-12 py-10 md:flex ${panel === 'welcome' ? 'justify-between' : 'justify-end border-l border-solid border-rule'}`}
-        style={{ background: p.bg }}
+        className={`relative hidden min-w-0 flex-col bg-[length:100%_auto] bg-center bg-no-repeat px-12 py-10 md:flex xl:bg-cover xl:bg-[position:var(--panel-pos)] ${panel === 'welcome' ? 'justify-between' : 'justify-end border-l border-solid border-rule'}`}
+        style={{ backgroundColor: p.field, backgroundImage: `url('${p.art}')`, ['--panel-pos' as string]: p.pos }}
       >
         <span role="img" aria-label={p.alt} className="absolute inset-0" />
         {panel === 'welcome' && (

@@ -147,10 +147,20 @@ export async function requireUser(request: Request): Promise<User> {
   const user = await getUser(request);
 
   if (!user) {
-    throw redirect('/login');
+    const { pathname, search } = new URL(request.url);
+    const next = request.method === 'GET' && pathname !== '/' ? `?next=${encodeURIComponent(pathname + search)}` : '';
+
+    throw redirect(`/login${next}`);
   }
 
   return user;
+}
+
+// where to go after signing in: a same-origin path only ("/x", never "//host" or "/\host"), else home
+export function safeNext(value: unknown): string {
+  const next = typeof value === 'string' ? value : '';
+
+  return /^\/(?![/\\])[^\s]*$/.test(next) && next.length < 500 ? next : '/';
 }
 
 export async function requireAdmin(request: Request): Promise<User> {

@@ -3,7 +3,7 @@ import { useLoaderData } from '@remix-run/react';
 import { Studio } from '~/components/Studio';
 import { Landing } from '~/components/landing/Landing';
 import { getUser, shell } from '~/lib/.server/auth';
-import { getSetting, inviteCode } from '~/lib/.server/config';
+import { inviteCode } from '~/lib/.server/config';
 import { db } from '~/lib/.server/db';
 import { galleryItems } from '~/lib/.server/gallery';
 
@@ -26,14 +26,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return json({
       event,
       templates,
-      gallery: galleryItems(undefined, 'top', 3),
+      gallery: galleryItems(undefined, { sort: 'top', limit: 3 }),
       inviteRequired: inviteCode() !== '',
-      // "Hosted with" strip: comma-separated names in the `sponsors` setting, hidden when empty
-      sponsors: getSetting('sponsors')
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .slice(0, 8),
+      now: Date.now(), // "2h ago" is computed against this on both server and client
     });
   }
 

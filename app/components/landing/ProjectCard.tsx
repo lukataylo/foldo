@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { Icon } from '~/components/ui/icons';
 import { iconProps } from '~/lib/templates/client';
@@ -21,36 +21,24 @@ export interface GalleryItem {
 
 export const projectTitle = (item: GalleryItem) => item.description || 'Untitled project';
 
-export function Heart({ size = 16, filled = false }: { size?: number; filled?: boolean }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill={filled ? 'currentColor' : 'none'}
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className="shrink-0"
-    >
-      <path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20z" />
-    </svg>
-  );
-}
-
 // like / unlike with the server's count; visitors are sent to sign in, owners can't like their own project
 export function useLike(item: GalleryItem, signedIn: boolean) {
   const [state, setState] = useState({ likes: item.likes, liked: item.liked });
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
 
   const toggle = async () => {
     if (!signedIn) {
-      window.location.href = '/login';
+      window.location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
       return;
     }
 
+    // a second click while the first is on its way would send a stale like/unlike
+    if (inFlight.current) {
+      return;
+    }
+
+    inFlight.current = true;
     setBusy(true);
 
     try {
@@ -62,7 +50,15 @@ export function useLike(item: GalleryItem, signedIn: boolean) {
       const data = (await res.json().catch(() => ({}))) as { likes?: number; liked?: boolean; error?: string };
 
       if (!res.ok || data.likes === undefined) {
-        toast.error(res.status === 429 ? 'Too many likes at once. Try again in a minute.' : (data.error ?? 'Could not save your like. Try again.'));
+        toast.error(
+          res.status === 404
+            ? 'That project is no longer listed.'
+            : res.status === 429
+              ? 'Slow down a little and try again.'
+              : res.status === 401
+                ? 'Please sign in again to like projects.'
+                : (data.error ?? 'Could not save your like. Try again.'),
+        );
         return;
       }
 
@@ -70,6 +66,7 @@ export function useLike(item: GalleryItem, signedIn: boolean) {
     } catch {
       toast.error('Could not reach Foldo. Check your connection and try again.');
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
@@ -80,6 +77,7 @@ export function useLike(item: GalleryItem, signedIn: boolean) {
 export function LikeButton({ item, signedIn, large = false }: { item: GalleryItem; signedIn: boolean; large?: boolean }) {
   const { likes, liked, busy, toggle } = useLike(item, signedIn);
   const title = projectTitle(item);
+  const countId = useId();
 
   return (
     <button
@@ -88,7 +86,8 @@ export function LikeButton({ item, signedIn, large = false }: { item: GalleryIte
       disabled={item.mine}
       aria-busy={busy || undefined}
       aria-pressed={liked}
-      aria-label={`${liked ? 'Unlike' : 'Like'} ${title}, ${likes} ${likes === 1 ? 'like' : 'likes'}`}
+      aria-label={`Like ${title}`}
+      aria-describedby={countId}
       title={item.mine ? 'This is your project' : undefined}
       className={classNames(
         'inline-flex shrink-0 cursor-pointer items-center border border-solid font-mono font-medium outline-none transition-colors duration-fast focus-visible:shadow-[0_0_0_2px_#FBF8F1,0_0_0_4px_#16140F] disabled:cursor-default',
@@ -96,8 +95,10 @@ export function LikeButton({ item, signedIn, large = false }: { item: GalleryIte
         liked ? 'border-ink bg-wash text-ink' : 'border-field bg-sheet text-ink2 enabled:hover:bg-wash enabled:hover:text-ink',
       )}
     >
-      <Heart size={large ? 18 : 16} filled={liked} />
-      {likes}
+      <Icon.Heart size={large ? 18 : 16} fill={liked ? 'currentColor' : 'none'} />
+      <span id={countId} aria-label={`${likes} ${likes === 1 ? 'like' : 'likes'}`}>
+        {likes}
+      </span>
     </button>
   );
 }
@@ -110,11 +111,12 @@ export function TrackTag({ track }: { track: string | null }) {
   ) : null;
 }
 
-export function Byline({ item }: { item: GalleryItem }) {
+// `now` comes from the loader so the server and the browser print the same "2h ago"
+export function Byline({ item, now }: { item: GalleryItem; now: number }) {
   return (
     <div className="flex flex-wrap items-center gap-[10px] text-[13px] text-pencil">
       <span>
-        by {item.name} · {timeAgo(item.updated)}
+        by {item.name} · {timeAgo(item.updated, now)}
       </span>
       <TrackTag track={item.track} />
     </div>
@@ -171,7 +173,17 @@ export function Preview({ item, size = 'grid' }: { item: GalleryItem; size?: 'st
 }
 
 // gallery card (Landing strip and Gallery grid): preview, serif title, byline + track, Run it and the like count
-export function ProjectCard({ item, signedIn, size = 'grid' }: { item: GalleryItem; signedIn: boolean; size?: 'strip' | 'grid' }) {
+export function ProjectCard({
+  item,
+  signedIn,
+  now,
+  size = 'grid',
+}: {
+  item: GalleryItem;
+  signedIn: boolean;
+  now: number;
+  size?: 'strip' | 'grid';
+}) {
   const href = `/p/${item.shareId}`;
   const title = projectTitle(item);
 
@@ -186,7 +198,7 @@ export function ProjectCard({ item, signedIn, size = 'grid' }: { item: GalleryIt
             {title}
           </a>
         </h3>
-        <Byline item={item} />
+        <Byline item={item} now={now} />
         <div className="mt-auto flex items-center justify-between gap-3 border-t border-solid border-rule2 pt-3">
           <a
             href={href}

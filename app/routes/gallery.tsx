@@ -1,13 +1,13 @@
 import { json, type LoaderFunctionArgs } from '@remix-run/node';
-import { useLoaderData, useSearchParams } from '@remix-run/react';
-import { useState } from 'react';
-import { EventBar } from '~/components/header/EventBar';
-import { AppHeader, SiteHeader, type ShellData } from '~/components/PageShell';
-import { MobileNav, SiteFooter } from '~/components/landing/MarketingNav';
+import { useLoaderData, useNavigation, useSearchParams } from '@remix-run/react';
+import { useEffect, useRef } from 'react';
+import { PageShell, type ShellData } from '~/components/PageShell';
+import { SiteFooter } from '~/components/landing/MarketingNav';
 import { Byline, LikeButton, Preview, ProjectCard, projectTitle, type GalleryItem } from '~/components/landing/ProjectCard';
+import { TRACKS } from '~/components/landing/starters';
 import { Icon } from '~/components/ui/icons';
 import { getUser, shell } from '~/lib/.server/auth';
-import { galleryItems, projectSummary } from '~/lib/.server/gallery';
+import { galleryCounts, galleryItems, projectSummary } from '~/lib/.server/gallery';
 import { classNames } from '~/utils/classNames';
 
 export const meta = () => [
@@ -16,30 +16,43 @@ export const meta = () => [
   { property: 'og:image', content: '/og.jpg' },
 ];
 
-const TRACKS = ['Payments', 'Access to Finance', 'Fraud and Security'];
 const PAGE = 9;
 
-// Public showcase of projects their owners chose to list. Anyone can browse; signed-in teams can like.
+/*
+ * Public showcase of projects their owners chose to list. Anyone can browse; signed-in teams can like.
+ * ?sort=new, ?track=<name>, ?n=<shown> ("Show more" asks the server for the next page).
+ */
 export async function loader({ request }: LoaderFunctionArgs) {
   const user = await getUser(request);
-  const sort = new URL(request.url).searchParams.get('sort') === 'new' ? 'new' : 'top';
-  const items = galleryItems(user?.id, sort, 500);
+  const params = new URL(request.url).searchParams;
+  const sort = params.get('sort') === 'new' ? 'new' : 'top';
+  const track = TRACKS.find((t) => t === params.get('track')) ?? null;
+  const shown = Math.min(Math.max(Number(params.get('n')) || PAGE, PAGE), 300);
 
-  // the most liked project gets the featured card, whichever sort is showing
-  const top = sort === 'top' ? items[0] : galleryItems(user?.id, 'top', 1)[0];
-  const featured = top && top.likes > 0 ? { id: top.id, summary: projectSummary(top.id) } : null;
+  // the featured card is the top of the "Most liked" list (all tracks), so it costs no extra query
+  const withFeatured = sort === 'top' && !track;
+  const items = galleryItems(user?.id, { sort, track, limit: shown + (withFeatured ? 1 : 0) });
+  const featured = withFeatured && items[0]?.likes > 0 ? items[0] : null;
   const { templates: _templates, ...rest } = shell(user);
 
-  return json({ ...rest, items, featured });
+  return json({
+    ...rest,
+    sort,
+    track,
+    featured: featured ? { item: featured, summary: projectSummary(featured.id) } : null,
+    items: featured ? items.slice(1) : items.slice(0, shown),
+    counts: galleryCounts(),
+    now: Date.now(),
+  });
 }
 
-function Featured({ item, summary, signedIn }: { item: GalleryItem; summary: string; signedIn: boolean }) {
+function Featured({ item, summary, signedIn, now }: { item: GalleryItem; summary: string; signedIn: boolean; now: number }) {
   const href = `/p/${item.shareId}`;
 
   return (
     <section
       aria-labelledby="featured-title"
-      className="grid items-center gap-8 rounded-[16px] border border-solid border-rule bg-sheet p-6 lg:grid-cols-[minmax(0,300px)_minmax(0,1.25fr)_minmax(0,1fr)]"
+      className="grid items-center gap-6 rounded-[16px] border border-solid border-rule bg-sheet p-6 md:grid-cols-2 md:gap-8 lg:grid-cols-[minmax(0,300px)_minmax(0,1.25fr)_minmax(0,1fr)]"
       data-testid="foldo-gallery-featured"
     >
       <img
@@ -57,13 +70,13 @@ function Featured({ item, summary, signedIn }: { item: GalleryItem; summary: str
           <span className="pill-dot" aria-hidden="true" />
           Most liked this event
         </span>
-        <h2 id="featured-title" className="m-0 font-serif text-[44px] font-normal leading-none tracking-[-.01em]">
+        <h2 id="featured-title" className="m-0 font-serif text-[36px] font-normal leading-none tracking-[-.01em] md:text-[44px]">
           <a href={href} className="text-ink no-underline hover:underline">
             {projectTitle(item)}
           </a>
         </h2>
         {summary && <p className="m-0 text-pretty text-[16px] text-ink2">{summary}</p>}
-        <Byline item={item} />
+        <Byline item={item} now={now} />
         <div className="mt-[6px] flex flex-wrap items-center gap-3">
           <a href={href} className="btn-primary btn-lg">
             Run it <Icon.ArrowRight />
@@ -108,14 +121,36 @@ function Empty({ filtered, onReset }: { filtered: boolean; onReset: () => void }
 }
 
 export default function Gallery() {
-  const d = useLoaderData<typeof loader>() as unknown as ShellData & { items: GalleryItem[]; featured: { id: string; summary: string } | null };
+  const d = useLoaderData<typeof loader>() as unknown as ShellData & {
+    sort: 'top' | 'new';
+    track: string | null;
+    items: GalleryItem[];
+    featured: { item: GalleryItem; summary: string } | null;
+    counts: Record<string, number>;
+    now: number;
+  };
   const [params, setParams] = useSearchParams();
-  const [shown, setShown] = useState(PAGE);
-  const sort = params.get('sort') === 'new' ? 'new' : 'top';
-  const track = TRACKS.find((t) => t === params.get('track')) ?? null;
+  const navigation = useNavigation();
+  const loading = navigation.state === 'loading' && navigation.location?.pathname === '/gallery';
+  const list = useRef<HTMLUListElement>(null);
+  const focusFrom = useRef<number | null>(null);
+  const { sort, track, items, featured, counts, now } = d;
   const signedIn = Boolean(d.email);
+  const offset = featured ? 1 : 0;
+  const total = (track ? counts[track] : counts.all) ?? 0;
+  const remaining = total - offset - items.length;
 
-  const set = (next: { sort?: string; track?: string | null }) => {
+  // after "Show more", move focus to the first new card
+  useEffect(() => {
+    const from = focusFrom.current;
+
+    if (from !== null && items.length > from) {
+      focusFrom.current = null;
+      list.current?.querySelectorAll<HTMLAnchorElement>('li h3 a')[from]?.focus();
+    }
+  }, [items]);
+
+  const set = (next: Record<string, string | null>) => {
     const p = new URLSearchParams(params);
 
     for (const [k, v] of Object.entries(next)) {
@@ -126,16 +161,8 @@ export default function Gallery() {
       }
     }
 
-    setShown(PAGE);
     setParams(p, { preventScrollReset: true });
   };
-
-  const inTrack = track ? d.items.filter((i) => i.track === track) : d.items;
-  const featured = !track && d.featured ? d.items.find((i) => i.id === d.featured!.id) : undefined;
-  const rest = featured ? inTrack.filter((i) => i.id !== featured.id) : inTrack;
-  const offset = featured ? 1 : 0;
-  const visible = rest.slice(0, shown);
-  const total = d.items.length;
 
   const chip = (label: string, count: number, value: string | null) => {
     const on = track === value;
@@ -145,7 +172,7 @@ export default function Gallery() {
         key={label}
         type="button"
         aria-pressed={on}
-        onClick={() => set({ track: value })}
+        onClick={() => set({ track: value, n: null })}
         className={classNames(
           'inline-flex h-[34px] cursor-pointer items-center gap-2 rounded-full border border-solid px-[14px] font-sans text-[14px] font-medium outline-none transition-colors duration-fast focus-visible:shadow-[0_0_0_2px_#FBF8F1,0_0_0_4px_#16140F]',
           on ? 'border-ink bg-ink text-paper' : 'border-field bg-sheet text-ink hover:bg-wash',
@@ -158,28 +185,18 @@ export default function Gallery() {
   };
 
   return (
-    // PageShell's frame plus the marketing footer (PageShell has no footer slot yet)
-    <div className="h-full overflow-y-auto bg-paper text-[15px] leading-[1.5] text-ink">
-      <EventBar event={d.event} variant={signedIn ? 'app' : 'marketing'} />
-      {signedIn ? (
-        <AppHeader data={d} active="gallery" />
-      ) : (
-        <>
-          <div className="hidden md:block">
-            <SiteHeader active="gallery" />
-          </div>
-          <div className="md:hidden">
-            <MobileNav />
-          </div>
-        </>
-      )}
-      <main className={classNames(signedIn ? 'container-app pt-12' : 'container-marketing pt-6', 'flex flex-col gap-10 pb-24')}>
+    <PageShell
+      data={d}
+      active="gallery"
+      mainClassName={signedIn ? 'flex flex-col gap-10 pb-24 pt-12' : 'flex flex-col gap-10 pb-24 pt-6'}
+      footer={!signedIn && <SiteFooter compact />}
+    >
       <div className="flex flex-col gap-7" data-testid="foldo-gallery">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div className="flex flex-col gap-3">
             <span className="eyebrow">
               {d.event?.name ? `${d.event.name} · ` : ''}
-              {total} {total === 1 ? 'project' : 'projects'}
+              {counts.all} {counts.all === 1 ? 'project' : 'projects'}
             </span>
             <h1 className="m-0 font-serif text-[64px] font-normal leading-[.92] tracking-[-.02em] md:text-[88px]">Gallery</h1>
             <p className="m-0 max-w-[560px] text-pretty text-[18px] text-ink2">
@@ -192,7 +209,7 @@ export default function Gallery() {
                 key={s}
                 type="button"
                 aria-pressed={sort === s}
-                onClick={() => set({ sort: s })}
+                onClick={() => set({ sort: s, n: null })}
                 className={classNames(
                   'h-[36px] cursor-pointer rounded-[6px] border border-solid px-[14px] font-sans text-[14px] outline-none focus-visible:shadow-[0_0_0_2px_#16140F]',
                   sort === s ? 'border-rule bg-sheet font-semibold text-ink' : 'border-transparent bg-transparent font-medium text-ink2 hover:text-ink',
@@ -205,12 +222,12 @@ export default function Gallery() {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-4 border-t border-solid border-rule pt-5">
           <div role="group" aria-label="Filter by track" className="flex flex-wrap gap-2">
-            {chip('All', total, null)}
-            {TRACKS.map((t) => chip(t, d.items.filter((i) => i.track === t).length, t))}
+            {chip('All', counts.all, null)}
+            {TRACKS.map((t) => chip(t, counts[t] ?? 0, t))}
           </div>
           {!signedIn && (
             <p className="m-0 text-[14px] text-pencil">
-              <a href="/login" className="font-semibold text-ink underline underline-offset-3">
+              <a href="/login?next=%2Fgallery" className="font-semibold text-ink underline underline-offset-3">
                 Sign in
               </a>{' '}
               to like projects.
@@ -219,10 +236,10 @@ export default function Gallery() {
         </div>
       </div>
 
-      {featured && <Featured item={featured} summary={d.featured!.summary} signedIn={signedIn} />}
+      {featured && <Featured item={featured.item} summary={featured.summary} signedIn={signedIn} now={now} />}
 
-      {rest.length === 0 ? (
-        !featured && <Empty filtered={Boolean(track) && total > 0} onReset={() => set({ track: null })} />
+      {items.length === 0 ? (
+        !featured && <Empty filtered={Boolean(track) && counts.all > 0} onReset={() => set({ track: null, n: null })} />
       ) : (
         <section aria-labelledby="all-title" className="flex flex-col gap-5">
           <div className="flex items-baseline justify-between gap-4">
@@ -230,25 +247,33 @@ export default function Gallery() {
               {track ?? (featured ? 'All projects' : 'Projects')}
             </h2>
             <span className="font-mono text-[12px] text-pencil">
-              Showing {offset + 1}–{offset + visible.length} of {offset + rest.length}
+              Showing {offset + 1}–{offset + items.length} of {total}
             </span>
           </div>
-          <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(360px,100%),1fr))] gap-6 p-0">
-            {visible.map((item) => (
-              <ProjectCard key={item.id} item={item} signedIn={signedIn} />
+          <ul ref={list} className="m-0 grid list-none grid-cols-1 gap-6 p-0 sm:grid-cols-2 lg:grid-cols-3">
+            {items.map((item) => (
+              <ProjectCard key={item.id} item={item} signedIn={signedIn} now={now} />
             ))}
           </ul>
-          {visible.length < rest.length && (
+          {remaining > 0 && (
             <div className="mt-4 flex justify-center">
-              <button type="button" onClick={() => setShown(shown + PAGE)} className="btn-secondary btn-lg">
+              <button
+                type="button"
+                aria-busy={loading || undefined}
+                disabled={loading}
+                onClick={() => {
+                  focusFrom.current = items.length;
+                  set({ n: String(items.length + PAGE) });
+                }}
+                className="btn-secondary btn-lg"
+              >
+                {loading && <Icon.Spinner />}
                 Show more projects
               </button>
             </div>
           )}
         </section>
       )}
-      </main>
-      {!signedIn && <SiteFooter compact />}
-    </div>
+    </PageShell>
   );
 }

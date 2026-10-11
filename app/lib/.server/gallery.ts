@@ -1,13 +1,26 @@
 import type { GalleryItem } from '~/components/landing/ProjectCard';
+import { TRACKS } from '~/components/landing/starters';
 import { db } from './db';
 import { templateIndex } from './templates';
 
+const LISTED = 'p.listed = 1 AND p.share_id IS NOT NULL AND u.disabled = 0';
+
 /*
- * Projects their owners chose to list, newest or most liked first. The track and icon come from the template the project
- * started from (projects built from a plain prompt have neither).
+ * Listed projects, newest or most liked first, optionally one track. The track and icon come from the template the
+ * project started from (projects built from a plain prompt have neither, so they only appear under "All").
  */
-export function galleryItems(userId: string | undefined, sort: 'top' | 'new', limit: number): GalleryItem[] {
-  const templates = new Map(templateIndex().templates.map((t) => [t.id, t]));
+export function galleryItems(
+  userId: string | undefined,
+  { sort, track, limit, offset = 0 }: { sort: 'top' | 'new'; track?: string | null; limit: number; offset?: number },
+): GalleryItem[] {
+  const templates = templateIndex().templates;
+  const byId = new Map(templates.map((t) => [t.id, t]));
+  const inTrack = track ? templates.filter((t) => t.track === track).map((t) => t.id) : [];
+
+  if (track && !inTrack.length) {
+    return [];
+  }
+
   const rows = db
     .prepare(
       `SELECT p.id, p.share_id AS shareId, p.description, p.template, u.name, p.updated,
@@ -15,16 +28,37 @@ export function galleryItems(userId: string | undefined, sort: 'top' | 'new', li
          (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id AND l.user_id = ?) AS liked,
          (p.user_id = ?) AS mine
        FROM projects p JOIN users u ON u.id = p.user_id
-       WHERE p.listed = 1 AND p.share_id IS NOT NULL AND u.disabled = 0
-       ORDER BY ${sort === 'new' ? 'p.updated' : 'likes DESC, p.updated'} DESC LIMIT ?`,
+       WHERE ${LISTED} ${track ? `AND p.template IN (${inTrack.map(() => '?').join(',')})` : ''}
+       ORDER BY ${sort === 'new' ? 'p.updated DESC' : 'likes DESC, p.updated DESC'} LIMIT ? OFFSET ?`,
     )
-    .all(userId ?? '', userId ?? '', limit) as any[];
+    .all(userId ?? '', userId ?? '', ...inTrack, limit, offset) as any[];
 
   return rows.map(({ template, liked, mine, ...row }) => {
-    const t = template ? templates.get(template) : undefined;
+    const t = template ? byId.get(template) : undefined;
 
     return { ...row, icon: t?.icon ?? null, track: t && t.track !== 'Any track' ? t.track : null, liked: Boolean(liked), mine: Boolean(mine) };
   });
+}
+
+// listed projects per track, plus the total ("All")
+export function galleryCounts(): Record<string, number> {
+  const byId = new Map(templateIndex().templates.map((t) => [t.id, t.track]));
+  const rows = db
+    .prepare(`SELECT p.template, COUNT(*) AS n FROM projects p JOIN users u ON u.id = p.user_id WHERE ${LISTED} GROUP BY p.template`)
+    .all() as { template: string | null; n: number }[];
+  const counts: Record<string, number> = { all: 0, ...Object.fromEntries(TRACKS.map((t) => [t, 0])) };
+
+  for (const { template, n } of rows) {
+    counts.all += n;
+
+    const track = template ? byId.get(template) : undefined;
+
+    if (track && track in counts) {
+      counts[track] += n;
+    }
+  }
+
+  return counts;
 }
 
 // one line about a project for the featured card: the team's first prompt, else the template's summary

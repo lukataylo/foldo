@@ -17,6 +17,7 @@ The mark is `/foldo-mark.svg` (same geometry as the mockups' mark; favicons are 
 | `build-error-cut.webp` | transparent cutout 720x498 | build-error for tinted surfaces | Build-Error, Illustration |
 | `build-error.webp` | 1:1 | hard hat, wrench, toppled blocks | Illustration |
 | `closing.webp` | 3:2 | sprinting for the finish tape, stopwatch | Illustration, Landing-Mobile, Landing |
+| `conduct.webp` | 3:2 1536x1024, Paper bg | referee with a whistle and pennant | /conduct |
 | `cut-off.webp` | 1:1 | carrying the next track piece | Build-Limits, Illustration |
 | `delete-confirm.webp` | 1:1 | holding a sheet over a bin | Illustration |
 | `delete-wide.webp` | 23:10 1380x600 | delete dialog banner | Projects-Empty |
@@ -32,6 +33,7 @@ The mark is `/foldo-mark.svg` (same geometry as the mockups' mark; favicons are 
 | `invite-invalid.webp` | 1:1 | deerstalker, blank ticket | Illustration |
 | `offline.webp` | 1:1 | cup-and-string phone | Illustration, Offline |
 | `paused.webp` | 3:2 yellow | asleep under a yellow blanket | Admin, Build-Paused, Illustration |
+| `privacy.webp` | 3:2 1536x1024, Paper bg | locking a padlock on a paper box | /privacy |
 | `quota-empty.webp` | 1:1 | licked-clean bowl (messages used up) | Build-Limits, Illustration |
 | `remix.webp` | 3:2 paper | two paper-phone copies holding hands | Illustration, Shared-Remix |
 | `server-error.webp` | 1:1 | tangled in yellow tape (500) | Illustration, ServerError |

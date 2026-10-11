@@ -15,6 +15,7 @@ export interface LoginData {
   signupsOpen: boolean;
   event: string;
   endsAt: number | null;
+  next: string; // same-origin path to return to after signing in ('' = home)
 }
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -70,7 +71,9 @@ const describedBy = (id: string, error?: string, help = false) => (error ? `${id
 // red border comes from `input`; the board adds a soft red ring too
 const field = 'input aria-[invalid=true]:shadow-[0_0_0_3px_rgba(180,35,24,.12)]';
 
-function SignupsClosed() {
+const withNext = (href: string, next: string) => (next ? `${href}${href.includes('?') ? '&' : '?'}next=${encodeURIComponent(next)}` : href);
+
+function SignupsClosed({ next }: { next: string }) {
   return (
     <div className="flex w-full max-w-[440px] flex-col gap-7" data-testid="foldo-signups-closed">
       <span className="pill-warning self-start">
@@ -82,7 +85,7 @@ function SignupsClosed() {
       </h1>
       <p className="m-0 text-pretty text-[17px] leading-[1.55] text-ink2">Already have an account? Sign in to keep building.</p>
       <div className="flex flex-wrap items-center gap-3">
-        <a href="/login" className="btn-dark btn-lg min-h-[48px] px-[22px]">
+        <a href={withNext('/login', next)} className="btn-dark btn-lg min-h-[48px] px-[22px]">
           Sign in <Icon.ArrowRight />
         </a>
         <a href="/gallery" className="btn-secondary btn-lg min-h-[48px] px-5">
@@ -98,7 +101,7 @@ function SignupsClosed() {
 
 export function LoginPage() {
   const result = useActionData() as { error?: string; field?: string } | undefined;
-  const { inviteRequired, signupsOpen: open, event, endsAt } = useLoaderData() as LoginData;
+  const { inviteRequired, signupsOpen: open, event, endsAt, next } = useLoaderData() as LoginData;
   const [params] = useSearchParams();
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle' && navigation.formMethod?.toUpperCase() === 'POST';
@@ -118,6 +121,10 @@ export function LoginPage() {
     if (result?.error) {
       const f = FIELDS.find((x) => x === result.field);
       setErrors(f ? { [f]: result.error } : { form: result.error });
+
+      if (f) {
+        document.querySelector<HTMLElement>(`[data-testid=foldo-auth-form] [name="${f}"]`)?.focus();
+      }
     }
   }, [result]);
 
@@ -130,7 +137,7 @@ export function LoginPage() {
   if (signup && !open) {
     return (
       <AuthSplit panel="closed" eventName={event} closesAt={closesAt}>
-        <SignupsClosed />
+        <SignupsClosed next={next} />
       </AuthSplit>
     );
   }
@@ -274,6 +281,7 @@ export function LoginPage() {
           )}
 
           {errors.form && <FieldError id="form-error">{errors.form}</FieldError>}
+          {next && <input type="hidden" name="next" value={next} />}
 
           <button
             name="intent"
@@ -288,14 +296,22 @@ export function LoginPage() {
           </button>
           {signup && (
             <p className="m-0 text-pretty text-[13px] text-pencil">
-              By creating an account you agree to the event's code of conduct and privacy notice.
+              By creating an account you agree to the{' '}
+              <a href="/conduct" className="text-ink2 underline underline-offset-3">
+                code of conduct
+              </a>{' '}
+              and{' '}
+              <a href="/privacy" className="text-ink2 underline underline-offset-3">
+                privacy notice
+              </a>
+              . Projects stay private until you share them.
             </p>
           )}
         </Form>
 
         <p className="m-0 border-t border-solid border-rule pt-5 text-[14px] text-ink2">
           {signup ? 'Have an account?' : 'New here?'}{' '}
-          <a href={signup ? '/login' : '/login?mode=register'} className="font-semibold text-ink underline underline-offset-3">
+          <a href={withNext(signup ? '/login' : '/login?mode=register', next)} className="font-semibold text-ink underline underline-offset-3">
             {signup ? 'Sign in' : 'Create an account'}
           </a>
         </p>

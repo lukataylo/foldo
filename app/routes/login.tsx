@@ -7,6 +7,7 @@ import {
   destroySession,
   getUser,
   register,
+  safeNext,
   throttled,
   verifyLogin,
 } from '~/lib/.server/auth';
@@ -16,9 +17,17 @@ export const meta = ({ location }: { location: { search: string } }) => [
 ];
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  const next = safeNext(new URL(request.url).searchParams.get('next'));
+
   return (await getUser(request))
-    ? redirect('/')
-    : json({ inviteRequired: inviteCode() !== '', signupsOpen: signupsOpen(), event: getEvent()?.name ?? '', endsAt: getEvent()?.endsAt ?? null });
+    ? redirect(next)
+    : json({
+        inviteRequired: inviteCode() !== '',
+        signupsOpen: signupsOpen(),
+        event: getEvent()?.name ?? '',
+        endsAt: getEvent()?.endsAt ?? null,
+        next: next === '/' ? '' : next,
+      });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -34,15 +43,20 @@ export async function action({ request }: ActionFunctionArgs) {
   const ip = clientIp(request);
   const tooMany = json({ error: 'Too many attempts. Please wait a few minutes and try again.' }, 429);
 
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 200 || password.length > 200) {
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 200) {
     return json({ error: 'Enter a valid email address.', field: 'email' }, 400);
+  }
+
+  if (password.length > 200) {
+    return json({ error: 'Use a password of 200 characters or fewer.', field: 'password' }, 400);
   }
 
   let user;
 
   if (intent === 'register') {
+    // one bucket for every sign-up attempt, so invite codes can't be guessed either
     if (throttled(`reg:${ip}`, 10, 3_600_000)) {
-      return tooMany;
+      return json({ error: 'Too many sign-up attempts from this network. Please try again in an hour.' }, 429);
     }
 
     if (!signupsOpen()) {
@@ -52,9 +66,6 @@ export async function action({ request }: ActionFunctionArgs) {
     const code = inviteCode();
 
     if (code && String(form.get('invite') ?? '').trim().toLowerCase() !== code.toLowerCase()) {
-      // same throttle bucket as bad logins so the code can't be guessed
-      throttled(`reg:${ip}`, 10, 3_600_000);
-
       return json({ error: 'That invite code is not valid. Ask an organizer for the right one.', field: 'invite' }, 403);
     }
 
@@ -89,8 +100,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  return redirect('/', { headers: { 'Set-Cookie': await createSession(user.id) } });
+  return redirect(safeNext(form.get('next')), { headers: { 'Set-Cookie': await createSession(user.id) } });
 }
-
 
 export default LoginPage;

@@ -196,9 +196,14 @@ try {
   check(P1, 'landing page is public', (await anon.req('/')).status === 200);
   check(P1, '/healthz ok', (await anon.req('/healthz')).status === 200);
 
+  for (const [path, heading] of [['/privacy', 'What Foldo keeps, and why.'], ['/conduct', 'Play fair, build boldly.']]) {
+    const r = await anon.req(path);
+    check(P1, `${path} is public`, r.status === 200 && r.text.includes(heading), String(r.status));
+  }
+
   for (const p of ['/projects', '/settings', '/admin', '/chat/abc']) {
     const r = await anon.req(p);
-    check(P1, `${p} redirects to login`, r.status === 302 && r.headers.get('location') === '/login', String(r.status));
+    check(P1, `${p} redirects to login and back`, r.status === 302 && r.headers.get('location') === `/login?next=${encodeURIComponent(p)}`, `${r.status} ${r.headers.get('location')}`);
   }
 
   check(P1, 'GET /api/projects is 401 (not a redirect)', (await anon.req('/api/projects')).status === 401);
@@ -223,6 +228,12 @@ try {
   const A = new Client();
   const P2 = 'team A';
   check(P2, 'registers with invite', (await A.register('Team Alpha', 'a@t.co')).status === 302 && Boolean(A.cookie));
+
+  // after signing in, ?next= only ever leads back into Foldo
+  for (const [next, want] of [['/projects', '/projects'], ['//evil.example/x', '/'], ['/\\evil.example', '/'], ['https://evil.example', '/']]) {
+    const r = await new Client().req('/login', { method: 'POST', form: { intent: 'login', email: 'a@t.co', password: 'correct-horse-9', next } });
+    check(P2, `sign-in next=${next} lands on ${want}`, r.status === 302 && r.headers.get('location') === want, `${r.status} ${r.headers.get('location')}`);
+  }
   const idA = await A.save('Alpha app', 'make alpha');
   check(P2, 'saves a project', Boolean(idA));
   const shareA = (await A.req('/api/projects', { method: 'POST', body: { id: idA, share: true, listed: true } })).json();

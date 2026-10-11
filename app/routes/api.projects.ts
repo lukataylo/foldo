@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { requireApiUser } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
 import { cleanName } from '~/lib/.server/names';
+import { queuePreview } from '~/lib/.server/previews';
 import { getTemplateMeta } from '~/lib/.server/templates';
 
 const MAX_BYTES = 5_000_000;
@@ -38,7 +39,8 @@ export async function action({ request }: ActionFunctionArgs) {
     if (owned) {
       // a name the team chose (rename) wins over whatever description the autosave sends
       db.prepare(
-        'UPDATE projects SET description = CASE WHEN renamed = 1 THEN description ELSE ? END, messages = ?, template = COALESCE(?, template), updated = ? WHERE id = ?',
+        // a new version of the app gets fresh thumbnail attempts
+        'UPDATE projects SET description = CASE WHEN renamed = 1 THEN description ELSE ? END, messages = ?, template = COALESCE(?, template), updated = ?, preview_fail_n = 0 WHERE id = ?',
       ).run(
         description,
         messages,
@@ -105,7 +107,14 @@ export async function action({ request }: ActionFunctionArgs) {
       body.id,
     );
 
-    return json({ shareId, listed: shareId ? Boolean((db.prepare('SELECT listed FROM projects WHERE id = ?').get(body.id) as any).listed) : false });
+    const isListed = shareId ? Boolean((db.prepare('SELECT listed FROM projects WHERE id = ?').get(body.id) as any).listed) : false;
+
+    // the gallery thumbnail is drawn in the background (only if it has none or it is stale)
+    if (isListed) {
+      queuePreview(body.id);
+    }
+
+    return json({ shareId, listed: isListed });
   }
 
   return json({ error: 'method not allowed' }, 405);

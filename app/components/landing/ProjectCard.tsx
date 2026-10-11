@@ -13,6 +13,7 @@ export interface GalleryItem {
   name: string;
   updated: number;
   icon: string | null;
+  previewAt: number | null; // when the AI thumbnail was drawn (routes/preview.$shareId.ts serves it), null = none yet
   track: string | null;
   likes: number;
   liked: boolean;
@@ -130,8 +131,30 @@ const FRAME = {
 };
 
 /*
- * Stand-in for a screenshot: a browser window on Wash with the project's template art. Projects have no stored
- * screenshot, and booting each one in a WebContainer just to draw a card would be far too heavy.
+ * The AI-drawn thumbnail, served as its own document by /preview/:shareId (sanitized when stored, CSP
+ * `default-src 'none'` as a header). It renders in a fully sandboxed frame (no scripts, opaque origin) that the pointer
+ * and keyboard pass straight through: the card link stays the only target. `scale` draws it at a larger virtual size and
+ * shrinks it (the admin's 64px thumbnails).
+ */
+export function PreviewFrame({ shareId, version, scale = 1 }: { shareId: string; version: number; scale?: number }) {
+  return (
+    <iframe
+      sandbox=""
+      src={`/preview/${encodeURIComponent(shareId)}?v=${version}`}
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      aria-hidden="true"
+      tabIndex={-1}
+      title=""
+      className="pointer-events-none block border-0"
+      style={{ width: `${100 / scale}%`, height: `${100 / scale}%`, transform: scale === 1 ? undefined : `scale(${scale})`, transformOrigin: '0 0' }}
+    />
+  );
+}
+
+/*
+ * Stand-in for a screenshot: a browser window on Wash with the project's AI-drawn thumbnail, or its template art until
+ * that exists. Booting each project in a WebContainer just to draw a card would be far too heavy.
  */
 export function Preview({ item, size = 'grid' }: { item: GalleryItem; size?: 'strip' | 'grid' | 'featured' }) {
   const featured = size === 'featured';
@@ -157,6 +180,11 @@ export function Preview({ item, size = 'grid' }: { item: GalleryItem; size?: 'st
           ))}
           <span className="ml-3 truncate font-mono text-[10px] text-pencil">/p/{item.shareId.slice(0, 8)}</span>
         </div>
+        {item.previewAt ? (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <PreviewFrame shareId={item.shareId} version={item.previewAt} />
+          </div>
+        ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center p-3">
           <img
             {...iconProps(item.icon ?? undefined)}
@@ -167,6 +195,7 @@ export function Preview({ item, size = 'grid' }: { item: GalleryItem; size?: 'st
             className="h-auto max-h-full w-auto max-w-[45%] object-contain"
           />
         </div>
+        )}
       </div>
     </div>
   );

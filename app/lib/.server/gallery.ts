@@ -1,6 +1,7 @@
 import type { GalleryItem } from '~/components/landing/ProjectCard';
 import { TRACKS } from '~/components/landing/starters';
 import { db } from './db';
+import { queuePreview } from './previews';
 import { templateIndex } from './templates';
 
 const LISTED = 'p.listed = 1 AND p.share_id IS NOT NULL AND u.disabled = 0';
@@ -23,7 +24,7 @@ export function galleryItems(
 
   const rows = db
     .prepare(
-      `SELECT p.id, p.share_id AS shareId, p.description, p.template, u.name, p.updated,
+      `SELECT p.id, p.share_id AS shareId, p.description, p.template, u.name, p.updated, p.preview_at, p.preview_fail_n,
          (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id) AS likes,
          (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id AND l.user_id = ?) AS liked,
          (p.user_id = ?) AS mine
@@ -33,10 +34,20 @@ export function galleryItems(
     )
     .all(userId ?? '', userId ?? '', ...inTrack, limit, offset) as any[];
 
-  return rows.map(({ template, liked, mine, ...row }) => {
+  return rows.map(({ template, liked, mine, preview_at, preview_fail_n, ...row }) => {
     const t = template ? byId.get(template) : undefined;
 
-    return { ...row, icon: t?.icon ?? null, track: t && t.track !== 'Any track' ? t.track : null, liked: Boolean(liked), mine: Boolean(mine) };
+    // projects listed before thumbnails existed (or whose app changed since) get one drawn in the background
+    queuePreview(row.id, { updated: row.updated, preview_at, preview_fail_n });
+
+    return {
+      ...row,
+      previewAt: preview_at ?? null, // the thumbnail itself is served by /preview/:shareId
+      icon: t?.icon ?? null,
+      track: t && t.track !== 'Any track' ? t.track : null,
+      liked: Boolean(liked),
+      mine: Boolean(mine),
+    };
   });
 }
 

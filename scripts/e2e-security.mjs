@@ -190,7 +190,9 @@ try {
   check(P2, 'quota header counts down', c1.headers.get('x-foldo-remaining') === '2', c1.headers.get('x-foldo-remaining'));
   const gal = await anon.req('/gallery');
   check(P2, 'gallery shows the listed project to anonymous visitors', gal.status === 200 && gal.text.includes('Alpha app') && gal.text.includes('Team Alpha'));
-  check(P2, 'public share page loads without login', (await anon.req(`/p/${shareA.shareId}`)).status === 200);
+  const sharePage = await anon.req(`/p/${shareA.shareId}`);
+  check(P2, 'public share page loads without login', sharePage.status === 200);
+  check(P2, 'share page has absolute link-preview tags', sharePage.text.includes(`property="og:image" content="${BASE}/og.jpg"`) && sharePage.text.includes(`property="og:url" content="${BASE}/p/${shareA.shareId}"`) && sharePage.text.includes('property="og:title" content="Alpha app"'));
 
   // ============ Persona 3: malicious teammate B ============
   const B = new Client();

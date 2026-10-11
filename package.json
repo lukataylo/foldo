@@ -78,6 +78,7 @@
     "remix-utils": "^7.6.0",
     "shiki": "^1.9.1",
     "unist-util-visit": "^5.0.0",
+    "uqr": "^0.1.2",
     "vite-plugin-node-polyfills": "^0.22.0",
     "zod": "^3.23.8"
   },

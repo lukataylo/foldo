@@ -127,7 +127,7 @@ export const Preview = memo(() => {
               <pre className="mt-1 max-h-16 overflow-auto whitespace-pre-wrap text-xs text-bolt-elements-textSecondary">{error}</pre>
             </div>
             <button
-              className="btn-primary btn-md"
+              className="btn-primary btn-sm"
               onClick={() => {
                 requestFix(error);
                 previewError.set(undefined);

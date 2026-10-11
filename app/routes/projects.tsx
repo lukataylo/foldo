@@ -59,7 +59,7 @@ export default function Projects() {
       <main data-testid="foldo-projects-page">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-3xl font-bold">Your projects</h1>
-          <a href="/" className="btn-primary btn-md">
+          <a href="/" className="btn-primary btn-sm">
             <span className="i-ph:plus-bold" /> New project
           </a>
         </div>

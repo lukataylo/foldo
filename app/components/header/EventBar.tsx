@@ -19,8 +19,13 @@ function left(ms: number) {
   return d > 0 ? `${d}d ${h}h left` : h > 0 ? `${h}h ${m % 60}m left` : `${m}m left`;
 }
 
-// Thin organizer strip: event name, live countdown, announcement. Hidden when no event is configured.
-export function EventBar({ event, paper }: { event?: EventInfo | null; paper?: boolean }) {
+const clock = (t: number) => new Date(t).toTimeString().slice(0, 5);
+
+/*
+ * Ink strip with the event name and a live countdown. Hidden when no event is configured.
+ * app: 36 high, centred (Home, Projects, Settings). marketing: 40 high, 1344 container, announcement + closing time (Landing, Gallery).
+ */
+export function EventBar({ event, variant = 'app' }: { event?: EventInfo | null; variant?: 'app' | 'marketing' }) {
   const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
@@ -35,21 +40,46 @@ export function EventBar({ event, paper }: { event?: EventInfo | null; paper?: b
     return null;
   }
 
+  const countdown = event.endsAt && now !== null ? left(event.endsAt - now) : '';
+
+  if (variant === 'marketing') {
+    return (
+      <div role="status" data-testid="foldo-event-bar" className="shrink-0 bg-ink text-paper">
+        <div className="container-marketing flex min-h-[40px] flex-wrap items-center justify-between gap-x-4 text-[13px]">
+          <span className="inline-flex min-w-0 items-center gap-[10px]">
+            <span aria-hidden="true" className="h-[7px] w-[7px] shrink-0 rounded-full bg-highlighter" />
+            {event.name && <span className="font-mono text-[12px] tracking-[.04em]">{event.name}</span>}
+            {event.announcement && <span className="min-w-0 truncate text-field">{event.announcement}</span>}
+          </span>
+          <span className="inline-flex items-center gap-4 font-mono text-[12px]">
+            {event.endsAt && now !== null && now < event.endsAt && <span className="text-field">Closes {clock(event.endsAt)}</span>}
+            {countdown && <span>{countdown}</span>}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div
-      data-testid="foldo-event-bar"
-      className={`flex h-8 shrink-0 items-center justify-center gap-3 border-b px-4 text-xs ${paper ? 'border-[#E6E3DE] bg-[#F6EEDF] text-[#555]' : 'border-bolt-elements-borderColor bg-bolt-elements-background-depth-2'}`}
-    >
-      {event.name && (
-        <span className={`flex items-center gap-1.5 font-semibold ${paper ? 'text-[#111]' : 'text-bolt-elements-textPrimary'}`}>
-          <span className="h-1.5 w-1.5 rounded-full bg-[var(--foldo-yellow)]" />
-          {event.name}
-        </span>
-      )}
-      {event.endsAt && now !== null && (
-        <span className={`font-medium tabular-nums ${paper ? 'text-[#7A5000]' : 'text-bolt-elements-item-contentAccent'}`}>{left(event.endsAt - now)}</span>
-      )}
-      {event.announcement && <span className={`min-w-0 truncate ${paper ? 'text-[#555]' : 'text-bolt-elements-textSecondary'}`}>{event.announcement}</span>}
+    <div role="status" data-testid="foldo-event-bar" className="shrink-0 bg-ink text-paper">
+      <div className="container-app flex h-[36px] items-center justify-center gap-[10px] text-[13px]">
+        <span aria-hidden="true" className="h-[6px] w-[6px] shrink-0 rounded-full bg-[#7CC49B]" />
+        {event.name && <span className="font-medium">{event.name}</span>}
+        {event.name && countdown && (
+          <span aria-hidden="true" className="opacity-60">
+            ·
+          </span>
+        )}
+        {countdown && <span className="font-mono text-[12px]">{countdown}</span>}
+        {event.announcement && (
+          <>
+            <span aria-hidden="true" className="opacity-60">
+              ·
+            </span>
+            <span className="min-w-0 truncate text-field">{event.announcement}</span>
+          </>
+        )}
+      </div>
     </div>
   );
 }

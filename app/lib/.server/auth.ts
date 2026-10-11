@@ -289,6 +289,7 @@ export function shell(user?: User) {
     name: user?.name,
     admin: user?.admin,
     remaining: user ? remainingQuota(user.id) : undefined,
+    limit: user ? dailyLimit() : undefined,
     event: getEvent(),
     templates: templateIndex().templates.map(({ guide, ...rest }) => rest),
     ...publicModels(),

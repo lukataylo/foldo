@@ -1,8 +1,26 @@
-export function Logo({ size = 28, text = true, className = 'text-bolt-elements-textPrimary' }: { size?: number; text?: boolean; className?: string }) {
+// Mark (yellow tile + black dog, public/foldo-mark.svg) and the serif "Foldo" wordmark.
+// Sizes from the boards: app header 26/24, studio header 24 with no wordmark, marketing 32/30, error pages 24/22.
+export function Logo({
+  size = 26,
+  text = true,
+  textSize = 24,
+  href = '/',
+  className = 'text-ink',
+}: {
+  size?: number;
+  text?: boolean;
+  textSize?: number;
+  href?: string;
+  className?: string;
+}) {
   return (
-    <a href="/" className={`flex items-center gap-2 ${className}`} aria-label="Foldo home">
-      <img src="/foldo-mark.svg" width={size} height={size} alt="" className="rounded-[22%]" />
-      {text && <span className="font-display text-2xl leading-none pt-1">foldo</span>}
+    <a href={href} className={`flex shrink-0 items-center gap-2 no-underline ${className}`} aria-label="Foldo home">
+      <img src="/foldo-mark.svg" width={size} height={size} alt="" className="block" style={{ borderRadius: size >= 26 ? 6 : 5 }} />
+      {text && (
+        <span className="font-serif leading-none" style={{ fontSize: textSize }}>
+          Foldo
+        </span>
+      )}
     </a>
   );
 }

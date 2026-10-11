@@ -19,7 +19,7 @@ export function ShareButton() {
       <button
         data-testid="foldo-canvas-topbar-share"
         onClick={() => setOpen(true)}
-        className={sid ? 'btn-secondary btn-md' : 'btn-primary btn-md'}
+        className={sid ? 'btn-secondary btn-sm' : 'btn-primary btn-sm'}
       >
         <span className={sid ? 'i-ph:globe-hemisphere-west text-bolt-elements-item-contentAccent' : 'i-ph:share-network-bold'} />
         {sid ? 'Shared' : 'Share'}

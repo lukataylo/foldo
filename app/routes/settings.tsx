@@ -77,7 +77,7 @@ export default function Settings() {
   const r = useActionData<typeof action>() as { ok?: string; error?: string } | undefined;
 
   return (
-    <PageShell data={d} active="settings" narrow>
+    <PageShell data={d} active="settings">
       <main className="space-y-6" data-testid="foldo-settings">
         <h1 className="text-3xl font-bold">Settings</h1>
         {(r?.ok || r?.error) && (

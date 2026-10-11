@@ -1,6 +1,7 @@
+import path from 'node:path';
 import { vitePlugin as remixVitePlugin } from '@remix-run/dev';
 import UnoCSS from 'unocss/vite';
-import { defineConfig, type ViteDevServer } from 'vite';
+import { defineConfig, type Plugin, type ViteDevServer } from 'vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import { optimizeCssModules } from 'vite-plugin-optimize-css-modules';
 import tsconfigPaths from 'vite-tsconfig-paths';
@@ -11,6 +12,7 @@ export default defineConfig((config) => {
       target: 'esnext',
     },
     plugins: [
+      ssrNodePath(),
       nodePolyfills({
         include: ['path', 'buffer'],
         // the default process shim would hide the real process.env on the server
@@ -30,6 +32,30 @@ export default defineConfig((config) => {
     ],
   };
 });
+
+/*
+ * nodePolyfills aliases node:path to path-browserify for every environment. The production server build is fine, but the
+ * dev server's SSR loader then evaluates that CommonJS file and fails ("module is not defined"), so in dev the server
+ * gets the real node:path back.
+ */
+function ssrNodePath(): Plugin {
+  const shim = '\0foldo-node-path';
+  const names = Object.keys(path).filter((k) => /^[a-z]\w*$/i.test(k));
+
+  return {
+    name: 'foldo-ssr-node-path',
+    apply: 'serve',
+    enforce: 'pre',
+    resolveId(id, _importer, options) {
+      return options?.ssr && /(^|\/)path-browserify(\/|$)/.test(id) ? shim : undefined;
+    },
+    load(id) {
+      return id === shim
+        ? `const p = process.getBuiltinModule('node:path');\nexport default p;\nexport const { ${names.join(', ')} } = p;`
+        : undefined;
+    },
+  };
+}
 
 function chrome129IssuePlugin() {
   return {

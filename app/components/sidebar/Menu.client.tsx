@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { Dialog, DialogButton, DialogDescription, DialogRoot, DialogTitle } from '~/components/ui/Dialog';
 import { IconButton } from '~/components/ui/IconButton';
-import { ThemeSwitch } from '~/components/ui/ThemeSwitch';
 import { chatId, type ChatHistoryItem } from '~/lib/persistence';
 import { menuOpen } from '~/lib/stores/ui';
 import { cubicEasingFn } from '~/utils/easings';
@@ -179,10 +178,9 @@ export function Menu() {
           </DialogRoot>
         </div>
         <div className="flex items-center border-t border-bolt-elements-borderColor p-4">
-          <a href="/projects" className="btn-ghost btn-md -ml-2">
+          <a href="/projects" className="btn-ghost btn-sm -ml-2">
             All projects
           </a>
-          <ThemeSwitch className="ml-auto" />
         </div>
       </div>
     </motion.div>

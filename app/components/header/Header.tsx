@@ -13,11 +13,12 @@ import { UserMenu } from './UserMenu';
 
 export function Header() {
   const chat = useStore(chatStore);
-  const { email, name, admin, remaining } = useLoaderData() as {
+  const { email, name, admin, remaining, limit } = useLoaderData() as {
     email?: string;
     name?: string;
     admin?: boolean;
     remaining?: number;
+    limit?: number;
   };
 
   return (
@@ -40,7 +41,7 @@ export function Header() {
             <span className="i-ph:sidebar-simple text-xl" />
           </button>
         )}
-        <Logo />
+        <Logo size={24} text={false} />
       </div>
       <span className="min-w-0 flex-1 truncate text-center text-sm font-medium text-bolt-elements-textSecondary">
         <ClientOnly>{() => <ChatDescription />}</ClientOnly>
@@ -50,13 +51,13 @@ export function Header() {
         <ClientOnly>{() => <ShareButton />}</ClientOnly>
         {chat.started && <ClientOnly>{() => <HeaderActionButtons />}</ClientOnly>}
         {email ? (
-          <UserMenu email={email} name={name} admin={admin} remaining={remaining} />
+          <UserMenu email={email} name={name} admin={admin} remaining={remaining} limit={limit} variant="avatar" />
         ) : (
           <>
-            <a href="/login" className="btn-ghost btn-md">
+            <a href="/login" className="btn-ghost btn-sm">
               Sign in
             </a>
-            <a href="/login?mode=register" className="btn-primary btn-md">
+            <a href="/login?mode=register" className="btn-primary btn-sm">
               Sign up free
             </a>
           </>

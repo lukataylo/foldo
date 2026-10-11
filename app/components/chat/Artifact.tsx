@@ -114,7 +114,7 @@ function ShellCodeBlock({ classsName, code }: ShellCodeBlockProps) {
       dangerouslySetInnerHTML={{
         __html: shellHighlighter.codeToHtml(code, {
           lang: 'shell',
-          theme: 'dark-plus',
+          theme: 'light-plus',
         }),
       }}
     ></div>
@@ -190,7 +190,7 @@ const ActionList = memo(({ actions }: ActionListProps) => {
                 <div className="mt-1 rounded-md border border-bolt-elements-icon-error/40 bg-bolt-elements-artifacts-inlineCode-background p-2">
                   <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-xs text-bolt-elements-textSecondary">{action.error}</pre>
                   <button
-                    className="btn-primary btn-md mt-2"
+                    className="btn-primary btn-sm mt-2"
                     onClick={() => requestFix(`The command "${content.trim()}" failed:\n${action.error}`)}
                   >
                     Fix this error

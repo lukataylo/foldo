@@ -38,7 +38,7 @@ function Builder({ pack }: { pack: { id: string; hash: string } }) {
 
   return (
     <div className="mt-4">
-      <button data-testid={`foldo-build-${pack.id}`} className="btn-primary btn-md" disabled={busy} onClick={run}>
+      <button data-testid={`foldo-build-${pack.id}`} className="btn-primary btn-sm" disabled={busy} onClick={run}>
         {busy ? 'Building...' : 'Build snapshot'}
       </button>
       {log.length > 0 && (

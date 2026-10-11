@@ -3,12 +3,13 @@ import { motion, type Variants } from 'framer-motion';
 import React, { memo, type ReactNode } from 'react';
 import { classNames } from '~/utils/classNames';
 import { cubicEasingFn } from '~/utils/easings';
-import { IconButton } from './IconButton';
+import { Icon } from './icons';
 
 export { Close as DialogClose, Root as DialogRoot } from '@radix-ui/react-dialog';
 
+// motion.slow (Foundations board): dialogs and scrim
 const transition = {
-  duration: 0.15,
+  duration: 0.32,
   ease: cubicEasingFn,
 };
 
@@ -43,23 +44,21 @@ export const dialogVariants = {
 interface DialogButtonProps {
   type: 'primary' | 'secondary' | 'danger';
   children: ReactNode;
+  disabled?: boolean;
   onClick?: (event: React.UIEvent) => void;
 }
 
-export const DialogButton = memo(({ type, children, onClick }: DialogButtonProps) => {
+// footer buttons are 40 high (Components board 15); "danger" is the destructive confirm (red fill)
+export const DialogButton = memo(({ type, children, disabled, onClick }: DialogButtonProps) => {
   return (
     <button
-      className={classNames(
-        'inline-flex h-[35px] items-center justify-center rounded-lg px-4 text-sm leading-none focus:outline-none',
-        {
-          'bg-bolt-elements-button-primary-background text-bolt-elements-button-primary-text hover:bg-bolt-elements-button-primary-backgroundHover':
-            type === 'primary',
-          'bg-bolt-elements-button-secondary-background text-bolt-elements-button-secondary-text hover:bg-bolt-elements-button-secondary-backgroundHover':
-            type === 'secondary',
-          'bg-bolt-elements-button-danger-background text-bolt-elements-button-danger-text hover:bg-bolt-elements-button-danger-backgroundHover':
-            type === 'danger',
-        },
-      )}
+      type="button"
+      disabled={disabled}
+      className={classNames('btn-md', {
+        'btn-primary': type === 'primary',
+        'btn-secondary': type === 'secondary',
+        'btn-destructive': type === 'danger',
+      })}
       onClick={onClick}
     >
       {children}
@@ -67,11 +66,21 @@ export const DialogButton = memo(({ type, children, onClick }: DialogButtonProps
   );
 });
 
+// header A: serif 30 title, optional 14px Pencil subtitle, Rule-2 bottom; the close button sits over its right edge
+export const DialogHeader = memo(({ title, subtitle }: { title: ReactNode; subtitle?: ReactNode }) => {
+  return (
+    <div className="flex flex-col gap-[2px] border-b border-rule2 pb-[14px] pl-[22px] pr-[64px] pt-5">
+      <RadixDialog.Title className="m-0 font-serif text-[30px] font-normal leading-[1.1] text-ink">{title}</RadixDialog.Title>
+      {subtitle && <RadixDialog.Description className="m-0 text-[14px] text-pencil">{subtitle}</RadixDialog.Description>}
+    </div>
+  );
+});
+
 export const DialogTitle = memo(({ className, children, ...props }: RadixDialog.DialogTitleProps) => {
   return (
     <RadixDialog.Title
       className={classNames(
-        'px-5 py-4 flex items-center justify-between border-b border-bolt-elements-borderColor text-lg font-semibold leading-6 text-bolt-elements-textPrimary',
+        'm-0 border-b border-rule2 pb-[14px] pl-[22px] pr-[64px] pt-5 font-serif text-[30px] font-normal leading-[1.1] text-ink',
         className,
       )}
       {...props}
@@ -81,16 +90,25 @@ export const DialogTitle = memo(({ className, children, ...props }: RadixDialog.
   );
 });
 
+// body B: 16-20 / 22 padding, 14px Ink-2
 export const DialogDescription = memo(({ className, children, ...props }: RadixDialog.DialogDescriptionProps) => {
   return (
-    <RadixDialog.Description
-      className={classNames('px-5 py-4 text-bolt-elements-textPrimary text-md', className)}
-      {...props}
-    >
+    <RadixDialog.Description className={classNames('px-[22px] py-4 text-[14px] text-ink2', className)} {...props}>
       {children}
     </RadixDialog.Description>
   );
 });
+
+export function DialogBody({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={classNames('px-[22px] py-4 text-[14px] text-ink2', className)}>{children}</div>;
+}
+
+// footer C: Rule-2 top, actions right
+export function DialogFooter({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <div className={classNames('flex justify-end gap-2 border-t border-rule2 px-[22px] py-3', className)}>{children}</div>
+  );
+}
 
 interface DialogProps {
   children: ReactNode | ReactNode[];
@@ -99,12 +117,13 @@ interface DialogProps {
   onClose?: (event: React.UIEvent) => void;
 }
 
+// Sheet, 1px Rule, radius 14, floating shadow, over an Ink scrim at 42%
 export const Dialog = memo(({ className, children, onBackdrop, onClose }: DialogProps) => {
   return (
     <RadixDialog.Portal>
       <RadixDialog.Overlay onClick={onBackdrop} asChild>
         <motion.div
-          className="bg-black/50 fixed inset-0 z-max"
+          className="fixed inset-0 z-max bg-[rgba(22,20,15,.42)]"
           initial="closed"
           animate="open"
           exit="closed"
@@ -114,7 +133,7 @@ export const Dialog = memo(({ className, children, onBackdrop, onClose }: Dialog
       <RadixDialog.Content asChild>
         <motion.div
           className={classNames(
-            'fixed top-[50%] left-[50%] z-max max-h-[85vh] w-[90vw] max-w-[450px] translate-x-[-50%] translate-y-[-50%] border border-bolt-elements-borderColor rounded-lg bg-bolt-elements-background-depth-2 shadow-lg focus:outline-none overflow-hidden',
+            'fixed left-[50%] top-[50%] z-max max-h-[85vh] w-[calc(100vw-32px)] max-w-[450px] translate-x-[-50%] translate-y-[-50%] overflow-hidden rounded-[14px] border border-rule bg-sheet text-ink shadow-float focus:outline-none',
             className,
           )}
           initial="closed"
@@ -124,7 +143,9 @@ export const Dialog = memo(({ className, children, onBackdrop, onClose }: Dialog
         >
           {children}
           <RadixDialog.Close asChild onClick={onClose}>
-            <IconButton icon="i-ph:x" className="absolute top-[10px] right-[10px]" />
+            <button type="button" aria-label="Close" className="btn-icon absolute right-4 top-4 h-[36px] w-[36px]">
+              <Icon.Close size={18} />
+            </button>
           </RadixDialog.Close>
         </motion.div>
       </RadixDialog.Content>

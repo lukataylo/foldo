@@ -98,20 +98,109 @@ const COLOR_PRIMITIVES = {
   },
 };
 
+// Paper design system (see public/art/README.md for images). Exact values come from the Components board.
+const PAPER = {
+  paper: '#FBF8F1',
+  sheet: '#FFFFFF',
+  wash: '#F4F0E6',
+  codebg: '#F6F3EC',
+  ink: '#16140F',
+  ink2: '#3A362E',
+  pencil: '#6B6457',
+  placeholder: '#766F62',
+  rule: '#E4DDCF',
+  rule2: '#EFEAE0',
+  field: '#CFC6B4',
+  highlighter: '#FFC21A',
+  heroyellow: '#FDB914',
+  live: { DEFAULT: '#1F7A4D', bg: '#EEF6F1', border: '#BFD9C9' },
+  warning: { DEFAULT: '#8A5A00', bg: '#FFF6DB', border: '#F2D58A' },
+  error: { DEFAULT: '#B42318', bg: '#FBEFED', border: '#F0C9C4' },
+  info: { DEFAULT: '#2B5C9E', bg: '#EEF3FA', border: '#C9D7EC' },
+};
+
+// focus ring: 2px Paper gap + 2px Ink (red for danger buttons)
+const RING = 'focus-visible:shadow-[0_0_0_2px_#FBF8F1,0_0_0_4px_#16140F]';
+const RING_RED = 'focus-visible:shadow-[0_0_0_2px_#FBF8F1,0_0_0_4px_#B42318]';
+// disabled wins over hover (important), the same for every filled variant
+const OFF = 'disabled:(!border-rule !bg-wash !text-placeholder cursor-not-allowed)';
+
 export default defineConfig({
   shortcuts: {
     'bolt-ease-cubic-bezier': 'ease-[cubic-bezier(0.4,0,0.2,1)]',
     'transition-theme': 'transition-[background-color,border-color,color] duration-150 bolt-ease-cubic-bezier',
-    // buttons: pick one variant and one size, e.g. "btn-primary btn-md"
-    btn: 'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-theme outline-none focus-visible:ring-2 focus-visible:ring-bolt-elements-borderColorActive disabled:opacity-50',
-    'btn-md': 'h-8 px-3 text-sm',
-    'btn-lg': 'h-10 px-5 text-sm',
-    'btn-primary': 'btn bg-bolt-elements-button-primary-background text-bolt-elements-button-primary-text hover:bg-bolt-elements-button-primary-backgroundHover',
-    'btn-secondary': 'btn border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 text-bolt-elements-textPrimary hover:bg-bolt-elements-item-backgroundActive',
-    'btn-ghost': 'btn text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary hover:bg-bolt-elements-item-backgroundActive',
-    'surface': 'rounded-2xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2',
-    'menu-item': 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-bolt-elements-textSecondary outline-none cursor-pointer data-[highlighted]:bg-bolt-elements-item-backgroundActive data-[highlighted]:text-bolt-elements-textPrimary',
-    kdb: 'bg-bolt-elements-code-background text-bolt-elements-code-text py-1 px-1.5 rounded-md',
+
+    /*
+     * Buttons: one variant + one size, e.g. "btn-primary btn-lg".
+     * Sizes: btn-lg 44 (default), btn-md 40 (dialog footers, empty states), btn-sm 34 (dense app chrome).
+     */
+    btn: `inline-flex shrink-0 items-center justify-center whitespace-nowrap border border-solid font-sans no-underline outline-none cursor-pointer aria-busy:cursor-progress transition-[background-color,border-color,color,box-shadow] duration-120 ${RING}`,
+    'btn-lg': 'min-h-[44px] px-[18px] gap-2 rounded-[8px] text-[15px] leading-[1.2]',
+    'btn-md': 'min-h-[40px] px-4 gap-2 rounded-[8px] text-[14px] leading-[1.2]',
+    'btn-sm': 'h-[34px] px-3 gap-1.5 rounded-[7px] text-[13px] leading-[1.2]',
+    'btn-primary': `btn border-ink bg-highlighter text-ink font-semibold hover:bg-[#EFB619] ${OFF}`,
+    'btn-secondary': `btn border-field bg-sheet text-ink font-medium hover:bg-wash ${OFF}`,
+    'btn-ghost': 'btn border-transparent bg-transparent text-ink2 font-medium hover:(text-ink underline underline-offset-4 decoration-field) disabled:(!text-placeholder !no-underline cursor-not-allowed)',
+    'btn-dark': `btn border-ink bg-ink text-paper font-semibold hover:(bg-ink2 border-ink2) ${OFF}`,
+    'btn-danger': `btn border-error-border bg-sheet text-error font-medium hover:bg-error-bg ${RING_RED} ${OFF}`,
+    'btn-destructive': `btn border-error bg-error text-white font-semibold hover:bg-[#9E2117] ${RING_RED} ${OFF}`,
+    // square icon button (header toggles, close buttons); size with w-/h- utilities when it isn't 34
+    'btn-icon': `inline-flex shrink-0 items-center justify-center w-[34px] h-[34px] rounded-[6px] border-0 bg-transparent text-ink2 cursor-pointer outline-none transition-[background-color,color,box-shadow] duration-120 hover:(bg-wash text-ink) disabled:(!text-placeholder !bg-transparent cursor-not-allowed) ${RING}`,
+
+    // inputs: label above, help or error below
+    input: 'h-[46px] w-full min-w-0 rounded-[8px] border border-solid border-field bg-sheet px-[14px] font-sans text-[15px] text-ink outline-none placeholder:text-placeholder transition-[border-color,box-shadow] duration-120 focus:(border-ink shadow-[0_0_0_3px_rgba(255,194,26,.45)]) aria-[invalid=true]:border-error disabled:(cursor-not-allowed border-rule bg-wash text-pencil)',
+    'input-label': 'text-[14px] font-medium text-ink',
+    'input-help': 'text-[13px] text-pencil',
+    'input-error': 'flex items-start gap-1.5 text-[13px] text-error',
+
+    // status pills: "pill pill-live" + optional <span class="pill-dot" />
+    pill: 'inline-flex shrink-0 items-center gap-[6px] h-[24px] px-[10px] rounded-full border border-solid text-[12px] font-medium leading-none whitespace-nowrap',
+    'pill-dot': 'inline-block w-[6px] h-[6px] shrink-0 rounded-full bg-current',
+    'pill-live': 'pill border-live-border bg-live-bg text-live',
+    'pill-warning': 'pill border-warning-border bg-warning-bg text-warning',
+    'pill-error': 'pill border-error-border bg-error-bg text-error',
+    'pill-info': 'pill border-info-border bg-info-bg text-info',
+    'pill-neutral': 'pill border-rule bg-sheet text-ink2',
+    'pill-muted': 'pill border-dashed border-field bg-paper text-pencil',
+    'pill-tag': 'pill border-rule bg-sheet text-ink2 font-mono font-normal',
+
+    // in-panel banners: icon + <p><strong>Title.</strong> One sentence.</p> + one banner-action
+    banner: 'flex items-start gap-[10px] px-3 py-[10px] rounded-[10px] border border-solid text-[13px] leading-[1.5] text-ink',
+    'banner-info': 'banner border-info-border bg-info-bg [--banner-accent:#2B5C9E]',
+    'banner-warning': 'banner border-warning-border bg-warning-bg [--banner-accent:#8A5A00]',
+    'banner-error': 'banner border-error-border bg-error-bg [--banner-accent:#B42318]',
+    'banner-paused': 'banner border-ink bg-sheet [--banner-accent:#16140F]',
+    'banner-action': 'flex-none border-0 bg-transparent p-0 font-sans text-[13px] font-medium text-[var(--banner-accent)] underline underline-offset-3 cursor-pointer',
+
+    // mono caps label above headings and table heads
+    eyebrow: 'font-mono text-[12px] tracking-[.08em] uppercase text-pencil',
+
+    // surfaces: flat 1px Rule cards; floating things get shadow-float
+    card: 'rounded-[12px] border border-solid border-rule bg-sheet',
+    surface: 'card',
+    'menu-panel': 'rounded-[12px] border border-solid border-rule bg-sheet p-[6px] shadow-float',
+    'menu-item': 'flex w-full items-center gap-[10px] min-h-[34px] px-[10px] rounded-[6px] border-0 bg-transparent font-sans text-[14px] text-ink no-underline outline-none cursor-pointer hover:bg-wash data-[highlighted]:bg-wash',
+    'menu-separator': 'my-1 h-px bg-rule2',
+
+    // segmented control: "seg" track with "seg-item" buttons; selected via aria-selected/checked/pressed or Radix data-state
+    seg: 'inline-flex gap-[2px] rounded-[7px] border border-solid border-rule bg-paper p-[2px]',
+    'seg-item': 'inline-flex items-center justify-center gap-1.5 h-[28px] px-3 rounded-[5px] border border-solid border-transparent bg-transparent font-sans text-[13px] font-medium text-pencil cursor-pointer outline-none focus-visible:shadow-[0_0_0_2px_#16140F] aria-selected:(border-rule bg-sheet text-ink font-semibold) aria-checked:(border-rule bg-sheet text-ink font-semibold) aria-pressed:(border-rule bg-sheet text-ink font-semibold) data-[state=active]:(border-rule bg-sheet text-ink font-semibold)',
+    'seg-icon': 'seg-item w-[32px] px-0 aria-checked:shadow-[0_1px_0_rgba(22,20,15,.06)] aria-pressed:shadow-[0_1px_0_rgba(22,20,15,.06)]',
+
+    // 44x26 switch: <button role="switch" aria-checked class="switch"><span class="switch-knob" /></button> (Radix Switch works too)
+    switch: 'relative inline-flex flex-none items-center w-[44px] h-[26px] p-[2px] rounded-full border border-solid border-field bg-wash cursor-pointer outline-none transition-colors duration-200 aria-checked:(justify-end border-ink bg-ink) data-[state=checked]:(justify-end border-ink bg-ink) disabled:(opacity-50 cursor-not-allowed) focus-visible:shadow-[0_0_0_2px_#FBF8F1,0_0_0_4px_#16140F]',
+    'switch-knob': 'block w-[20px] h-[20px] rounded-full border border-solid border-field bg-white transition-transform duration-200',
+
+    // dark toast (react-toastify is styled the same way in styles/components/toast.scss)
+    toast: 'flex items-center gap-[10px] max-w-[360px] px-[14px] py-[11px] rounded-[10px] bg-ink text-paper text-[14px] shadow-float',
+
+    avatar: 'inline-flex shrink-0 items-center justify-center w-[34px] h-[34px] rounded-full bg-ink text-paper font-sans text-[12px] font-semibold',
+    kdb: 'inline-flex items-center h-[22px] px-[6px] rounded-[5px] border border-solid border-field border-b-2 bg-sheet font-mono text-[12px] text-ink',
+
+    // page containers: app pages 1312, marketing 1344, both with fluid gutters
+    'container-app': 'mx-auto w-full max-w-[1312px] px-[clamp(16px,4vw,64px)]',
+    'container-marketing': 'mx-auto w-full max-w-[1344px] px-[clamp(16px,4vw,64px)]',
+
     'max-w-chat': 'max-w-[var(--chat-max-width)]',
   },
   rules: [
@@ -122,8 +211,24 @@ export default defineConfig({
     ['b', {}],
   ],
   theme: {
+    fontFamily: {
+      sans: "'Instrument Sans', ui-sans-serif, system-ui, sans-serif",
+      serif: "'Instrument Serif', ui-serif, Georgia, serif",
+      display: "'Instrument Serif', ui-serif, Georgia, serif",
+      mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+    },
+    boxShadow: {
+      float: '0 24px 64px rgba(22,20,15,.18)',
+      prompt: '0 1px 0 rgba(22,20,15,.04),0 18px 40px -28px rgba(22,20,15,.35)',
+    },
+    duration: {
+      fast: '120ms',
+      base: '200ms',
+      slow: '320ms',
+    },
     colors: {
       ...COLOR_PRIMITIVES,
+      ...PAPER,
       bolt: {
         elements: {
           borderColor: 'var(--bolt-elements-borderColor)',
@@ -240,12 +345,7 @@ export default defineConfig({
   },
   transformers: [transformerDirectives()],
   presets: [
-    presetUno({
-      dark: {
-        light: '[data-theme="light"]',
-        dark: '[data-theme="dark"]',
-      },
-    }),
+    presetUno(),
     presetIcons({
       warn: true,
       collections: {

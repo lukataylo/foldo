@@ -16,7 +16,7 @@ interface CodeBlockProps {
 }
 
 export const CodeBlock = memo(
-  ({ className, code, language = 'plaintext', theme = 'dark-plus', disableCopy = false }: CodeBlockProps) => {
+  ({ className, code, language = 'plaintext', theme = 'light-plus', disableCopy = false }: CodeBlockProps) => {
     const [html, setHTML] = useState<string | undefined>(undefined);
     const [copied, setCopied] = useState(false);
 

@@ -1,17 +1,60 @@
-.Toastify__toast {
-  --at-apply: shadow-md;
+/* Dark toast (Components board 09): Ink, Paper text, 14px, radius 10, bottom-right, 360 wide */
+.Toastify__toast-container {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 0;
+}
 
-  background-color: var(--bolt-elements-bg-depth-2);
-  color: var(--bolt-elements-textPrimary);
-  border: 1px solid var(--bolt-elements-borderColor);
+.Toastify__toast-container--bottom-right {
+  right: 24px;
+  bottom: 24px;
+}
+
+.Toastify__toast {
+  min-height: 0;
+  margin-bottom: 8px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  background-color: var(--ink);
+  color: var(--paper);
+  font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  box-shadow: var(--shadow-float);
+  align-items: center;
+}
+
+.Toastify__toast-body {
+  margin: 0;
+  padding: 0;
+  gap: 10px;
+  align-items: center;
+}
+
+.Toastify__toast-body a {
+  color: var(--paper);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.Toastify__toast-icon {
+  width: 16px;
+  margin-inline-end: 10px;
 }
 
 .Toastify__close-button {
-  color: var(--bolt-elements-item-contentDefault);
-  opacity: 1;
+  align-self: center;
+  color: var(--paper);
+  opacity: 0.8;
   transition: none;
 
   &:hover {
-    color: var(--bolt-elements-item-contentActive);
+    color: var(--paper);
+    opacity: 1;
   }
+}
+
+.Toastify__progress-bar {
+  visibility: hidden;
 }

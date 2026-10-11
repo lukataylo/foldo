@@ -112,8 +112,8 @@
   --cm-searchMatch-backgroundColor: var(--bolt-elements-editor-searchMatch-backgroundColor, rgba(234, 92, 0, 0.33));
 }
 
-html[data-theme='light'] {
-  --bolt-elements-editor-gutter-textColor: #237893;
+:root {
+  --bolt-elements-editor-gutter-textColor: var(--pencil);
   --bolt-elements-editor-gutter-activeLineTextColor: var(--bolt-elements-textPrimary);
   --bolt-elements-editor-foldGutter-textColorHover: var(--bolt-elements-textPrimary);
   --bolt-elements-editor-activeLineBackgroundColor: rgb(50 53 63 / 5%);
@@ -122,14 +122,3 @@ html[data-theme='light'] {
   --bolt-elements-editor-search-button-backgroundColorHover: theme('colors.alpha.gray.10');
 }
 
-html[data-theme='dark'] {
-  --cm-backgroundColor: var(--bolt-elements-bg-depth-2);
-  --bolt-elements-editor-gutter-textColor: var(--bolt-elements-textTertiary);
-  --bolt-elements-editor-gutter-activeLineTextColor: var(--bolt-elements-textSecondary);
-  --bolt-elements-editor-selection-inactiveBackgroundOpacity: 0.3;
-  --bolt-elements-editor-activeLineBackgroundColor: rgb(50 53 63 / 50%);
-  --bolt-elements-editor-foldGutter-textColorHover: var(--bolt-elements-textPrimary);
-  --bolt-elements-editor-matchingBracketBackgroundColor: rgba(66, 180, 255, 0.3);
-  --bolt-elements-editor-search-button-backgroundColor: theme('colors.gray.800');
-  --bolt-elements-editor-search-button-backgroundColorHover: theme('colors.alpha.white.10');
-}

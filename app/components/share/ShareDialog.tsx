@@ -156,7 +156,7 @@ function ShareBody({ projectId, title, state, onChange }: Omit<ShareDialogProps,
               <span className="text-xs font-semibold uppercase tracking-wide text-bolt-elements-textTertiary">
                 Public link
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-[#12b76a]/15 px-2 py-0.5 text-xs font-medium text-[#067647] dark:text-[#47cd89]">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-[#12b76a]/15 px-2 py-0.5 text-xs font-medium text-[#067647]">
                 <span className="relative flex h-1.5 w-1.5">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#12b76a] opacity-60" />
                   <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#12b76a]" />
@@ -183,7 +183,7 @@ function ShareBody({ projectId, title, state, onChange }: Omit<ShareDialogProps,
               <button
                 data-testid="foldo-share-copy"
                 onClick={copy}
-                className={classNames('btn-primary btn-md min-w-[96px]', { '!bg-[#12b76a] !text-white': copied })}
+                className={classNames('btn-primary btn-sm min-w-[96px]', { '!bg-[#12b76a] !text-white': copied })}
               >
                 <span className={copied ? 'i-ph:check-bold' : 'i-ph:copy'} />
                 {copied ? 'Copied' : 'Copy link'}
@@ -228,14 +228,14 @@ function ShareBody({ projectId, title, state, onChange }: Omit<ShareDialogProps,
                 <span className="flex-1 text-sm text-bolt-elements-textSecondary">
                   Anyone with the current link will lose access.
                 </span>
-                <button className="btn-ghost btn-md" onClick={() => setConfirmStop(false)}>
+                <button className="btn-ghost btn-sm" onClick={() => setConfirmStop(false)}>
                   Cancel
                 </button>
                 <button
                   data-testid="foldo-share-stop-confirm"
                   disabled={busy !== null}
                   onClick={stop}
-                  className="btn btn-md bg-bolt-elements-button-danger-background text-bolt-elements-button-danger-text hover:bg-bolt-elements-button-danger-backgroundHover"
+                  className="btn btn-sm bg-bolt-elements-button-danger-background text-bolt-elements-button-danger-text hover:bg-bolt-elements-button-danger-backgroundHover"
                 >
                   {busy === 'stop' && <span className="i-svg-spinners:90-ring-with-bg" />}
                   Turn off link
@@ -249,7 +249,7 @@ function ShareBody({ projectId, title, state, onChange }: Omit<ShareDialogProps,
                 </span>
                 <button
                   data-testid="foldo-share-stop"
-                  className="btn-ghost btn-md hover:!text-bolt-elements-button-danger-text"
+                  className="btn-ghost btn-sm hover:!text-bolt-elements-button-danger-text"
                   onClick={() => setConfirmStop(true)}
                 >
                   <span className="i-ph:link-break" /> Stop sharing
@@ -376,7 +376,7 @@ function QrPanel({ url, name }: { url: string; name: string }) {
         <p className="mt-1 text-xs leading-relaxed text-bolt-elements-textTertiary">
           Put it on a slide or your demo screen so judges and teammates can try it instantly.
         </p>
-        <button onClick={download} className="btn-secondary btn-md mt-3">
+        <button onClick={download} className="btn-secondary btn-sm mt-3">
           <span className="i-ph:download-simple" /> Download
         </button>
       </div>

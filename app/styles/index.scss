@@ -11,8 +11,27 @@ html,
 body {
   height: 100%;
   width: 100%;
-  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  background-color: var(--paper);
+  color: var(--ink);
   -webkit-font-smoothing: antialiased;
+}
+
+::placeholder {
+  color: var(--placeholder);
+}
+
+::selection {
+  background-color: rgba(255, 194, 26, 0.45);
+}
+
+/* headlines balance, paragraphs avoid orphans (SPEC: Type) */
+:where(h1, h2, h3) {
+  text-wrap: balance;
+}
+
+:where(p) {
+  text-wrap: pretty;
 }
 
 input[type="checkbox"],
@@ -31,9 +50,46 @@ input[type="radio"] {
   cursor: not-allowed;
 }
 
-.font-display {
-  font-family: var(--foldo-display);
-  letter-spacing: 0.01em;
+/* highlighter marker behind ONE phrase per screen */
+.marker {
+  background: var(--marker);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* button size tweaks the Components board gives per variant */
+.btn-primary.btn-sm {
+  padding-inline: 14px;
+}
+
+.btn-ghost.btn-lg,
+.btn-ghost.btn-md {
+  padding-inline: 6px;
+}
+
+.btn-ghost.btn-sm {
+  padding-inline: 8px;
+}
+
+/* the knob has a Field edge only while off */
+.switch[aria-checked='true'] > .switch-knob,
+.switch[data-state='checked'] > .switch-knob {
+  border-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+
+  /* spinners keep turning */
+  [class*='i-svg-spinners'],
+  .animate-spin {
+    animation-duration: 0.75s !important;
+  }
 }
 
 .paper-tile {

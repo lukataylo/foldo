@@ -90,6 +90,12 @@ export async function setPassword(userId: string, password: string) {
 
 export const endSessions = (userId: string) => db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
 
+// after a password change: sign out everywhere except the browser that made the change
+export async function endOtherSessions(request: Request, userId: string) {
+  const token = await sessionCookie.parse(request.headers.get('Cookie'));
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?').run(userId, token ? hash(token) : '');
+}
+
 export async function createSession(userId: string) {
   db.prepare('DELETE FROM sessions WHERE expires < ?').run(Date.now());
 

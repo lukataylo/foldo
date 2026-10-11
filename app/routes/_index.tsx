@@ -33,11 +33,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const recent = db
-    .prepare('SELECT id, description, updated FROM projects WHERE user_id = ? ORDER BY updated DESC LIMIT 3')
+    .prepare('SELECT id, description, share_id AS shareId, template, updated FROM projects WHERE user_id = ? ORDER BY updated DESC LIMIT 3')
     .all(user.id);
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM projects WHERE user_id = ?').get(user.id) as { n: number };
 
-  return json({ ...shell(user), recent, projectCount: n });
+  return json({ ...shell(user), recent, projectCount: n, now: Date.now() });
 }
 
 export default function Index() {

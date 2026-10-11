@@ -63,6 +63,8 @@ for (const ddl of [
   'ALTER TABLE projects ADD COLUMN listed INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE providers ADD COLUMN max_tokens INTEGER',
   'ALTER TABLE projects ADD COLUMN template TEXT',
+  // 1 once the team names the project itself: autosave then keeps that name instead of the first prompt
+  'ALTER TABLE projects ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0',
   // set when an organizer hides a project from the gallery (/admin); the team can't list it again
   'ALTER TABLE projects ADD COLUMN hidden_at INTEGER',
 ]) {

@@ -13,7 +13,7 @@ export interface GalleryItem {
   name: string;
   updated: number;
   icon: string | null;
-  preview: string | null; // AI-drawn thumbnail, sanitized on the server (lib/.server/previews.ts)
+  previewAt: number | null; // when the AI thumbnail was drawn (routes/preview.$shareId.ts serves it), null = none yet
   track: string | null;
   likes: number;
   liked: boolean;
@@ -130,19 +130,17 @@ const FRAME = {
   featured: 'aspect-[16/10] px-10 pt-7',
 };
 
-const PREVIEW_DOC = (html: string) =>
-  `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#FFFFFF}</style></head><body>${html}</body></html>`;
-
 /*
- * The AI-drawn thumbnail. It was sanitized before it was stored, and it still renders in a fully sandboxed frame (no
- * scripts, opaque origin, nothing may load) that the pointer and keyboard pass straight through: the card link stays the
- * only target. `scale` draws it at a larger virtual size and shrinks it (the admin's 64px thumbnails).
+ * The AI-drawn thumbnail, served as its own document by /preview/:shareId (sanitized when stored, CSP
+ * `default-src 'none'` as a header). It renders in a fully sandboxed frame (no scripts, opaque origin) that the pointer
+ * and keyboard pass straight through: the card link stays the only target. `scale` draws it at a larger virtual size and
+ * shrinks it (the admin's 64px thumbnails).
  */
-export function PreviewFrame({ html, scale = 1 }: { html: string; scale?: number }) {
+export function PreviewFrame({ shareId, version, scale = 1 }: { shareId: string; version: number; scale?: number }) {
   return (
     <iframe
       sandbox=""
-      srcDoc={PREVIEW_DOC(html)}
+      src={`/preview/${encodeURIComponent(shareId)}?v=${version}`}
       referrerPolicy="no-referrer"
       loading="lazy"
       aria-hidden="true"
@@ -182,9 +180,9 @@ export function Preview({ item, size = 'grid' }: { item: GalleryItem; size?: 'st
           ))}
           <span className="ml-3 truncate font-mono text-[10px] text-pencil">/p/{item.shareId.slice(0, 8)}</span>
         </div>
-        {item.preview ? (
+        {item.previewAt ? (
           <div className="min-h-0 flex-1 overflow-hidden">
-            <PreviewFrame html={item.preview} />
+            <PreviewFrame shareId={item.shareId} version={item.previewAt} />
           </div>
         ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center p-3">

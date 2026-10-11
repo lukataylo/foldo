@@ -36,7 +36,8 @@ const llm = http
       if (String(last).includes('FOLDO_PREVIEW')) {
         llmSeen.previews++;
         res.writeHead(200, { 'content-type': 'application/json' }).end(
-          JSON.stringify({ id: '1', object: 'chat.completion', created: 1, model: 'm', choices: [{ index: 0, message: { role: 'assistant', content: stubPreview(String(last)) }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
+          // CUTPREVIEW: the answer hits the token limit (half a fragment)
+          JSON.stringify({ id: '1', object: 'chat.completion', created: 1, model: 'm', choices: [{ index: 0, message: { role: 'assistant', content: String(last).includes('CUTPREVIEW') ? '<div style="width:100%' : stubPreview(String(last)) }, finish_reason: String(last).includes('CUTPREVIEW') ? 'length' : 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
         );
         return;
       }
@@ -263,49 +264,95 @@ try {
   // ============ gallery thumbnails: drawn by the model in the background, sanitized, sandboxed ============
   const PV = 'gallery previews';
   const pdb = new DatabaseSync(DB);
-  const previewOf = (id) => pdb.prepare('SELECT preview_html AS html, preview_at AS at FROM projects WHERE id = ?').get(id) ?? {};
+  const previewOf = (id) => pdb.prepare('SELECT preview_html AS html, preview_at AS at, preview_fail_n AS fails FROM projects WHERE id = ?').get(id) ?? {};
   const waitPreview = async (id, ms = 6000) => {
     for (let t = 0; t < ms && !previewOf(id).html; t += 100) await new Promise((r) => setTimeout(r, 100));
 
     return previewOf(id).html;
   };
+  const settle = (ms = 1200) => new Promise((r) => setTimeout(r, ms));
+  const setSetting = (k, v) => pdb.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(k, v);
+  const delSetting = (k) => pdb.prepare('DELETE FROM settings WHERE key = ?').run(k);
   const BANNED = /<script|<iframe|<img|<a[\s>]|<link|\son\w+\s*=|javascript:|url\s*\(|@import|\b(href|src)\s*=|evil\.example/i;
+  // words drawn by CSS or list markers: content, counters, attr(), @counter-style, list items
+  const CSS_TEXT = /(^|[^\w-])content\s*:|counter|attr\s*\(|list-style|list-item|<ol|<ul|<li|PASSWORD|Organizers|Sign in/i;
   const pvA = await waitPreview(idA);
   check(PV, 'listing a project stores an AI preview in the background', Boolean(pvA) && /<div/.test(pvA), String(pvA).slice(0, 80));
-  check(PV, 'the preview cost the team no messages', new DatabaseSync(DB).prepare('SELECT COALESCE(SUM(n),0) AS n FROM usage').get().n === usageBeforeList + 1 && c1.headers.get('x-foldo-remaining') === '2');
+  const usageNow = pdb.prepare('SELECT COALESCE(SUM(n),0) AS n FROM usage').get().n;
+  const pvUsage = pdb.prepare("SELECT COALESCE(SUM(n),0) AS n FROM provider_usage WHERE provider = 'deepseek:preview'").get().n;
+  check(PV, 'the preview cost the team no messages, and is counted as deepseek:preview', usageNow === usageBeforeList + 1 && c1.headers.get('x-foldo-remaining') === '2' && pvUsage >= 1, `${usageBeforeList} -> ${usageNow}, previews ${pvUsage}`);
   const galHtml = (await anon.req('/gallery')).text;
   const frames = galHtml.match(/<iframe[^>]*>/g) ?? [];
-  check(PV, '/gallery renders it in a sandboxed iframe with no allow-scripts and a no-network CSP', frames.length > 0 && frames.every((f) => /sandbox=""/.test(f) && !/allow-/.test(f) && /Content-Security-Policy/.test(f) && /default-src &#x27;none&#x27;|default-src 'none'/.test(f) && /pointer-events-none/.test(f)), frames[0]);
-  check(PV, 'landing strip shows the preview too', /<iframe[^>]*sandbox=""/.test((await new Client().req('/')).text));
+  check(PV, '/gallery shows it in a sandboxed, non-interactive iframe with no allow-scripts', frames.length > 0 && frames.every((f) => /sandbox=""/.test(f) && !/allow-/.test(f) && /src="\/preview\/[0-9a-f]+\?v=\d+"/.test(f) && /pointer-events-none/.test(f) && /tabindex="-1"/i.test(f)), frames[0]);
+  check(PV, 'the thumbnail HTML is not inlined in the page or its hydration data', !galHtml.includes(pvA.slice(0, 60)));
+  check(PV, 'landing strip shows the preview too', /<iframe[^>]*src="\/preview\//.test((await new Client().req('/')).text));
+  const pvRes = await anon.req(`/preview/${shareA.shareId}`);
+  check(
+    PV,
+    '/preview/:shareId serves it with a no-network CSP header, nosniff and text/html',
+    pvRes.status === 200 &&
+      pvRes.headers.get('content-security-policy') === "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'" &&
+      /^nosniff/.test(pvRes.headers.get('x-content-type-options')) &&
+      /^text\/html/.test(pvRes.headers.get('content-type')) &&
+      pvRes.text.includes(pvA),
+    `${pvRes.status} ${pvRes.headers.get('x-content-type-options')} ${pvRes.headers.get('content-type')}`,
+  );
   const evilId = await A.save('EVILPREVIEW app');
-  await A.req('/api/projects', { method: 'POST', body: { id: evilId, share: true, listed: true } });
+  const evilShare = (await A.req('/api/projects', { method: 'POST', body: { id: evilId, share: true, listed: true } })).json().shareId;
   const evil = await waitPreview(evilId);
-  check(PV, 'a hostile model answer is neutralised before it is stored', Boolean(evil) && !BANNED.test(evil) && !/locked|sign in/i.test(evil), String(evil));
-  check(PV, 'and the gallery page carries none of it', !/evil\.example|alert\(/.test((await anon.req('/gallery')).text));
+  check(PV, 'a hostile model answer is neutralised before it is stored', Boolean(evil) && !BANNED.test(evil), String(evil));
+  check(PV, 'no CSS-drawn text (content, counters, attr(), list markers) survives', Boolean(evil) && !CSS_TEXT.test(evil), String(evil));
+  check(PV, 'and neither the gallery nor /preview carries any of it', !/evil\.example|alert\(|PASSWORD/.test((await anon.req('/gallery')).text + (await anon.req(`/preview/${evilShare}`)).text));
   await A.req('/api/projects', { method: 'POST', body: { id: evilId, share: false } });
+  check(PV, '/preview 404s once the project is no longer listed', (await anon.req(`/preview/${evilShare}`)).status === 404);
   const previewsBefore = llmSeen.previews;
   const sharedOnly = await A.save('Shared not listed');
-  await A.req('/api/projects', { method: 'POST', body: { id: sharedOnly, share: true } });
+  const sharedOnlyShare = (await A.req('/api/projects', { method: 'POST', body: { id: sharedOnly, share: true } })).json().shareId;
   const hiddenId = await A.save('Hidden app');
   await A.req('/api/projects', { method: 'POST', body: { id: hiddenId, share: true } });
   pdb.prepare('UPDATE projects SET hidden_at = ? WHERE id = ?').run(Date.now(), hiddenId);
   const relistHidden = await A.req('/api/projects', { method: 'POST', body: { id: hiddenId, share: true, listed: true } });
   await anon.req('/gallery');
-  await new Promise((r) => setTimeout(r, 1500));
+  await settle(1500);
   check(PV, 'unlisted and organizer-hidden projects never get a preview', relistHidden.status === 403 && !previewOf(sharedOnly).html && !previewOf(hiddenId).html && llmSeen.previews === previewsBefore, `${relistHidden.status} ${llmSeen.previews - previewsBefore}`);
+  check(PV, '/preview 404s for a shared but unlisted project', (await anon.req(`/preview/${sharedOnlyShare}`)).status === 404);
   pdb.prepare('UPDATE projects SET preview_html = NULL, preview_at = NULL WHERE id = ?').run(idA);
-  pdb.prepare("INSERT INTO settings (key, value) VALUES ('paused', '1') ON CONFLICT (key) DO UPDATE SET value = '1'").run();
+  setSetting('paused', '1');
   await anon.req('/gallery');
-  await new Promise((r) => setTimeout(r, 800));
+  await settle(800);
   check(PV, 'no preview is drawn while builds are paused', !previewOf(idA).html);
-  pdb.prepare("DELETE FROM settings WHERE key = 'paused'").run();
+  delSetting('paused');
+  setSetting('preview_daily_limit', '0');
+  await anon.req('/gallery');
+  await settle(800);
+  check(PV, 'no preview is drawn over the daily thumbnail cap', !previewOf(idA).html);
+  delSetting('preview_daily_limit');
   await anon.req('/gallery');
   check(PV, 'the gallery lazily draws a missing preview for an already-listed project', Boolean(await waitPreview(idA)));
   const stamp = previewOf(idA).at;
   pdb.prepare('UPDATE projects SET updated = ? WHERE id = ?').run(Date.now() + 1000, idA);
   await A.req('/api/projects', { method: 'POST', body: { id: idA, share: true, listed: true } });
-  await new Promise((r) => setTimeout(r, 800));
+  await settle(800);
   check(PV, 'a changed project is not redrawn within 10 minutes of its last preview', previewOf(idA).at === stamp);
+  const cutId = await A.save('CUTPREVIEW app');
+  await A.req('/api/projects', { method: 'POST', body: { id: cutId, share: true, listed: true } });
+  for (let t = 0; t < 4000 && previewOf(cutId).fails < 3; t += 100) await settle(100);
+  const callsAfterCut = llmSeen.previews;
+  await anon.req('/gallery');
+  await A.req('/api/projects', { method: 'POST', body: { id: cutId, share: true, listed: true } });
+  await settle(800);
+  check(PV, 'a cut-off answer is a permanent failure for that version (no retries)', previewOf(cutId).fails === 3 && !previewOf(cutId).html && llmSeen.previews === callsAfterCut, `${previewOf(cutId).fails} ${llmSeen.previews - callsAfterCut}`);
+  await A.req('/api/projects', { method: 'POST', body: { id: cutId, share: false } });
+  const userA = pdb.prepare("SELECT id FROM users WHERE email = 'a@t.co'").get().id;
+  const teamDay = pdb.prepare('SELECT day FROM usage LIMIT 1').get().day;
+  pdb.prepare('INSERT INTO preview_usage (day, user_id, n) VALUES (?, ?, 10) ON CONFLICT (day, user_id) DO UPDATE SET n = 10').run(teamDay, userA);
+  const capId = await A.save('Over the team cap');
+  await A.req('/api/projects', { method: 'POST', body: { id: capId, share: true, listed: true } });
+  await settle(1000);
+  check(PV, 'a team gets at most 10 thumbnails a day', !previewOf(capId).html);
+  await A.req('/api/projects', { method: 'POST', body: { id: capId, share: false } });
+  const bigPage = await anon.req('/gallery?n=5000');
+  check(PV, '/gallery?n= is capped (a huge n still renders a normal page)', bigPage.status === 200 && (bigPage.text.match(/<iframe/g) ?? []).length <= 61);
   const sharePage = await anon.req(`/p/${shareA.shareId}`);
   check(P2, 'public share page loads without login', sharePage.status === 200);
   check(P2, 'share page has absolute link-preview tags', sharePage.text.includes(`property="og:image" content="${BASE}/og.jpg"`) && sharePage.text.includes(`property="og:url" content="${BASE}/p/${shareA.shareId}"`) && sharePage.text.includes('property="og:title" content="Alpha app"'));

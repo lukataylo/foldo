@@ -1,22 +1,23 @@
 /*
  * Gallery thumbnails are HTML written by a model that read user-controlled code, so the output is hostile until proven
- * otherwise. This rebuilds it from an allowlist (tags, attributes, CSS; text is dropped) instead of patching the input, then refuses the
- * result outright if anything that looks dangerous survived. The browser adds a second wall: the fragment only ever
- * renders in `<iframe sandbox="">` with a `default-src 'none'` CSP (ProjectCard.tsx).
+ * otherwise. This rebuilds it from an allowlist (tags, attributes, CSS) instead of patching the input, then refuses the
+ * result outright if anything that looks dangerous survived. No words may reach the card in any form (text nodes, CSS
+ * `content`, list markers, counters), so a prompt-injected model can't put a phishing notice on the public gallery.
+ * The browser adds a second wall: the fragment is served by /preview/:shareId with a `default-src 'none'` CSP header and
+ * only ever shown in `<iframe sandbox="">` (ProjectCard.tsx).
  */
 
-export const MAX_PREVIEW_CHARS = 5000; // the prompt asks for 3000; a little overshoot is fine, a page is not
+export const MAX_PREVIEW_CHARS = 3000; // what the prompt asks for (2500) plus a little overshoot
 const MAX_INPUT_CHARS = 20_000;
+const MAX_CSS_CHARS = 8000;
 
-// html layout elements and the basic svg shapes; anything else is dropped (its text content too, for raw-text tags)
-const HTML_TAGS = new Set(['div', 'span', 'p', 'section', 'header', 'footer', 'main', 'nav', 'aside', 'ul', 'ol', 'li', 'b', 'strong', 'i', 'em', 'small']);
+// html layout elements and the basic svg shapes; anything else is dropped (lists are out: their markers are text)
+const HTML_TAGS = new Set(['div', 'span', 'p', 'section', 'header', 'footer', 'main', 'nav', 'aside', 'b', 'strong', 'i', 'em', 'small']);
 const VOID_TAGS = new Set(['br', 'hr']);
-const SVG_TAGS = new Map(
-  ['svg', 'g', 'rect', 'circle', 'ellipse', 'line', 'path', 'polygon', 'polyline'].map((t) => [t, t] as const),
-);
+const SVG_TAGS = new Set(['svg', 'g', 'rect', 'circle', 'ellipse', 'line', 'path', 'polygon', 'polyline']);
 
 // elements whose content is not markup: dropped whole (style is kept, but cleaned as CSS)
-const RAW_DROP = new Set(['script', 'iframe', 'object', 'embed', 'noscript', 'noembed', 'noframes', 'textarea', 'title', 'xmp', 'template', 'math', 'foreignobject', 'select', 'option']);
+const RAW_DROP = new Set(['script', 'iframe', 'object', 'embed', 'noscript', 'noembed', 'noframes', 'textarea', 'title', 'xmp', 'template', 'math', 'foreignobject', 'select', 'option', 'plaintext']);
 
 const HTML_ATTRS = new Set(['class', 'style']);
 const SVG_ATTRS = new Map(
@@ -27,22 +28,60 @@ const SVG_ATTRS = new Map(
   ].map((a) => [a.toLowerCase(), a] as const),
 );
 
+/*
+ * A CSS declaration, selector or at-rule prelude containing any of these is dropped (with its block, for a prelude):
+ * strings (the only way CSS spells words), generated text and markers, anything that fetches or runs, schemes and hosts.
+ */
+const CSS_BAD =
+  /["'`]|(^|[^\w-])(content|quotes|counter-[\w-]*|list-style[\w-]*|text-overflow)\s*:|list-item|\b(url|image-set|image|cross-fade|element|expression|paint|src|attr|counter|counters)\s*\(|@(import|namespace|font-face|counter-style)|javascript:|vbscript:|data:|-moz-binding|behavior\s*:|\/\//i;
+
 // anything here in the final output means the cleaning missed something: the whole result is thrown away
 const SUSPICIOUS =
-  /<\s*\/?\s*(script|iframe|object|embed|link|meta|base|form|img|image|video|audio|source|a|use|foreignobject|animate|set|frame|svg:)\b|\son[a-z]+\s*=|javascript:|vbscript:|data:|url\s*\(|@import|@font-face|\b(href|src|srcset|srcdoc|action|formaction|xlink)\s*=|expression\s*\(|-moz-binding|behavior\s*:|&#|\\|<!--|<!\[cdata\[/i;
+  /<\s*\/?\s*(script|iframe|object|embed|link|meta|base|form|img|image|video|audio|source|a|use|foreignobject|animate|set|frame|text|ul|ol|li|svg:)\b|\son[a-z]+\s*=|javascript:|vbscript:|data:|url\s*\(|@import|@font-face|@counter-style|\b(href|src|srcset|srcdoc|action|formaction|xlink)\s*=|expression\s*\(|-moz-binding|behavior\s*:|&#|\\|<!--|<!\[cdata\[/i;
 
-// CSS from a <style> element or a style attribute: no fetching, no escapes that could spell a blocked word
+// in the CSS that survived (style elements and attributes): no strings, no generated text
+const CSS_TEXT = /["'`]|&quot;|(^|[^\w-])content\s*:|attr\s*\(|quotes\s*:|counter|list-style|list-item|text-overflow/i;
+
+/** CSS from a <style> element or a style attribute: split on `;`, `{`, `}` and judged piece by piece (linear time). */
 export function cleanCss(css: string): string {
-  return (
-    css
-      .replace(/\/\*[\s\S]*?(\*\/|$)/g, '')
-      .replace(/[\\&<]/g, '')
-      // at-rules that fetch something: dropped whole
-      .replace(/@(import|namespace)[^;{}]*;?/gi, '')
-      .replace(/@font-face\s*\{[^}]*\}?/gi, '')
-      // a declaration that calls a fetching or scripting function, or names a scheme or a host: dropped whole
-      .replace(/[^;{}]*(\b(url|image-set|image|cross-fade|element|expression|paint|src)\s*\(|javascript:|vbscript:|data:|-moz-binding|behavior\s*:|\/\/)[^;{}]*/gi, '')
-  );
+  if (css.length > MAX_CSS_CHARS) {
+    return '';
+  }
+
+  const parts = css
+    .replace(/\/\*[\s\S]*?(\*\/|$)/g, '')
+    .replace(/[\\&<]/g, '')
+    .split(/([;{}])/);
+  let out = '';
+  let skip = 0; // depth inside a dropped rule's block
+
+  for (let k = 0; k < parts.length; k++) {
+    const p = parts[k];
+
+    if (skip) {
+      skip += p === '{' ? 1 : p === '}' ? -1 : 0;
+      continue;
+    }
+
+    if (p === ';' || p === '{' || p === '}') {
+      out += p;
+      continue;
+    }
+
+    if (CSS_BAD.test(p)) {
+      // a bad selector or at-rule takes its whole block with it
+      if (parts[k + 1] === '{') {
+        skip = 1;
+        k++;
+      }
+
+      continue;
+    }
+
+    out += p;
+  }
+
+  return out;
 }
 
 const escapeAttr = (s: string) => s.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -68,7 +107,7 @@ function cleanAttrs(raw: string, svg: boolean): string {
       continue;
     }
 
-    if (name !== 'xmlns' && /url\s*\(|javascript:|data:|:\/\//i.test(clean)) {
+    if (name !== 'xmlns' && /url\s*\(|javascript:|data:|:\/\/|["'`]/i.test(clean)) {
       continue;
     }
 
@@ -77,6 +116,12 @@ function cleanAttrs(raw: string, svg: boolean): string {
 
   return out;
 }
+
+// the CSS in a finished fragment: <style> bodies and style="" values
+const cssOf = (html: string) =>
+  [...html.matchAll(/<style>([\s\S]*?)<\/style>/g), ...html.matchAll(/\sstyle="([^"]*)"/g)].map((m) => m[1]).join('\n');
+
+const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?=[\s\/>])((?:[^>"']|"[^"]*"|'[^']*')*)>/y;
 
 /** Model output -> safe fragment, or null when there is nothing usable or something suspicious survives. */
 export function sanitizePreviewHtml(input: unknown): string | null {
@@ -93,6 +138,7 @@ export function sanitizePreviewHtml(input: unknown): string | null {
   }
 
   const src = input.slice(start, end + 1);
+  const lower = src.toLowerCase();
   const stack: string[] = [];
   let out = '';
   let svgDepth = 0;
@@ -138,7 +184,9 @@ export function sanitizePreviewHtml(input: unknown): string | null {
       continue;
     }
 
-    const tag = /^<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?=[\s\/>])((?:[^>"']|"[^"]*"|'[^']*')*)>/.exec(src.slice(i));
+    TAG.lastIndex = i;
+
+    const tag = TAG.exec(src);
 
     if (!tag) {
       i++;
@@ -158,10 +206,11 @@ export function sanitizePreviewHtml(input: unknown): string | null {
     }
 
     // a raw-text element: skip to its end tag (or the end of input), keeping only a cleaned <style>
-    if (name === 'style' || RAW_DROP.has(name) || name === 'plaintext') {
-      const endTag = new RegExp(`</${name}\\s*>`, 'i').exec(src.slice(i));
-      const body = endTag ? src.slice(i, i + endTag.index) : src.slice(i);
-      i = endTag ? i + endTag.index + endTag[0].length : src.length;
+    if (name === 'style' || RAW_DROP.has(name)) {
+      const e = name === 'plaintext' ? -1 : lower.indexOf(`</${name}`, i);
+      const body = e < 0 ? src.slice(i) : src.slice(i, e);
+      const gt = e < 0 ? -1 : src.indexOf('>', e);
+      i = gt < 0 ? src.length : gt + 1;
 
       if (name === 'style' && !selfClosing) {
         out += `<style>${cleanCss(body)}</style>`;
@@ -170,28 +219,28 @@ export function sanitizePreviewHtml(input: unknown): string | null {
       continue;
     }
 
-    if (VOID_TAGS.has(name)) {
+    // inside <svg> only svg shapes; outside it only html layout tags (no strays from the other namespace)
+    if (svgDepth > 0 ? !SVG_TAGS.has(name) : name !== 'svg' && !HTML_TAGS.has(name) && !VOID_TAGS.has(name)) {
+      continue; // unknown, forbidden or out-of-place element: drop the tag (its children are still cleaned)
+    }
+
+    const svg = svgDepth > 0 || name === 'svg';
+
+    if (!svg && VOID_TAGS.has(name)) {
       out += `<${name}${cleanAttrs(attrs, false)}>`;
       continue;
     }
 
-    const svg = name === 'svg' || svgDepth > 0;
-    const allowed = svg ? SVG_TAGS.get(name) : HTML_TAGS.has(name) ? name : undefined;
-
-    if (!allowed) {
-      continue; // unknown or forbidden element: drop the tag (its children are still cleaned)
-    }
-
-    out += `<${allowed}${cleanAttrs(attrs.replace(/\/\s*$/, ''), svg)}>`;
+    out += `<${name}${cleanAttrs(attrs.replace(/\/\s*$/, ''), svg)}>`;
 
     if (selfClosing) {
-      out += `</${allowed}>`;
+      out += `</${name}>`;
       continue;
     }
 
-    stack.push(allowed);
+    stack.push(name);
 
-    if (allowed === 'svg') {
+    if (name === 'svg') {
       svgDepth++;
     }
   }
@@ -202,12 +251,22 @@ export function sanitizePreviewHtml(input: unknown): string | null {
 
   out = out.trim();
 
-  if (!out || out.length > MAX_PREVIEW_CHARS || SUSPICIOUS.test(out) || !/<(div|svg|span|section|main)\b/.test(out)) {
+  if (
+    !out ||
+    out.length > MAX_PREVIEW_CHARS ||
+    SUSPICIOUS.test(out) ||
+    CSS_TEXT.test(cssOf(out)) ||
+    !/<(div|svg|span|section|main)\b/.test(out)
+  ) {
     return null;
   }
 
   return out;
 }
 
-/** The iframe document around a sanitized fragment: nothing may load, nothing may run. */
-export const PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'";
+/** Sent as a header and as a meta tag with every thumbnail: nothing may load, nothing may run. */
+export const PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'";
+
+/** The document served for a thumbnail (the fragment was sanitized when it was stored). */
+export const previewDocument = (html: string) =>
+  `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#FFFFFF}</style></head><body>${html}</body></html>`;

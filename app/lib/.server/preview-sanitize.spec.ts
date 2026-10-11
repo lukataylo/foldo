@@ -56,6 +56,22 @@ const ATTACKS = [
   '<div style="background:uurl(rl(//evil.example)"></div>',
 ];
 
+// no words in any form: CSS-generated text, list markers and counters can spell a phishing notice without a text node
+const TEXT_ATTACKS = [
+  '<style>.r::before{content:"Organizers: your session expired";color:red}.r{width:100%}</style><div class="r"></div>',
+  "<style>.r::after{content:'Re-enter your password at evil.example'}</style><div class=\"r\"></div>",
+  '<style>.r::before{content:attr(class)}</style><div class="Sign in at evil"></div>',
+  '<style>.r{counter-reset:x 1337}.r::before{content:counter(x)}</style><div class="r"></div>',
+  '<style>@counter-style p{system:cyclic;symbols:"P" "W" "N";suffix:" "}.r{display:list-item;list-style:p inside}</style><div class="r"></div>',
+  '<style>.r{display:list-item;list-style-type:"Password expired"}</style><div class="r"></div>',
+  '<style>.r{quotes:"Call 0800" "";}.r::before{content:open-quote}</style><div class="r"></div>',
+  '<style>.r{text-overflow:"Sign in now";overflow:hidden}</style><div class="r"></div>',
+  '<style>.r[class="x"]{color:red}</style><div class="r"></div>',
+  '<ol><li></li><li></li></ol><ul><li></li></ul><div></div>',
+  '<div style="content:&quot;x&quot;"></div>',
+  '<svg><text x="1" y="9">Sign in</text><br><div></div><rect/></svg>',
+];
+
 describe('sanitizePreviewHtml', () => {
   it('keeps a well-behaved fragment as is (modulo self-closing tags)', () => {
     const out = sanitizePreviewHtml(GOOD)!;
@@ -76,6 +92,33 @@ describe('sanitizePreviewHtml', () => {
       expect(out).not.toMatch(BANNED);
       expect(out).not.toMatch(/evil\.example|alert\(/);
     }
+  });
+
+  it.each(TEXT_ATTACKS)('lets no CSS or markup spell words: %s', (attack) => {
+    // class names are never rendered, so only what remains outside them counts
+    const out = sanitizePreviewHtml(attack)?.replace(/ class="[^"]*"/g, '');
+
+    if (out) {
+      expect(out).not.toMatch(/content\s*:|attr\s*\(|counter|list-style|list-item|quotes|text-overflow|["'`]\s*[;}]|<(ol|ul|li|text|br)\b|evil|Sign in/i);
+    }
+  });
+
+  it('keeps svg shapes but drops html strays inside <svg> and svg strays outside it', () => {
+    expect(sanitizePreviewHtml('<svg><br><div><rect/></div></svg><rect/><div></div>')).toBe('<svg><rect></rect></svg><div></div>');
+  });
+
+  it('keeps align-content and justify-content (only the content property is text)', () => {
+    expect(sanitizePreviewHtml('<div style="display:flex;justify-content:center;align-content:end"></div>')).toBe(
+      '<div style="display:flex;justify-content:center;align-content:end"></div>',
+    );
+  });
+
+  it('cleans huge CSS in linear time and refuses CSS over the cap', () => {
+    const t = performance.now();
+    sanitizePreviewHtml(`<style>${'a'.repeat(7900)}</style><div></div>`);
+    sanitizePreviewHtml(`<div style="${'u'.repeat(7000)}"></div>`);
+    expect(performance.now() - t).toBeLessThan(200);
+    expect(sanitizePreviewHtml(`<style>.a{color:red}${' '.repeat(9000)}</style><div></div>`)).toBe('<style></style><div></div>');
   });
 
   it('balances unclosed tags and drops stray closers', () => {

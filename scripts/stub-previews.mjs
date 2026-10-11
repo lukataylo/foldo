@@ -29,15 +29,16 @@ const PICK = [
   [/credit|rent|score|loan/i, 'credit'],
 ];
 
-// a script, a handler, a fetch in CSS, external links and a phishing line: all of it must be gone after sanitizing
-export const EVIL_PREVIEW = `<script>alert(document.cookie)</script><style>@import url(https://evil.example/x.css);.r{background:url(https://evil.example/t.png);width:100%;height:100%}</style><div class="r" onclick="alert(1)"><img src="https://evil.example/p.png" onerror="alert(2)"><a href="javascript:alert(3)">Your account is locked, sign in at evil.example</a><iframe src="https://evil.example"></iframe><svg onload="alert(4)"><rect width="10" height="10" fill="#2B5C9E"/></svg></div>`;
+// a script, a handler, a fetch in CSS, external links and phishing text (as a text node, CSS content, a counter, attr()
+// and list markers): all of it must be gone after sanitizing
+export const EVIL_PREVIEW = `<script>alert(document.cookie)</script><style>@import url(https://evil.example/x.css);.r{background:url(https://evil.example/t.png);width:100%;height:100%;counter-reset:pin 4821}.r::before{content:"Organizers: your session expired. Sign in at evil.example";font:700 16px system-ui;color:#B42318}.r::after{content:counter(pin) attr(class)}@counter-style ph{system:cyclic;symbols:"PASSWORD"}.q{display:list-item;list-style:ph inside}</style><ol><li>Call evil.example</li></ol><div class="q"></div><div class="r" onclick="alert(1)"><img src="https://evil.example/p.png" onerror="alert(2)"><a href="javascript:alert(3)">Your account is locked, sign in at evil.example</a><iframe src="https://evil.example"></iframe><svg onload="alert(4)"><rect width="10" height="10" fill="#2B5C9E"/></svg></div>`;
 
 export function stubPreview(prompt) {
   if (prompt.includes('EVILPREVIEW') || process.env.STUB_PREVIEW === 'evil') {
     return EVIL_PREVIEW;
   }
 
-  const name = /App name: (.*)/.exec(prompt)?.[1] ?? '';
+  const name = /App name[^:\n]*: (.*)/.exec(prompt)?.[1] ?? '';
 
   return DESIGNS[PICK.find(([re]) => re.test(name))?.[1] ?? 'list'];
 }

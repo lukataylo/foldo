@@ -37,6 +37,13 @@ export const defaultMaxTokens = () => num(getSetting('max_tokens'), num(process.
 export const maxSegments = () => Math.max(1, num(getSetting('max_segments'), 3));
 export const maxUserStreams = () => Math.max(1, num(getSetting('max_user_streams'), 2));
 export const costPerMessage = () => num(getSetting('cost_per_message'), 0.01);
+// gallery thumbnails drawn per day across all teams
+export const previewDailyLimit = () => num(getSetting('preview_daily_limit'), 300);
+/*
+ * A thumbnail is one short non-streaming call (~3k prompt tokens in, at most 2.5k out) where a build reply carries the
+ * long system prompt, the chat history, up to 16k tokens out and sometimes continuations: about a tenth of a message.
+ */
+export const costPerPreview = () => costPerMessage() * 0.1;
 export const fallbackProviderId = () => getSetting('fallback_provider', process.env.FALLBACK_PROVIDER ?? '');
 
 // how hard reasoning models think before answering: 'default' leaves it to the provider (can be slow on gpt-6/deepseek-v4)

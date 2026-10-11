@@ -39,7 +39,8 @@ export async function action({ request }: ActionFunctionArgs) {
     if (owned) {
       // a name the team chose (rename) wins over whatever description the autosave sends
       db.prepare(
-        'UPDATE projects SET description = CASE WHEN renamed = 1 THEN description ELSE ? END, messages = ?, template = COALESCE(?, template), updated = ? WHERE id = ?',
+        // a new version of the app gets fresh thumbnail attempts
+        'UPDATE projects SET description = CASE WHEN renamed = 1 THEN description ELSE ? END, messages = ?, template = COALESCE(?, template), updated = ?, preview_fail_n = 0 WHERE id = ?',
       ).run(
         description,
         messages,

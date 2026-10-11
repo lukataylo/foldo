@@ -13,6 +13,7 @@ export interface GalleryItem {
   name: string;
   updated: number;
   icon: string | null;
+  preview: string | null; // AI-drawn thumbnail, sanitized on the server (lib/.server/previews.ts)
   track: string | null;
   likes: number;
   liked: boolean;
@@ -129,9 +130,33 @@ const FRAME = {
   featured: 'aspect-[16/10] px-10 pt-7',
 };
 
+const PREVIEW_DOC = (html: string) =>
+  `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#FFFFFF}</style></head><body>${html}</body></html>`;
+
 /*
- * Stand-in for a screenshot: a browser window on Wash with the project's template art. Projects have no stored
- * screenshot, and booting each one in a WebContainer just to draw a card would be far too heavy.
+ * The AI-drawn thumbnail. It was sanitized before it was stored, and it still renders in a fully sandboxed frame (no
+ * scripts, opaque origin, nothing may load) that the pointer and keyboard pass straight through: the card link stays the
+ * only target. `scale` draws it at a larger virtual size and shrinks it (the admin's 64px thumbnails).
+ */
+export function PreviewFrame({ html, scale = 1 }: { html: string; scale?: number }) {
+  return (
+    <iframe
+      sandbox=""
+      srcDoc={PREVIEW_DOC(html)}
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      aria-hidden="true"
+      tabIndex={-1}
+      title=""
+      className="pointer-events-none block border-0"
+      style={{ width: `${100 / scale}%`, height: `${100 / scale}%`, transform: scale === 1 ? undefined : `scale(${scale})`, transformOrigin: '0 0' }}
+    />
+  );
+}
+
+/*
+ * Stand-in for a screenshot: a browser window on Wash with the project's AI-drawn thumbnail, or its template art until
+ * that exists. Booting each project in a WebContainer just to draw a card would be far too heavy.
  */
 export function Preview({ item, size = 'grid' }: { item: GalleryItem; size?: 'strip' | 'grid' | 'featured' }) {
   const featured = size === 'featured';
@@ -157,6 +182,11 @@ export function Preview({ item, size = 'grid' }: { item: GalleryItem; size?: 'st
           ))}
           <span className="ml-3 truncate font-mono text-[10px] text-pencil">/p/{item.shareId.slice(0, 8)}</span>
         </div>
+        {item.preview ? (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <PreviewFrame html={item.preview} />
+          </div>
+        ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center p-3">
           <img
             {...iconProps(item.icon ?? undefined)}
@@ -167,6 +197,7 @@ export function Preview({ item, size = 'grid' }: { item: GalleryItem; size?: 'st
             className="h-auto max-h-full w-auto max-w-[45%] object-contain"
           />
         </div>
+        )}
       </div>
     </div>
   );

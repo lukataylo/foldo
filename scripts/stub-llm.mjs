@@ -4,7 +4,10 @@
 // Run Foldo with: LLM_BASE_URL=http://localhost:9999/v1 DEEPSEEK_API_KEY=x npm start
 // Keywords in a chat message pick a reply for UI work: CUTOFF (every segment stops at the token limit, so the reply ends
 // cut off), APPERROR (the app's start command fails, so the studio shows "Your app hit an error").
+// Gallery thumbnails (non-streaming, prompt contains FOLDO_PREVIEW) get a small sketch from stub-previews.mjs; EVILPREVIEW in
+// the project (or STUB_PREVIEW=evil) gets a hostile one, to see the sanitizer at work.
 import http from 'node:http';
+import { stubPreview } from './stub-previews.mjs';
 
 const PORT = Number(process.env.STUB_PORT || 9999);
 const DELAY = Number(process.env.STUB_DELAY_MS || 1200);
@@ -32,8 +35,9 @@ http
       await new Promise((r) => setTimeout(r, DELAY * (0.5 + Math.random())));
 
       if (!wantsStream) {
+        const content = said.includes('FOLDO_PREVIEW') ? stubPreview(said) : 'ok';
         res.writeHead(200, { 'content-type': 'application/json' }).end(
-          JSON.stringify({ id: '1', object: 'chat.completion', created: 1, model: 'stub', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
+          JSON.stringify({ id: '1', object: 'chat.completion', created: 1, model: 'stub', choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
         );
         return;
       }

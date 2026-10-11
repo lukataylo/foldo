@@ -67,6 +67,9 @@ for (const ddl of [
   'ALTER TABLE projects ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0',
   // set when an organizer hides a project from the gallery (/admin); the team can't list it again
   'ALTER TABLE projects ADD COLUMN hidden_at INTEGER',
+  // AI-drawn gallery thumbnail (sanitized HTML, see previews.ts) and when it was made
+  'ALTER TABLE projects ADD COLUMN preview_html TEXT',
+  'ALTER TABLE projects ADD COLUMN preview_at INTEGER',
 ]) {
   try {
     db.exec(ddl);

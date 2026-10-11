@@ -6,6 +6,7 @@ import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { stubPreview } from './stub-previews.mjs';
 
 const PORT = 3150;
 const LLM_PORT = 3151;
@@ -15,7 +16,7 @@ const DB = join(dir, 'e2e.db');
 const results = [];
 let xff = 0;
 // what the fake LLM saw, for the long-build checks
-const llmSeen = { last: undefined, closedEarly: 0 };
+const llmSeen = { last: undefined, closedEarly: 0, previews: 0 };
 
 const check = (persona, name, ok, detail = '') => {
   results.push({ persona, name, ok });
@@ -30,6 +31,16 @@ const llm = http
     req.on('end', async () => {
       const parsed = JSON.parse(b);
       const last = parsed.messages.at(-1).content;
+
+      // gallery thumbnails run in the background: answered here and kept out of llmSeen (the chat checks read it)
+      if (String(last).includes('FOLDO_PREVIEW')) {
+        llmSeen.previews++;
+        res.writeHead(200, { 'content-type': 'application/json' }).end(
+          JSON.stringify({ id: '1', object: 'chat.completion', created: 1, model: 'm', choices: [{ index: 0, message: { role: 'assistant', content: stubPreview(String(last)) }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
+        );
+        return;
+      }
+
       llmSeen.last = parsed;
       const sse = (delta, fin) =>
         `data: ${JSON.stringify({ id: '1', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: fin }] })}\n\n`;
@@ -237,6 +248,7 @@ try {
   }
   const idA = await A.save('Alpha app', 'make alpha');
   check(P2, 'saves a project', Boolean(idA));
+  const usageBeforeList = new DatabaseSync(DB).prepare('SELECT COALESCE(SUM(n),0) AS n FROM usage').get().n;
   const shareA = (await A.req('/api/projects', { method: 'POST', body: { id: idA, share: true, listed: true } })).json();
   check(P2, 'shares + lists in gallery', Boolean(shareA.shareId) && shareA.listed === true);
   const again = (await A.req('/api/projects', { method: 'POST', body: { id: idA, share: true } })).json();
@@ -247,6 +259,53 @@ try {
   const gal = await anon.req('/gallery');
   check(P2, 'gallery shows the listed project to anonymous visitors', gal.status === 200 && gal.text.includes('Alpha app') && gal.text.includes('Team Alpha'));
   check(P2, 'landing shows the gallery strip to visitors', (await new Client().req('/')).text.includes('Alpha app'));
+
+  // ============ gallery thumbnails: drawn by the model in the background, sanitized, sandboxed ============
+  const PV = 'gallery previews';
+  const pdb = new DatabaseSync(DB);
+  const previewOf = (id) => pdb.prepare('SELECT preview_html AS html, preview_at AS at FROM projects WHERE id = ?').get(id) ?? {};
+  const waitPreview = async (id, ms = 6000) => {
+    for (let t = 0; t < ms && !previewOf(id).html; t += 100) await new Promise((r) => setTimeout(r, 100));
+
+    return previewOf(id).html;
+  };
+  const BANNED = /<script|<iframe|<img|<a[\s>]|<link|\son\w+\s*=|javascript:|url\s*\(|@import|\b(href|src)\s*=|evil\.example/i;
+  const pvA = await waitPreview(idA);
+  check(PV, 'listing a project stores an AI preview in the background', Boolean(pvA) && /<div/.test(pvA), String(pvA).slice(0, 80));
+  check(PV, 'the preview cost the team no messages', new DatabaseSync(DB).prepare('SELECT COALESCE(SUM(n),0) AS n FROM usage').get().n === usageBeforeList + 1 && c1.headers.get('x-foldo-remaining') === '2');
+  const galHtml = (await anon.req('/gallery')).text;
+  const frames = galHtml.match(/<iframe[^>]*>/g) ?? [];
+  check(PV, '/gallery renders it in a sandboxed iframe with no allow-scripts and a no-network CSP', frames.length > 0 && frames.every((f) => /sandbox=""/.test(f) && !/allow-/.test(f) && /Content-Security-Policy/.test(f) && /default-src &#x27;none&#x27;|default-src 'none'/.test(f) && /pointer-events-none/.test(f)), frames[0]);
+  check(PV, 'landing strip shows the preview too', /<iframe[^>]*sandbox=""/.test((await new Client().req('/')).text));
+  const evilId = await A.save('EVILPREVIEW app');
+  await A.req('/api/projects', { method: 'POST', body: { id: evilId, share: true, listed: true } });
+  const evil = await waitPreview(evilId);
+  check(PV, 'a hostile model answer is neutralised before it is stored', Boolean(evil) && !BANNED.test(evil) && !/locked|sign in/i.test(evil), String(evil));
+  check(PV, 'and the gallery page carries none of it', !/evil\.example|alert\(/.test((await anon.req('/gallery')).text));
+  await A.req('/api/projects', { method: 'POST', body: { id: evilId, share: false } });
+  const previewsBefore = llmSeen.previews;
+  const sharedOnly = await A.save('Shared not listed');
+  await A.req('/api/projects', { method: 'POST', body: { id: sharedOnly, share: true } });
+  const hiddenId = await A.save('Hidden app');
+  await A.req('/api/projects', { method: 'POST', body: { id: hiddenId, share: true } });
+  pdb.prepare('UPDATE projects SET hidden_at = ? WHERE id = ?').run(Date.now(), hiddenId);
+  const relistHidden = await A.req('/api/projects', { method: 'POST', body: { id: hiddenId, share: true, listed: true } });
+  await anon.req('/gallery');
+  await new Promise((r) => setTimeout(r, 1500));
+  check(PV, 'unlisted and organizer-hidden projects never get a preview', relistHidden.status === 403 && !previewOf(sharedOnly).html && !previewOf(hiddenId).html && llmSeen.previews === previewsBefore, `${relistHidden.status} ${llmSeen.previews - previewsBefore}`);
+  pdb.prepare('UPDATE projects SET preview_html = NULL, preview_at = NULL WHERE id = ?').run(idA);
+  pdb.prepare("INSERT INTO settings (key, value) VALUES ('paused', '1') ON CONFLICT (key) DO UPDATE SET value = '1'").run();
+  await anon.req('/gallery');
+  await new Promise((r) => setTimeout(r, 800));
+  check(PV, 'no preview is drawn while builds are paused', !previewOf(idA).html);
+  pdb.prepare("DELETE FROM settings WHERE key = 'paused'").run();
+  await anon.req('/gallery');
+  check(PV, 'the gallery lazily draws a missing preview for an already-listed project', Boolean(await waitPreview(idA)));
+  const stamp = previewOf(idA).at;
+  pdb.prepare('UPDATE projects SET updated = ? WHERE id = ?').run(Date.now() + 1000, idA);
+  await A.req('/api/projects', { method: 'POST', body: { id: idA, share: true, listed: true } });
+  await new Promise((r) => setTimeout(r, 800));
+  check(PV, 'a changed project is not redrawn within 10 minutes of its last preview', previewOf(idA).at === stamp);
   const sharePage = await anon.req(`/p/${shareA.shareId}`);
   check(P2, 'public share page loads without login', sharePage.status === 200);
   check(P2, 'share page has absolute link-preview tags', sharePage.text.includes(`property="og:image" content="${BASE}/og.jpg"`) && sharePage.text.includes(`property="og:url" content="${BASE}/p/${shareA.shareId}"`) && sharePage.text.includes('property="og:title" content="Alpha app"'));

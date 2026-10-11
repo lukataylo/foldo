@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { requireApiUser } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
 import { cleanName } from '~/lib/.server/names';
+import { queuePreview } from '~/lib/.server/previews';
 import { getTemplateMeta } from '~/lib/.server/templates';
 
 const MAX_BYTES = 5_000_000;
@@ -105,7 +106,14 @@ export async function action({ request }: ActionFunctionArgs) {
       body.id,
     );
 
-    return json({ shareId, listed: shareId ? Boolean((db.prepare('SELECT listed FROM projects WHERE id = ?').get(body.id) as any).listed) : false });
+    const isListed = shareId ? Boolean((db.prepare('SELECT listed FROM projects WHERE id = ?').get(body.id) as any).listed) : false;
+
+    // the gallery thumbnail is drawn in the background (only if it has none or it is stale)
+    if (isListed) {
+      queuePreview(body.id);
+    }
+
+    return json({ shareId, listed: isListed });
   }
 
   return json({ error: 'method not allowed' }, 405);

@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { generateText } from 'ai';
 import { randomBytes } from 'node:crypto';
 import { AdminShell, ago, cardClass, h2Class, tableBtn, thClass, type SectionId } from '~/components/admin/AdminShell';
+import { PreviewFrame } from '~/components/landing/ProjectCard';
 import { Icon } from '~/components/ui/icons';
 import {
   activeStreams,
@@ -54,6 +55,7 @@ import { snapshot } from '~/lib/.server/metrics';
 import { autoBackupsPaused, listBackups, runBackup } from '~/lib/.server/backup';
 import { db, today } from '~/lib/.server/db';
 import { getModel } from '~/lib/.server/llm/model';
+import { queuePreview } from '~/lib/.server/previews';
 import { iconProps } from '~/lib/templates/client';
 
 export const meta = () => [{ title: 'Organizer console · Foldo' }];
@@ -108,7 +110,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // what /gallery shows (listed, shared, team not disabled) plus what organizers hid
   const gallery = db
     .prepare(
-      `SELECT p.id, p.description, p.share_id AS shareId, p.template, p.hidden_at AS hiddenAt, u.name,
+      `SELECT p.id, p.description, p.share_id AS shareId, p.template, p.hidden_at AS hiddenAt, p.preview_html AS preview, u.name,
          (p.hidden_at IS NULL) AS listed,
          (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id) AS likes
        FROM projects p JOIN users u ON u.id = p.user_id
@@ -454,6 +456,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     db.prepare('UPDATE projects SET listed = 1, hidden_at = NULL WHERE id = ?').run(p.id);
+    queuePreview(p.id);
 
     return json({ ok: 'Back in the gallery.' });
   }
@@ -1427,10 +1430,14 @@ function Thumb({ g, templates }: { g: any; templates: { id: string; icon: string
 
   const icon = templates.find((t) => t.id === g.template)?.icon;
 
-  // same artwork as the gallery card (template icon, paper fallback)
+  // same artwork as the gallery card (AI thumbnail, else template icon, paper fallback)
   return (
     <span aria-hidden="true" className="block h-[44px] w-[64px] flex-none overflow-hidden rounded-[6px] border border-solid border-rule bg-paper">
-      <img {...iconProps(icon)} alt="" width={64} height={44} loading="lazy" className="block h-full w-full object-cover" />
+      {g.preview ? (
+        <PreviewFrame html={g.preview} scale={0.25} />
+      ) : (
+        <img {...iconProps(icon)} alt="" width={64} height={44} loading="lazy" className="block h-full w-full object-cover" />
+      )}
     </span>
   );
 }

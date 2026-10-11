@@ -60,13 +60,14 @@ const withOpenRouterOptions =
 
 // Every provider (OpenAI, OpenRouter, DeepSeek, MiMo, Qwen, Kimi, GLM, MiniMax, custom) speaks the OpenAI chat protocol.
 // Non-OpenAI endpoints get 'compatible' mode so we don't send OpenAI-only fields (e.g. stream_options) they reject.
-export function getModel(provider: Provider) {
+// `effort` overrides the reasoning setting (small side jobs like gallery thumbnails shouldn't think for thousands of tokens)
+export function getModel(provider: Provider, effort?: string | number) {
   return createOpenAI({
     apiKey: pickKey(provider),
     baseURL: provider.baseURL,
     compatibility: provider.id === 'openai' ? 'strict' : 'compatible',
     // OpenRouter uses these to attribute traffic to the app
     headers: provider.id === 'openrouter' ? { 'HTTP-Referer': 'https://foldo.dev', 'X-Title': 'Foldo' } : undefined,
-    fetch: provider.id === 'openai' ? reasoningFetch : provider.baseURL.includes('openrouter.ai') ? withOpenRouterOptions(reasoningEffortFor(provider.model)) : undefined,
+    fetch: provider.id === 'openai' ? reasoningFetch : provider.baseURL.includes('openrouter.ai') ? withOpenRouterOptions(effort ?? reasoningEffortFor(provider.model)) : undefined,
   })(provider.model);
 }

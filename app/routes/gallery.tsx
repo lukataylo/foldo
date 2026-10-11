@@ -1,13 +1,14 @@
 import { json, type LoaderFunctionArgs } from '@remix-run/node';
-import { useLoaderData, useSearchParams } from '@remix-run/react';
-import { useState } from 'react';
-import { toast } from 'react-toastify';
-import { PageShell } from '~/components/PageShell';
-import type { EventInfo } from '~/components/header/EventBar';
-import { iconProps } from '~/lib/templates/client';
+import { useLoaderData, useNavigation, useSearchParams } from '@remix-run/react';
+import { useEffect, useRef } from 'react';
+import { PageShell, type ShellData } from '~/components/PageShell';
+import { SiteFooter } from '~/components/landing/MarketingNav';
+import { Byline, LikeButton, Preview, ProjectCard, projectTitle, type GalleryItem } from '~/components/landing/ProjectCard';
+import { TRACKS } from '~/components/landing/starters';
+import { Icon } from '~/components/ui/icons';
 import { getUser, shell } from '~/lib/.server/auth';
-import { db } from '~/lib/.server/db';
-import { timeAgo } from '~/utils/timeAgo';
+import { galleryCounts, galleryItems, projectSummary } from '~/lib/.server/gallery';
+import { classNames } from '~/utils/classNames';
 
 export const meta = () => [
   { title: 'Gallery · Foldo' },
@@ -15,137 +16,264 @@ export const meta = () => [
   { property: 'og:image', content: '/og.jpg' },
 ];
 
-interface Item {
-  id: string;
-  shareId: string;
-  description: string | null;
-  name: string;
-  updated: number;
-  template: string | null;
-  likes: number;
-  liked: number;
-  mine: number;
-}
+const PAGE = 9;
 
-// Public showcase of projects their owners chose to list. Anyone can browse; signed-in teams can like.
+/*
+ * Public showcase of projects their owners chose to list. Anyone can browse; signed-in teams can like.
+ * ?sort=new, ?track=<name>, ?n=<shown> ("Show more" asks the server for the next page).
+ */
 export async function loader({ request }: LoaderFunctionArgs) {
   const user = await getUser(request);
-  const sort = new URL(request.url).searchParams.get('sort') === 'new' ? 'new' : 'top';
-  const items = db
-    .prepare(
-      `SELECT p.id, p.share_id AS shareId, p.description, p.template, u.name, p.updated,
-         (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id) AS likes,
-         (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id AND l.user_id = ?) AS liked,
-         (p.user_id = ?) AS mine
-       FROM projects p JOIN users u ON u.id = p.user_id
-       WHERE p.listed = 1 AND p.share_id IS NOT NULL AND u.disabled = 0
-       ORDER BY ${sort === 'new' ? 'p.updated' : 'likes DESC, p.updated'} DESC LIMIT 120`,
-    )
-    .all(user?.id ?? '', user?.id ?? '');
+  const params = new URL(request.url).searchParams;
+  const sort = params.get('sort') === 'new' ? 'new' : 'top';
+  const track = TRACKS.find((t) => t === params.get('track')) ?? null;
+  const shown = Math.min(Math.max(Number(params.get('n')) || PAGE, PAGE), 300);
 
-  return json({ ...shell(user), items });
+  // the featured card is the top of the "Most liked" list (all tracks), so it costs no extra query
+  const withFeatured = sort === 'top' && !track;
+  const items = galleryItems(user?.id, { sort, track, limit: shown + (withFeatured ? 1 : 0) });
+  const featured = withFeatured && items[0]?.likes > 0 ? items[0] : null;
+  const { templates: _templates, ...rest } = shell(user);
+
+  return json({
+    ...rest,
+    sort,
+    track,
+    featured: featured ? { item: featured, summary: projectSummary(featured.id) } : null,
+    items: featured ? items.slice(1) : items.slice(0, shown),
+    counts: galleryCounts(),
+    now: Date.now(),
+  });
 }
 
-function Card({ item, signedIn, templates }: { item: Item; signedIn: boolean; templates: { id: string; icon: string }[] }) {
-  const [likes, setLikes] = useState(item.likes);
-  const [liked, setLiked] = useState(Boolean(item.liked));
-
-  const toggle = async () => {
-    if (!signedIn) {
-      return (window.location.href = '/login?mode=register');
-    }
-
-    const res = await fetch('/api/like', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shareId: item.shareId, like: !liked }),
-    });
-
-    if (!res.ok) {
-      return toast.error(((await res.json().catch(() => ({}))) as any).error ?? 'Could not like this project');
-    }
-
-    const data = (await res.json()) as { likes: number; liked: boolean };
-    setLikes(data.likes);
-    setLiked(data.liked);
-  };
+function Featured({ item, summary, signedIn, now }: { item: GalleryItem; summary: string; signedIn: boolean; now: number }) {
+  const href = `/p/${item.shareId}`;
 
   return (
-    <li className="overflow-hidden rounded-2xl border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 transition hover:-translate-y-0.5 hover:border-[var(--foldo-yellow)]">
-      <a href={`/p/${item.shareId}`} className="block">
-        <div className="paper-tile flex h-36 items-center justify-center">
-          <img {...iconProps(templates.find((t) => t.id === item.template)?.icon)} alt="" width={80} height={80} loading="lazy" />
-        </div>
-        <div className="px-4 pt-3">
-          <div className="truncate font-semibold">{item.description || 'Untitled project'}</div>
-          <div className="mt-0.5 truncate text-xs text-bolt-elements-textTertiary">
-            by {item.name} · {timeAgo(item.updated)}
-          </div>
-        </div>
+    <section
+      aria-labelledby="featured-title"
+      className="grid items-center gap-6 rounded-[16px] border border-solid border-rule bg-sheet p-6 md:grid-cols-2 md:gap-8 lg:grid-cols-[minmax(0,300px)_minmax(0,1.25fr)_minmax(0,1fr)]"
+      data-testid="foldo-gallery-featured"
+    >
+      <img
+        src="/art/gallery-winner.webp"
+        alt="Foldo proudly wearing a rosette beside a paper trophy"
+        width={1024}
+        height={1024}
+        className="hidden aspect-square h-auto w-full rounded-[12px] border border-solid border-rule object-cover lg:block"
+      />
+      <a href={href} tabIndex={-1} aria-hidden="true" className="block overflow-hidden rounded-[12px] border border-solid border-rule">
+        <Preview item={item} size="featured" />
       </a>
-      <div className="flex items-center justify-between px-4 pb-3 pt-2">
-        <a href={`/p/${item.shareId}`} className="text-sm font-medium text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary">
-          Run it →
-        </a>
-        <button
-          onClick={toggle}
-          disabled={Boolean(item.mine)}
-          aria-pressed={liked}
-          aria-label={liked ? 'Unlike' : 'Like'}
-          className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-sm disabled:opacity-60 ${liked ? 'border-[var(--foldo-yellow)] bg-[var(--foldo-yellow)] text-[#111]' : 'border-bolt-elements-borderColor text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary'}`}
-        >
-          <span className={liked ? 'i-ph:heart-fill' : 'i-ph:heart'} /> {likes}
-        </button>
+      <div className="flex flex-col gap-[14px]">
+        <span className="pill-live self-start">
+          <span className="pill-dot" aria-hidden="true" />
+          Most liked this event
+        </span>
+        <h2 id="featured-title" className="m-0 font-serif text-[36px] font-normal leading-none tracking-[-.01em] md:text-[44px]">
+          <a href={href} className="text-ink no-underline hover:underline">
+            {projectTitle(item)}
+          </a>
+        </h2>
+        {summary && <p className="m-0 text-pretty text-[16px] text-ink2">{summary}</p>}
+        <Byline item={item} now={now} />
+        <div className="mt-[6px] flex flex-wrap items-center gap-3">
+          <a href={href} className="btn-primary btn-lg">
+            Run it <Icon.ArrowRight />
+          </a>
+          <LikeButton item={item} signedIn={signedIn} large />
+        </div>
       </div>
-    </li>
+    </section>
+  );
+}
+
+function Empty({ filtered, onReset }: { filtered: boolean; onReset: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-5 rounded-[16px] border border-solid border-rule bg-sheet px-6 py-14 text-center" data-testid="foldo-gallery-empty">
+      <img
+        src="/art/empty-gallery.webp"
+        alt="Foldo posing on an empty museum pedestal"
+        width={1024}
+        height={1024}
+        className="h-auto w-[220px] rounded-[14px] border border-solid border-rule"
+      />
+      <div className="flex max-w-[420px] flex-col gap-2">
+        <h2 className="m-0 font-serif text-[32px] font-normal leading-none">{filtered ? 'Nothing in this track yet' : 'Nothing in the gallery yet'}</h2>
+        <p className="m-0 text-pretty text-[16px] text-ink2">
+          {filtered
+            ? 'No team has shared a project from this track. Try another track, or build the first one.'
+            : 'Build something, open Share and turn on "Show in gallery". Be the first.'}
+        </p>
+      </div>
+      <div className="flex flex-wrap justify-center gap-3">
+        {filtered && (
+          <button type="button" onClick={onReset} className="btn-secondary btn-md">
+            Show all projects
+          </button>
+        )}
+        <a href="/" className="btn-primary btn-md">
+          Start building <Icon.ArrowRight />
+        </a>
+      </div>
+    </div>
   );
 }
 
 export default function Gallery() {
-  const d = useLoaderData<typeof loader>() as any as { email?: string; name?: string; admin?: boolean; remaining?: number; event: EventInfo | null; items: Item[]; templates: { id: string; icon: string }[] };
+  const d = useLoaderData<typeof loader>() as unknown as ShellData & {
+    sort: 'top' | 'new';
+    track: string | null;
+    items: GalleryItem[];
+    featured: { item: GalleryItem; summary: string } | null;
+    counts: Record<string, number>;
+    now: number;
+  };
   const [params, setParams] = useSearchParams();
-  const sort = params.get('sort') === 'new' ? 'new' : 'top';
+  const navigation = useNavigation();
+  const loading = navigation.state === 'loading' && navigation.location?.pathname === '/gallery';
+  const list = useRef<HTMLUListElement>(null);
+  const focusFrom = useRef<number | null>(null);
+  const { sort, track, items, featured, counts, now } = d;
+  const signedIn = Boolean(d.email);
+  const offset = featured ? 1 : 0;
+  const total = (track ? counts[track] : counts.all) ?? 0;
+  const remaining = total - offset - items.length;
+
+  // after "Show more", move focus to the first new card
+  useEffect(() => {
+    const from = focusFrom.current;
+
+    if (from !== null && items.length > from) {
+      focusFrom.current = null;
+      list.current?.querySelectorAll<HTMLAnchorElement>('li h3 a')[from]?.focus();
+    }
+  }, [items]);
+
+  const set = (next: Record<string, string | null>) => {
+    const p = new URLSearchParams(params);
+
+    for (const [k, v] of Object.entries(next)) {
+      if (v && !(k === 'sort' && v === 'top')) {
+        p.set(k, v);
+      } else {
+        p.delete(k);
+      }
+    }
+
+    setParams(p, { preventScrollReset: true });
+  };
+
+  const chip = (label: string, count: number, value: string | null) => {
+    const on = track === value;
+
+    return (
+      <button
+        key={label}
+        type="button"
+        aria-pressed={on}
+        onClick={() => set({ track: value, n: null })}
+        className={classNames(
+          'inline-flex h-[34px] cursor-pointer items-center gap-2 rounded-full border border-solid px-[14px] font-sans text-[14px] font-medium outline-none transition-colors duration-fast focus-visible:shadow-[0_0_0_2px_#FBF8F1,0_0_0_4px_#16140F]',
+          on ? 'border-ink bg-ink text-paper' : 'border-field bg-sheet text-ink hover:bg-wash',
+        )}
+      >
+        {label}
+        <span className={classNames('font-mono text-[12px]', on ? 'text-field' : 'text-pencil')}>{count}</span>
+      </button>
+    );
+  };
 
   return (
-    <PageShell data={d} active="gallery">
-      <main data-testid="foldo-gallery">
-        <div className="mb-6 mt-2 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="font-display text-4xl">Gallery</h1>
-            <p className="mt-1 text-bolt-elements-textSecondary">Projects teams chose to show off. Run one, then like your favourites.</p>
+    <PageShell
+      data={d}
+      active="gallery"
+      mainClassName={signedIn ? 'flex flex-col gap-10 pb-24 pt-12' : 'flex flex-col gap-10 pb-24 pt-6'}
+      footer={!signedIn && <SiteFooter compact />}
+    >
+      <div className="flex flex-col gap-7" data-testid="foldo-gallery">
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <div className="flex flex-col gap-3">
+            <span className="eyebrow">
+              {d.event?.name ? `${d.event.name} · ` : ''}
+              {counts.all} {counts.all === 1 ? 'project' : 'projects'}
+            </span>
+            <h1 className="m-0 font-serif text-[64px] font-normal leading-[.92] tracking-[-.02em] md:text-[88px]">Gallery</h1>
+            <p className="m-0 max-w-[560px] text-pretty text-[18px] text-ink2">
+              Projects teams chose to show off. Run one, then like your <span className="marker">favourites.</span>
+            </p>
           </div>
-          <div className="flex rounded-full border border-bolt-elements-borderColor p-0.5 text-sm">
+          <div role="group" aria-label="Sort projects" className="inline-flex rounded-[7px] border border-solid border-rule bg-paper p-[2px]">
             {(['top', 'new'] as const).map((s) => (
               <button
                 key={s}
-                onClick={() => setParams(s === 'top' ? {} : { sort: s })}
-                className={`rounded-full px-3 py-1 ${sort === s ? 'bg-[var(--foldo-yellow)] font-semibold text-[#111]' : 'text-bolt-elements-textSecondary'}`}
+                type="button"
+                aria-pressed={sort === s}
+                onClick={() => set({ sort: s, n: null })}
+                className={classNames(
+                  'h-[36px] cursor-pointer rounded-[6px] border border-solid px-[14px] font-sans text-[14px] outline-none focus-visible:shadow-[0_0_0_2px_#16140F]',
+                  sort === s ? 'border-rule bg-sheet font-semibold text-ink' : 'border-transparent bg-transparent font-medium text-ink2 hover:text-ink',
+                )}
               >
                 {s === 'top' ? 'Most liked' : 'Newest'}
               </button>
             ))}
           </div>
         </div>
-
-        {d.items.length === 0 ? (
-          <div className="flex flex-col items-center rounded-3xl border border-dashed border-bolt-elements-borderColor py-14 text-center" data-testid="foldo-gallery-empty">
-            <img src="/art/trophy.webp" alt="" width={200} className="mb-6 rounded-2xl" />
-            <h2 className="text-xl font-semibold">Nothing in the gallery yet</h2>
-            <p className="mb-5 mt-1 max-w-sm text-bolt-elements-textSecondary">
-              Build something, hit Share, and tick "Show in gallery". Be the first.
-            </p>
-            <a href="/" className="btn-primary btn-lg">
-              Start building
-            </a>
+        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-solid border-rule pt-5">
+          <div role="group" aria-label="Filter by track" className="flex flex-wrap gap-2">
+            {chip('All', counts.all, null)}
+            {TRACKS.map((t) => chip(t, counts[t] ?? 0, t))}
           </div>
-        ) : (
-          <ul className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {d.items.map((item) => (
-              <Card key={item.id} item={item} signedIn={Boolean(d.email)} templates={d.templates} />
+          {!signedIn && (
+            <p className="m-0 text-[14px] text-pencil">
+              <a href="/login?next=%2Fgallery" className="font-semibold text-ink underline underline-offset-3">
+                Sign in
+              </a>{' '}
+              to like projects.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {featured && <Featured item={featured.item} summary={featured.summary} signedIn={signedIn} now={now} />}
+
+      {items.length === 0 ? (
+        !featured && <Empty filtered={Boolean(track) && counts.all > 0} onReset={() => set({ track: null, n: null })} />
+      ) : (
+        <section aria-labelledby="all-title" className="flex flex-col gap-5">
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 id="all-title" className="m-0 font-serif text-[32px] font-normal leading-none">
+              {track ?? (featured ? 'All projects' : 'Projects')}
+            </h2>
+            <span className="font-mono text-[12px] text-pencil">
+              Showing {offset + 1}–{offset + items.length} of {total}
+            </span>
+          </div>
+          <ul ref={list} className="m-0 grid list-none grid-cols-1 gap-6 p-0 sm:grid-cols-2 lg:grid-cols-3">
+            {items.map((item) => (
+              <ProjectCard key={item.id} item={item} signedIn={signedIn} now={now} />
             ))}
           </ul>
-        )}
-      </main>
+          {remaining > 0 && (
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                aria-busy={loading || undefined}
+                disabled={loading}
+                onClick={() => {
+                  focusFrom.current = items.length;
+                  set({ n: String(items.length + PAGE) });
+                }}
+                className="btn-secondary btn-lg"
+              >
+                {loading && <Icon.Spinner />}
+                Show more projects
+              </button>
+            </div>
+          )}
+        </section>
+      )}
     </PageShell>
   );
 }

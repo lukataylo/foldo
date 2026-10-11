@@ -23,11 +23,15 @@ export async function updateShare(id: string, share: boolean, listed?: boolean):
     if (res.ok) {
       return (await res.json()) as ShareState;
     }
-  } catch {
-    // network error: fall through to the toast
-  }
 
-  toast.error("Couldn't update sharing. Check your connection and try again.");
+    toast.error(
+      res.status === 401
+        ? 'Please sign in again to keep sharing. Your work is saved.'
+        : 'Something went wrong on our side. Try again in a moment.',
+    );
+  } catch {
+    toast.error("Couldn't update sharing. Check your connection and try again.");
+  }
 
   return undefined;
 }
@@ -58,15 +62,14 @@ interface ShareDialogProps {
 }
 
 type Step = 'create' | 'live' | 'stop';
+type Busy = 'create' | 'list' | 'stop' | null;
 
-// the foundation Dialog renders its close button last; the share boards place it per step
-const CLOSE = '[&>button:last-child]:rounded-[8px]';
-const CLOSE_ON_BANNER = `${CLOSE} [&>button:last-child]:top-3 [&>button:last-child]:right-3 [&>button:last-child]:border [&>button:last-child]:border-solid [&>button:last-child]:border-rule [&>button:last-child]:bg-sheet [&>button:last-child]:text-ink [&>button:last-child]:hover:bg-wash`;
-const CLOSE_IN_HEADER = `${CLOSE} [&>button:last-child]:top-[22px] [&>button:last-child]:right-6`;
+const FOCUS: Record<Step, string> = { create: 'foldo-share-create', live: 'foldo-share-copy', stop: 'foldo-share-stop-cancel' };
 
 export function ShareDialog({ open, onOpenChange, projectId, title, state, onChange }: ShareDialogProps) {
   const [confirmStop, setConfirmStop] = useState(false);
-  const close = () => onOpenChange(false);
+  const [busy, setBusy] = useState<Busy>(null);
+  const closeClicked = useRef(false);
   const step: Step = !state.shareId ? 'create' : confirmStop ? 'stop' : 'live';
 
   /*
@@ -92,17 +95,26 @@ export function ShareDialog({ open, onOpenChange, projectId, title, state, onCha
     };
   }, [open]);
 
+  // Esc, backdrop and Close all come through here: never close mid-revoke, and Esc on the confirm step goes back to Live
+  const handleOpenChange = (next: boolean) => {
+    const viaClose = closeClicked.current;
+    closeClicked.current = false;
+
+    if (next) {
+      onOpenChange(true);
+    } else if (busy === 'stop') {
+      return;
+    } else if (step === 'stop' && !viaClose) {
+      setConfirmStop(false);
+    } else {
+      onOpenChange(false);
+    }
+  };
+
   return (
-    <DialogRoot open={open} onOpenChange={onOpenChange}>
+    <DialogRoot open={open} onOpenChange={handleOpenChange}>
       {open && (
-        <Dialog
-          className={classNames(
-            '!max-h-[calc(100vh-32px)] !max-w-[520px] !rounded-[16px] overflow-y-auto',
-            step === 'stop' ? CLOSE_IN_HEADER : CLOSE_ON_BANNER,
-          )}
-          onBackdrop={close}
-          onClose={close}
-        >
+        <Dialog className="!max-h-[calc(100vh-32px)] !max-w-[520px] !rounded-[16px] overflow-y-auto" hideClose>
           <ShareBody
             projectId={projectId}
             title={title}
@@ -110,6 +122,9 @@ export function ShareDialog({ open, onOpenChange, projectId, title, state, onCha
             onChange={onChange}
             step={step}
             setConfirmStop={setConfirmStop}
+            busy={busy}
+            setBusy={setBusy}
+            onCloseClick={() => (closeClicked.current = true)}
           />
         </Dialog>
       )}
@@ -117,17 +132,35 @@ export function ShareDialog({ open, onOpenChange, projectId, title, state, onCha
   );
 }
 
+function CloseButton({ className, disabled, onClick }: { className: string; disabled?: boolean; onClick: () => void }) {
+  return (
+    <RadixDialog.Close asChild>
+      <button
+        type="button"
+        aria-label="Close"
+        disabled={disabled}
+        onClick={onClick}
+        className={classNames('btn-icon h-9 w-9 rounded-[8px]', className)}
+      >
+        <Icon.Close size={18} />
+      </button>
+    </RadixDialog.Close>
+  );
+}
+
 interface ShareBodyProps extends Omit<ShareDialogProps, 'open' | 'onOpenChange'> {
   step: Step;
   setConfirmStop: (on: boolean) => void;
+  busy: Busy;
+  setBusy: (busy: Busy) => void;
+  onCloseClick: () => void;
 }
 
-function ShareBody({ projectId, title, state, onChange, step, setConfirmStop }: ShareBodyProps) {
-  const [busy, setBusy] = useState<'create' | 'list' | 'stop' | null>(null);
+function ShareBody({ projectId, title, state, onChange, step, setConfirmStop, busy, setBusy, onCloseClick }: ShareBodyProps) {
   const [copied, setCopied] = useState(false);
   const [showQr, setShowQr] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  const prevStep = useRef(step);
+  const prevStep = useRef<Step | null>(null);
   const name = title?.trim() || 'Untitled project';
   const url = state.shareId ? shareUrl(state.shareId) : '';
   const shortUrl = url.replace(/^https?:\/\//, '');
@@ -143,30 +176,34 @@ function ShareBody({ projectId, title, state, onChange, step, setConfirmStop }: 
   }, [copied]);
 
   /*
-   * The step's content replaces the old one, so move focus to its main control (Radix only handles the first open).
-   * Wait for busy to clear: a disabled button can't take focus, and the store update can render before setBusy(null).
+   * Focus each step's main control: on open (this effect runs before Radix's FocusScope, which then leaves focus alone),
+   * when one step replaces another, and back on the action button after a failed request. Wait for busy to clear:
+   * a disabled button can't take focus, and the store update can render before setBusy(null).
    */
-  const pendingFocus = useRef<Step | null>(null);
+  const pendingFocus = useRef<string | null>(null);
 
   useEffect(() => {
     if (prevStep.current !== step) {
       prevStep.current = step;
-      pendingFocus.current = step;
+      pendingFocus.current = FOCUS[step];
     }
 
     if (!pendingFocus.current || busy) {
       return;
     }
 
-    const target = { create: 'foldo-share-create', live: 'foldo-share-copy', stop: 'foldo-share-stop-cancel' }[pendingFocus.current];
+    root.current?.querySelector<HTMLElement>(`[data-testid="${pendingFocus.current}"]`)?.focus();
     pendingFocus.current = null;
-    root.current?.querySelector<HTMLElement>(`[data-testid="${target}"]`)?.focus();
   }, [step, busy]);
 
-  const run = async (kind: NonNullable<typeof busy>, share: boolean, listed?: boolean) => {
+  const run = async (kind: NonNullable<Busy>, share: boolean, listed?: boolean) => {
     setBusy(kind);
 
     const next = await updateShare(projectId, share, listed);
+
+    if (!next) {
+      pendingFocus.current = { create: 'foldo-share-create', list: 'foldo-share-gallery', stop: 'foldo-share-stop-confirm' }[kind];
+    }
 
     setBusy(null);
 
@@ -214,19 +251,29 @@ function ShareBody({ projectId, title, state, onChange, step, setConfirmStop }: 
     }
   };
 
+  const dialogTitle = (
+    <RadixDialog.Title className="m-0 font-serif text-[30px] font-normal leading-[1.1] text-ink [text-wrap:balance]">
+      Share project
+    </RadixDialog.Title>
+  );
   const heading = (
     <>
-      <RadixDialog.Title className="m-0 font-serif text-[30px] font-normal leading-[1.1] text-ink [text-wrap:balance]">
-        Share project
-      </RadixDialog.Title>
+      {dialogTitle}
       <RadixDialog.Description className="m-0 truncate text-[14px] text-pencil">{name}</RadixDialog.Description>
     </>
   );
+  const onBanner = 'absolute right-3 top-3 border border-solid border-rule bg-sheet text-ink hover:bg-wash';
 
   if (step === 'stop') {
     return (
       <div ref={root} data-testid="foldo-share-dialog" data-step="stop">
-        <header className="flex flex-col gap-[2px] border-b border-rule2 px-6 pb-[18px] pr-[76px] pt-[22px]">{heading}</header>
+        <header className="flex items-start justify-between gap-4 border-b border-rule2 px-6 pb-[18px] pt-[22px]">
+          <div className="flex min-w-0 flex-col gap-[2px]">
+            {dialogTitle}
+            <span className="truncate text-[14px] text-pencil">{name}</span>
+          </div>
+          <CloseButton className="flex-none" disabled={busy === 'stop'} onClick={onCloseClick} />
+        </header>
 
         <div className="flex flex-col items-center gap-[18px] px-6 pb-7 pt-6 text-center">
           <img
@@ -240,9 +287,9 @@ function ShareBody({ projectId, title, state, onChange, step, setConfirmStop }: 
             <h3 className="m-0 font-serif text-[28px] font-normal leading-[1.1] text-ink [text-wrap:balance]">
               Turn off the public link?
             </h3>
-            <p id="share-stop-copy" className="m-0 text-[15px] text-ink2 [text-wrap:pretty]">
+            <RadixDialog.Description className="m-0 text-[15px] text-ink2 [text-wrap:pretty]">
               Anyone with the current link will lose access.
-            </p>
+            </RadixDialog.Description>
             <p className="m-0 text-[13px] text-pencil [text-wrap:pretty]">
               {state.listed ? 'It also comes out of the gallery. ' : ''}Your project and its chat stay as they are.
             </p>
@@ -257,6 +304,7 @@ function ShareBody({ projectId, title, state, onChange, step, setConfirmStop }: 
           <button
             type="button"
             data-testid="foldo-share-stop-cancel"
+            disabled={busy !== null}
             className="btn-ghost h-[38px] rounded-[8px] px-[14px] text-[14px]"
             onClick={() => setConfirmStop(false)}
           >
@@ -288,6 +336,7 @@ function ShareBody({ projectId, title, state, onChange, step, setConfirmStop }: 
           height={600}
           className="block aspect-[13/5] h-auto w-full"
         />
+        <CloseButton className={onBanner} onClick={onCloseClick} />
         <header className="flex flex-col gap-[2px] px-6 pb-1 pt-[22px]">{heading}</header>
 
         <div className="px-6 pt-5">
@@ -327,6 +376,7 @@ function ShareBody({ projectId, title, state, onChange, step, setConfirmStop }: 
         height={600}
         className="block aspect-[13/5] h-auto w-full"
       />
+      <CloseButton className={onBanner} onClick={onCloseClick} />
       <header className="flex flex-col gap-[2px] px-6 pt-5">{heading}</header>
 
       <div className="flex flex-col gap-[18px] px-6 pb-5 pt-[18px]">
@@ -340,8 +390,8 @@ function ShareBody({ projectId, title, state, onChange, step, setConfirmStop }: 
               Live
             </span>
           </div>
-          <div className="flex items-center gap-2 rounded-[10px] border border-field bg-paper py-[5px] pl-3 pr-[5px] [&:has(input:focus-visible)]:border-ink">
-            <GlobeIcon size={16} className="shrink-0 text-pencil" />
+          <div className="flex flex-wrap items-center gap-2 rounded-[10px] border border-field bg-paper py-[5px] pl-3 pr-[5px] [&:has(input:focus-visible)]:border-ink">
+            <GlobeIcon size={16} className="hidden shrink-0 text-pencil sm:block" />
             <input
               id="foldo-share-url"
               readOnly
@@ -353,14 +403,14 @@ function ShareBody({ projectId, title, state, onChange, step, setConfirmStop }: 
                 e.preventDefault();
                 e.clipboardData.setData('text/plain', url);
               }}
-              className="h-[34px] min-w-0 flex-1 border-0 bg-transparent font-mono text-[13px] text-ink outline-none"
+              className="h-[34px] min-w-0 flex-1 border-0 bg-transparent font-mono text-[12px] text-ink outline-none sm:text-[13px]"
             />
             <button
               type="button"
               data-testid="foldo-share-copy"
               onClick={copy}
               className={classNames(
-                'h-[36px] min-w-[104px] gap-1.5 rounded-[8px] px-[14px] text-[14px]',
+                'h-[36px] w-full min-w-[104px] gap-1.5 rounded-[8px] px-[14px] text-[14px] sm:w-auto',
                 copied ? 'btn border-live bg-live font-semibold text-white' : 'btn-primary',
               )}
             >

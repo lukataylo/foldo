@@ -210,8 +210,11 @@ export class WorkbenchStore {
     this.#filesStore.resetFileModifications();
   }
 
+  // Stop: kill running commands and drop queued ones, so a hung install can't hold later replies hostage
   abortAllActions() {
-    // TODO: what do we wanna do and how do we wanna recover from this?
+    for (const artifact of Object.values(this.artifacts.get())) {
+      artifact.runner.abortAll();
+    }
   }
 
   addArtifact({ messageId, title, id }: ArtifactCallbackData) {

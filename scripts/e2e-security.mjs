@@ -14,6 +14,8 @@ const dir = mkdtempSync(join(tmpdir(), 'foldo-e2e-'));
 const DB = join(dir, 'e2e.db');
 const results = [];
 let xff = 0;
+// what the fake LLM saw, for the long-build checks
+const llmSeen = { last: undefined, closedEarly: 0 };
 
 const check = (persona, name, ok, detail = '') => {
   results.push({ persona, name, ok });
@@ -28,6 +30,45 @@ const llm = http
     req.on('end', async () => {
       const parsed = JSON.parse(b);
       const last = parsed.messages.at(-1).content;
+      llmSeen.last = parsed;
+      const sse = (delta, fin) =>
+        `data: ${JSON.stringify({ id: '1', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: fin }] })}\n\n`;
+      const prior = String(parsed.messages.at(-2)?.content ?? '');
+
+      // hits the token limit mid-file; the continuation restarts the artifact and action like non-Claude models do
+      if (String(last).includes('CUTOFF')) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end(sse({ content: '<boltArtifact id="cut" title="Cut">\n<boltAction type="file" filePath="src/a.js">const a = 1;\nconst b' }, null) + sse({}, 'length') + 'data: [DONE]\n\n');
+        return;
+      }
+
+      if (String(last).includes('Continue your prior response') && prior.includes('id="cut"')) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end(sse({ content: '<boltArtifact id="cut" title="Cut">\n<boltAction type="file" filePath="src/a.js">const a = 1;\nconst b = 2;\n</boltAction></boltArtifact>' }, null) + sse({}, 'stop') + 'data: [DONE]\n\n');
+        return;
+      }
+
+      // starts answering, then goes silent forever
+      if (String(last).includes('STALL')) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write(sse({ content: 'thinking about it' }, null));
+        return;
+      }
+
+      // a long reply the browser walks away from: the provider call must be closed, not left running
+      if (String(last).includes('LONGRUN')) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        let n = 0;
+        const t = setInterval(() => (n++ < 100 ? res.write(sse({ content: `part ${n} ` }, null)) : (clearInterval(t), res.end(sse({}, 'stop') + 'data: [DONE]\n\n'))), 100);
+        res.on('close', () => {
+          if (n < 100) {
+            llmSeen.closedEarly++;
+          }
+
+          clearInterval(t);
+        });
+        return;
+      }
       const system = String(parsed.messages.find((m) => m.role === 'system')?.content ?? '');
       const reply = system.includes('<starter_template>') ? `template-mode msgs:${parsed.messages.filter((m) => m.role !== 'system').length}` : 'hello ';
 
@@ -81,6 +122,7 @@ const server = spawn('node', ['server.mjs'], {
     LLM_PROVIDER: 'deepseek',
     APP_SECRET: 'e2e-secret',
     FIRST_TOKEN_TIMEOUT_MS: '2500',
+    STREAM_IDLE_TIMEOUT_MS: '1500',
     NODE_ENV: 'development',
     OPENAI_API_KEY: '',
   },
@@ -425,6 +467,49 @@ try {
   check(P10, 'backup download refuses path tricks and unknown names', (await ADM.req('/api/admin-backup?file=..%2F..%2Fetc%2Fpasswd')).status === 404 && (await ADM.req('/api/admin-backup?file=foldo-2000-01-01-00-00-00.db')).status === 404);
   check(P10, 'non-admins cannot download backups', (await A.req(`/api/admin-backup?file=${bname}`)).status !== 200 && (await anon.req(`/api/admin-backup?file=${bname}`)).status !== 200);
   check(P10, 'the save indicator is on the page for a signed-in team', (await F.req('/')).status === 200);
+
+  // ============ Persona 11: long builds (continuation, Stop, stalled provider, history size) ============
+  const P11 = 'long builds';
+  const streamed = (body) => body.split('\n').filter((l) => l.startsWith('0:')).map((l) => JSON.parse(l.slice(2))).join('');
+  const L1 = new Client();
+  await L1.register('Team Long', 'long@t.co');
+  const cut = await L1.chat('CUTOFF build me a thing');
+  const cutText = streamed(cut.text);
+  check(P11, 'a cut-off reply is continued and the restarted action replaces the partial file', cut.status === 200 && cutText.includes('const b</boltAction>\n<boltAction type="file" filePath="src/a.js">const a = 1;\nconst b = 2;') && (cutText.match(/<boltArtifact/g) ?? []).length === 1, JSON.stringify(cutText));
+  check(P11, 'the continued reply reaches the browser as one message (a single finish part, at the end)', (cut.text.match(/^d:/gm) ?? []).length === 1 && /\nd:[^\n]*\n?$/.test(cut.text), cut.text.split('\n').filter((l) => /^[ed]:/.test(l)).join(' | '));
+
+  const t0stall = Date.now();
+  const stall = await L1.chat('STALL please');
+  check(P11, 'a provider that goes silent mid-reply ends the stream instead of hanging', stall.status === 200 && streamed(stall.text) === 'thinking about it' && Date.now() - t0stall < 6000, `${Date.now() - t0stall}ms ${stall.text.slice(0, 80)}`);
+  check(P11, 'the stalled stream released its slot', (await L1.chat('hello again')).status === 200);
+
+  const L2 = new Client();
+  await L2.register('Team Stop', 'stop@t.co');
+  const ac = new AbortController();
+  const run = await fetch(`${BASE}/api/chat`, { method: 'POST', signal: ac.signal, headers: { 'content-type': 'application/json', cookie: L2.cookie, 'x-forwarded-for': L2.ip }, body: JSON.stringify({ messages: [{ role: 'user', content: 'LONGRUN' }] }) });
+  const reader = run.body.getReader();
+  await reader.read();
+  ac.abort();
+  await new Promise((r) => setTimeout(r, 800));
+  check(P11, 'Stop in the browser closes the call to the AI provider', llmSeen.closedEarly === 1, llmSeen.closedEarly);
+  check(P11, 'after Stop the team can send again right away', (await L2.chat('hello')).status === 200);
+
+  const file = (body) => `<boltArtifact id="x" title="X"><boltAction type="file" filePath="src/App.jsx">${body}</boltAction></boltArtifact>`;
+  const bulky = 'x'.repeat(60_000);
+  const history = [
+    { role: 'user', content: 'make it' },
+    { role: 'assistant', content: file(`v1 ${bulky}`) },
+    { role: 'user', content: 'again' },
+    { role: 'assistant', content: file(`v2 ${bulky}`) },
+    { role: 'user', content: 'again' },
+    { role: 'assistant', content: file(`v3 ${bulky}`) },
+    { role: 'user', content: 'and once more' },
+    { role: 'assistant', content: file(`v4 ${bulky}`) },
+    { role: 'user', content: 'final change' },
+  ];
+  const big = await L2.req('/api/chat', { method: 'POST', body: { messages: history } });
+  const sent = llmSeen.last.messages.map((m) => m.content).join('');
+  check(P11, 'old copies of rewritten files are dropped, so a 240k-char history still builds', big.status === 200 && sent.includes('v4 ') && !sent.includes('v1 ') && sent.includes('(wrote src/App.jsx; a later reply replaced it)'), big.status);
 
   // ============ Persona 8: 30 teams at once ============
   const P8 = 'load: 30 teams';

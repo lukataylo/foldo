@@ -1,4 +1,5 @@
 import { WebContainer } from '@webcontainer/api';
+import { coepFor } from '~/lib/coep';
 import { WORK_DIR_NAME } from '~/utils/constants';
 
 interface WebContainerContext {
@@ -23,7 +24,11 @@ if (!import.meta.env.SSR) {
     Promise.resolve()
       .then(() => {
         // without this, preview crashes never reach the "Fix this error" banner
-        return WebContainer.boot({ workdirName: WORK_DIR_NAME, forwardPreviewErrors: 'exceptions-only' });
+        return WebContainer.boot({
+          workdirName: WORK_DIR_NAME,
+          forwardPreviewErrors: 'exceptions-only',
+          coep: coepFor(navigator.userAgent),
+        });
       })
       .then((webcontainer) => {
         webcontainerContext.loaded = true;

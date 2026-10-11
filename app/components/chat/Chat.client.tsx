@@ -13,6 +13,7 @@ import { PROMPT_KEY } from '~/components/landing/starters';
 import { chatStore } from '~/lib/stores/chat';
 import { activeTemplate, applyTemplate, prefetchSnapshots, templateStatus, type TemplateCard } from '~/lib/templates/client';
 import { description } from '~/lib/persistence';
+import { beginReplay, endReplay } from '~/lib/runtime/action-runner';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { fileModificationsToHTML } from '~/utils/diff';
 import { cubicEasingFn } from '~/utils/easings';
@@ -77,6 +78,8 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const builtAt = useRef(0);
+  const replaying = useRef(initialMessages.length > 0);
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const [chatStarted, setChatStarted] = useState(initialMessages.length > 0);
 
@@ -95,6 +98,8 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
 
   const { messages, isLoading, input, handleInputChange, setInput, setMessages, stop, append } = useChat({
     api: '/api/chat',
+    // re-render (and re-parse) at most every 50ms instead of on every streamed token
+    experimental_throttle: 50,
     body: { provider: model, template },
     onResponse: (response) => {
       const left = response.headers.get('X-Foldo-Remaining');
@@ -122,6 +127,9 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
     },
     initialMessages,
   });
+
+  const latest = useRef(messages);
+  latest.current = messages;
 
   const { enhancingPrompt, promptEnhanced, enhancePrompt, resetEnhancer } = usePromptEnhancer();
   const { parsedMessages, parseMessages } = useMessageParser();
@@ -169,11 +177,35 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
   useEffect(() => {
     // saved edits replay only after the template underneath them is in place
     if (tplReady) {
-      parseMessages(messages, isLoading);
+      if (replaying.current) {
+        replaying.current = false;
+        beginReplay();
+        parseMessages(messages, isLoading);
+        endReplay();
+      } else {
+        parseMessages(messages, isLoading);
+      }
     }
 
-    if (messages.length > initialMessages.length) {
-      storeMessageHistory(messages).catch((error) => toast.error(error.message));
+    if (messages.length <= initialMessages.length) {
+      return;
+    }
+
+    const save = () => storeMessageHistory(latest.current).catch((error) => toast.error(error.message));
+
+    /*
+     * Saving on every streamed chunk sent the whole conversation to the server hundreds of times per reply. Save once
+     * the reply is done, and every few seconds while it streams so a crash mid-build loses little.
+     */
+    if (!isLoading) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = undefined;
+      save();
+    } else if (!saveTimer.current) {
+      saveTimer.current = setTimeout(() => {
+        saveTimer.current = undefined;
+        save();
+      }, 3000);
     }
   }, [messages, isLoading, parseMessages, tplReady]);
 
@@ -241,9 +273,6 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
    * one fix repaired every broken first build, so teams rarely have to see one. Never for a reply that was itself a fix,
    * so it can't loop.
    */
-  const latest = useRef(messages);
-  latest.current = messages;
-
   const autoFixedFor = useRef<string>();
 
   useEffect(

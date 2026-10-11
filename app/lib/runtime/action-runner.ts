@@ -55,6 +55,62 @@ let devServer: { kill: () => void; superseded: boolean } | undefined;
 
 const DEV_SERVER_SETTLE_MS = 2000;
 
+// a stalled install or a command waiting for input used to hold the queue (and every later reply) until a reload
+const COMMAND_TIMEOUT_MS = 5 * 60_000;
+const WAITING_FOR_INPUT = /\(y\/n\)|Ok to proceed\?|\? .*›|^◆ /im;
+
+// `npm install` with no packages: a later one on the final package.json does the same work
+const BARE_INSTALL = /^\s*(npm (install|i|ci)|pnpm (install|i)|yarn( install)?)(\s+--?[\w-]+(=\S+)?)*\s*$/;
+
+/*
+ * Reopening a project replays every reply. Running each reply's install and dev server again took minutes and flashed
+ * errors from half-built states, so during a replay only the last bare install runs, and only the last dev server
+ * starts, once every file is in place.
+ */
+interface ReplayEntry {
+  runner: ActionRunner;
+  actionId: string;
+  command: string;
+}
+
+let replay: { entries: ReplayEntry[]; skip: Set<ReplayEntry>; server?: ReplayEntry; done: boolean } | undefined;
+
+const findReplay = (runner: ActionRunner, actionId: string) =>
+  replay?.entries.find((entry) => entry.runner === runner && entry.actionId === actionId);
+
+export function beginReplay() {
+  replay = { entries: [], skip: new Set(), done: false };
+}
+
+export function endReplay() {
+  const current = replay;
+
+  if (!current || current.done) {
+    return;
+  }
+
+  current.done = true;
+
+  const installs = current.entries.filter((entry) => BARE_INSTALL.test(entry.command));
+  const servers = current.entries.filter((entry) => isServerCommand(entry.command));
+
+  installs.slice(0, -1).forEach((entry) => current.skip.add(entry));
+  servers.forEach((entry) => current.skip.add(entry));
+  current.server = servers.at(-1);
+
+  queue = queue
+    .then(() => {
+      const server = current.server;
+
+      if (replay === current) {
+        replay = undefined;
+      }
+
+      return server?.runner.runDeferred(server.actionId);
+    })
+    .catch((error) => console.error('Action failed:', error));
+}
+
 export class ActionRunner {
   #webcontainer: Promise<WebContainer>;
 
@@ -89,7 +145,10 @@ export class ActionRunner {
     });
 
     queue.then(() => {
-      this.#updateAction(actionId, { status: 'running' });
+      // never resurrect an action that was stopped or already finished while it waited
+      if (this.actions.get()[actionId]?.status === 'pending') {
+        this.#updateAction(actionId, { status: 'running' });
+      }
     });
   }
 
@@ -107,6 +166,10 @@ export class ActionRunner {
 
     this.#updateAction(actionId, { ...action, ...data.action, executed: true });
 
+    if (replay && !replay.done && data.action.type === 'shell') {
+      replay.entries.push({ runner: this, actionId, command: data.action.content });
+    }
+
     queue = queue
       .then(() => {
         return this.#executeAction(actionId);
@@ -116,8 +179,37 @@ export class ActionRunner {
       });
   }
 
-  async #executeAction(actionId: string) {
+  /** abort everything still pending or running, except dev servers already serving the preview */
+  abortAll() {
+    for (const [id, action] of Object.entries(this.actions.get())) {
+      if ((action.status === 'pending' || action.status === 'running') && !this.#serving.has(id)) {
+        action.abort();
+      }
+    }
+  }
+
+  #serving = new Set<string>();
+
+  /** runs a dev server held back during a replay */
+  async runDeferred(actionId: string) {
+    await this.#executeAction(actionId, true);
+  }
+
+  async #executeAction(actionId: string, deferred = false) {
     const action = this.actions.get()[actionId];
+
+    if (action.abortSignal.aborted) {
+      this.#updateAction(actionId, { status: 'aborted' });
+      return;
+    }
+
+    const replayed = deferred ? undefined : findReplay(this, actionId);
+
+    if (replayed && replay?.skip.has(replayed)) {
+      // covered by a later install, or held back to start once every file is in place
+      this.#updateAction(actionId, { status: replay?.server === replayed ? 'pending' : 'complete' });
+      return;
+    }
 
     this.#updateAction(actionId, { status: 'running' });
 
@@ -125,6 +217,7 @@ export class ActionRunner {
       switch (action.type) {
         case 'shell': {
           if (await this.#runShellAction(actionId, action)) {
+            this.#serving.add(actionId);
             return; // a dev server keeps running (and keeps its status) after the queue moves on
           }
 
@@ -157,6 +250,9 @@ export class ActionRunner {
     const webcontainer = await this.#webcontainer;
     const server = isServerCommand(action.content);
 
+    // a command replayed from an old reply that failed back then fails again: still marked failed, but no error banner
+    const surface = findReplay(this, actionId) ? () => undefined : (message: string) => previewError.set(message);
+
     if (server) {
       await this.#ensureJsxRuntime(webcontainer);
 
@@ -182,12 +278,18 @@ export class ActionRunner {
 
     // keep the tail of the output so a failed install/build can show why (no more silent "complete")
     let tail = '';
+    let stuck: ((reason: string) => void) | undefined;
+    const stalled = new Promise<string>((resolve) => (stuck = resolve));
 
     process.output.pipeTo(
       new WritableStream({
         write(data) {
           console.log(data);
           tail = (tail + data).slice(-1500);
+
+          if (!server && WAITING_FOR_INPUT.test(stripAnsi(tail.slice(-300)))) {
+            stuck?.('it was waiting for an answer to a question, and nobody can type one');
+          }
 
           if (server) {
             const at = tail.search(VITE_ERROR);
@@ -212,7 +314,7 @@ export class ActionRunner {
     // a failed command leaves the preview dead: show it (and let the chat fix it) like any other app error
     const failure = (exitCode: number) => {
       const message = stripAnsi(tail).trim().split('\n').slice(-8).join('\n') || `Command exited with code ${exitCode}`;
-      previewError.set(`The command "${action.content.trim()}" failed:\n${message}`);
+      surface(`The command "${action.content.trim()}" failed:\n${message}`);
 
       return message;
     };
@@ -238,7 +340,17 @@ export class ActionRunner {
       }
     }
 
-    const exitCode = await process.exit;
+    const timer = setTimeout(() => stuck?.(`it was still running after ${COMMAND_TIMEOUT_MS / 60_000} minutes`), COMMAND_TIMEOUT_MS);
+    const exitCode = await Promise.race([process.exit, stalled]).finally(() => clearTimeout(timer));
+
+    if (typeof exitCode === 'string') {
+      process.kill();
+
+      const message = `The command "${action.content.trim()}" was stopped because ${exitCode}.`;
+      surface(message);
+
+      throw new Error(message);
+    }
 
     logger.debug(`Process terminated with code ${exitCode}`);
 
@@ -277,6 +389,10 @@ export class ActionRunner {
       unreachable('Expected file action');
     }
 
+    if (!action.filePath) {
+      throw new Error('The reply wrote a file without saying where it goes');
+    }
+
     const webcontainer = await this.#webcontainer;
 
     let folder = nodePath.dirname(action.filePath);
@@ -297,7 +413,9 @@ export class ActionRunner {
       await webcontainer.fs.writeFile(action.filePath, action.content);
       logger.debug(`File written ${action.filePath}`);
     } catch (error) {
+      // shown as failed instead of a green tick on a file that isn't there
       logger.error('Failed to write file\n\n', error);
+      throw new Error(`Couldn't write ${action.filePath}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

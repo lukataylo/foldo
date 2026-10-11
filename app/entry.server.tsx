@@ -5,6 +5,7 @@ import { isbot } from 'isbot';
 import { renderToReadableStream } from 'react-dom/server.browser';
 import { renderHeadToString } from 'remix-island';
 import { Head } from './root';
+import { coepFor } from '~/lib/coep';
 import { themeStore } from '~/lib/stores/theme';
 
 export default async function handleRequest(
@@ -14,8 +15,16 @@ export default async function handleRequest(
   remixContext: EntryContext,
   _loadContext: AppLoadContext,
 ) {
+  /*
+   * A closed tab stops the render, but only while it is still rendering: React 18 closes its stream again on an abort
+   * that arrives after it finished (or after we cancelled it), which throws ERR_INVALID_STATE.
+   */
+  const stop = new AbortController();
+  let rendered = false;
+  request.signal.addEventListener('abort', () => !rendered && stop.abort(), { once: true });
+
   const readable = await renderToReadableStream(<RemixServer context={remixContext} url={request.url} />, {
-    signal: request.signal,
+    signal: stop.signal,
     onError(error: unknown) {
       console.error(error);
       responseStatusCode = 500;
@@ -41,6 +50,7 @@ export default async function handleRequest(
           .read()
           .then(({ done, value }) => {
             if (done) {
+              rendered = true;
               controller.enqueue(new Uint8Array(new TextEncoder().encode(`</div></body></html>`)));
               controller.close();
 
@@ -59,7 +69,10 @@ export default async function handleRequest(
     },
 
     cancel() {
-      readable.cancel();
+      if (!rendered) {
+        rendered = true;
+        stop.abort();
+      }
     },
   });
 
@@ -69,7 +82,8 @@ export default async function handleRequest(
 
   responseHeaders.set('Content-Type', 'text/html');
 
-  responseHeaders.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  responseHeaders.set('Cross-Origin-Embedder-Policy', coepFor(request.headers.get('user-agent') || ''));
+  responseHeaders.append('Vary', 'User-Agent');
   responseHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
 
   return new Response(body, {

@@ -94,7 +94,7 @@ export class StreamingMessageParser {
             let content = currentAction.content.trim();
 
             if ('type' in currentAction && currentAction.type === 'file') {
-              content += '\n';
+              content = cleanFileContent(currentAction.filePath, content) + '\n';
             }
 
             currentAction.content = content;
@@ -164,7 +164,8 @@ export class StreamingMessageParser {
           if (potentialTag === ARTIFACT_TAG_OPEN) {
             const nextChar = input[j + 1];
 
-            if (nextChar && nextChar !== '>' && nextChar !== ' ') {
+            // non-Claude models often break the tag over lines: `<boltArtifact\n  id="..."`
+            if (nextChar && nextChar !== '>' && !/\s/.test(nextChar)) {
               output += input.slice(i, j + 1);
               i = j + 1;
               break;
@@ -264,9 +265,35 @@ export class StreamingMessageParser {
   }
 
   #extractAttribute(tag: string, attributeName: string): string | undefined {
-    const match = tag.match(new RegExp(`${attributeName}="([^"]*)"`, 'i'));
-    return match ? match[1] : undefined;
+    // either quote style: some models write filePath='src/App.jsx'
+    const match = tag.match(new RegExp(`\\s${attributeName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i'));
+    return match ? (match[1] ?? match[2]) : undefined;
   }
+}
+
+const ESCAPED = { '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&amp;': '&' } as Record<string, string>;
+
+/**
+ * Non-Claude models sometimes wrap a whole file in a markdown fence, or HTML-escape its tags. Written as-is either one is a
+ * syntax error and a white screen, so undo both (but never in markdown, where a fence is real content).
+ */
+export function cleanFileContent(filePath: string | undefined, content: string) {
+  if (/\.(md|mdx|markdown)$/i.test(filePath ?? '')) {
+    return content;
+  }
+
+  const fenced = content.match(/^```[\w.+-]*[^\S\n]*\n([\s\S]*?)\n?```$/);
+
+  if (fenced && !fenced[1].includes('\n```')) {
+    content = fenced[1].trim();
+  }
+
+  // escaped markup with no real markup at all: a code file, never a page that legitimately shows `&lt;`
+  if (/\.([cm]?[jt]sx?|html?|vue|svelte)$/i.test(filePath ?? '') && /&lt;/.test(content) && !/<[A-Za-z/!]/.test(content)) {
+    content = content.replace(/&(lt|gt|quot|#39|amp);/g, (entity) => ESCAPED[entity]);
+  }
+
+  return content;
 }
 
 const createArtifactElement: ElementFactory = (props) => {

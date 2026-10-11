@@ -1,9 +1,12 @@
+import { useStore } from '@nanostores/react';
 import type { Message } from 'ai';
-import React from 'react';
-import { classNames } from '~/utils/classNames';
+import React, { Fragment, type ReactNode } from 'react';
 import { AssistantMessage } from './AssistantMessage';
+import { AutoFixBanner } from './StudioCards';
 import { TemplateIntro } from './TemplateIntro';
 import { UserMessage } from './UserMessage';
+import { autoFixAfter } from './studio-state';
+import { SIcon } from './studio-icons';
 
 interface MessagesProps {
   id?: string;
@@ -11,58 +14,62 @@ interface MessagesProps {
   isStreaming?: boolean;
   messages?: Message[];
   onSend?: (text: string) => void;
+  // rendered after the last message (cut-off card)
+  footer?: ReactNode;
 }
 
+// the model plans before it writes anything; under load that silence can last a minute
+const Planning = () => (
+  <p className="m-0 flex items-start gap-2 text-ink2">
+    <SIcon.Arc className="mt-[3px] text-ink" />
+    Planning your app. The first words can take up to a minute when lots of teams are building.
+  </p>
+);
+
+const Mark = () => <img src="/foldo-mark.svg" alt="Foldo" width={20} height={20} className="mt-[2px] block h-[20px] w-[20px] flex-none" />;
+
+/*
+ * The conversation: the team's messages are Wash bubbles on the right, Foldo's replies sit on the page beside the mark,
+ * with the step log inline (Build-* boards).
+ */
 export const Messages = React.forwardRef<HTMLDivElement, MessagesProps>((props: MessagesProps, ref) => {
   const { id, isStreaming = false, messages = [] } = props;
+  const fixing = useStore(autoFixAfter);
 
   return (
     <div id={id} ref={ref} className={props.className}>
-      {messages.length > 0
-        ? messages.map((message, index) => {
-            const { role, content } = message;
-            const isUserMessage = role === 'user';
-            const isFirst = index === 0;
+      {messages.map((message, index) => {
+        const { role, content } = message;
 
-            return (
-              <div
-                key={index}
-                // only the team's own messages get a card; replies sit on the page so the build card isn't a box in a box
-                className={classNames('flex gap-3 w-full', {
-                  'p-4 rounded-xl border border-bolt-elements-borderColor bg-bolt-elements-messages-background': isUserMessage,
-                  'px-1 py-2': !isUserMessage,
-                  'mt-4': !isFirst,
-                })}
-              >
-                {isUserMessage ? (
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center self-start overflow-hidden rounded-full bg-bolt-elements-background-depth-3 text-bolt-elements-textSecondary">
-                    <div className="i-ph:user-bold text-sm"></div>
-                  </div>
-                ) : (
-                  <img src="/foldo-mark.svg" alt="" width={28} height={28} className="h-7 w-7 shrink-0 self-start rounded-lg" />
-                )}
-                <div className="grid grid-col-1 w-full">
-                  {isUserMessage ? (
-                    <UserMessage content={content} />
-                  ) : message.id === 'tpl-intro' ? (
+        return (
+          <Fragment key={message.id ?? index}>
+            {role === 'user' ? (
+              <UserMessage content={content} />
+            ) : (
+              <div className="flex gap-[10px]">
+                <Mark />
+                <div className="flex min-w-0 flex-1 flex-col gap-3">
+                  {message.id === 'tpl-intro' ? (
                     <TemplateIntro id={content.replace('__TEMPLATE__:', '')} onSend={props.onSend} />
+                  ) : isStreaming && index === messages.length - 1 && !content.trim() ? (
+                    <Planning />
                   ) : (
                     <AssistantMessage content={content} />
                   )}
                 </div>
               </div>
-            );
-          })
-        : null}
-      {isStreaming && (
-        <div className="text-center w-full text-bolt-elements-textSecondary i-svg-spinners:3-dots-fade text-4xl mt-4"></div>
-      )}
+            )}
+            {fixing && fixing === message.id && <AutoFixBanner />}
+          </Fragment>
+        );
+      })}
       {isStreaming && messages.at(-1)?.role === 'user' && (
-        // the model plans before it writes anything; under load that silence can last a minute
-        <p className="mt-1 text-center text-xs text-bolt-elements-textTertiary" data-testid="foldo-chat-thinking">
-          Planning your app. The first words can take up to a minute when lots of teams are building.
-        </p>
+        <div className="flex gap-[10px]" data-testid="foldo-chat-thinking">
+          <Mark />
+          <Planning />
+        </div>
       )}
+      {props.footer}
     </div>
   );
 });

@@ -1,71 +1,53 @@
-import { useStore } from '@nanostores/react';
-import { chatStore } from '~/lib/stores/chat';
-import { workbenchStore } from '~/lib/stores/workbench';
-import { classNames } from '~/utils/classNames';
+import { useRef, type KeyboardEvent } from 'react';
+import { SIcon } from '~/components/chat/studio-icons';
+import { setLayout, useLayout, type LayoutMode } from '~/components/chat/studio-state';
+import { Icon } from '~/components/ui/icons';
 
-// Segmented control: show/hide the chat and the code workbench. At least one stays visible.
+const OPTIONS: { mode: LayoutMode; label: string; icon: JSX.Element }[] = [
+  { mode: 'chat', label: 'Chat only', icon: <Icon.Chat /> },
+  { mode: 'both', label: 'Chat and workspace', icon: <SIcon.ChatAndWorkspace /> },
+  { mode: 'workspace', label: 'Workspace only', icon: <Icon.Code /> },
+];
+
+// Layout (SPEC "Layout toggle"): a single-select radiogroup, exactly one segment selected, arrow keys move the choice
 export function HeaderActionButtons() {
-  const showWorkbench = useStore(workbenchStore.showWorkbench);
-  const { showChat } = useStore(chatStore);
-  const canHideChat = showWorkbench || !showChat;
+  const current = useLayout();
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const onKeyDown = (event: KeyboardEvent, index: number) => {
+    const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+
+    if (!step) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const next = (index + step + OPTIONS.length) % OPTIONS.length;
+
+    setLayout(OPTIONS[next].mode);
+    refs.current[next]?.focus();
+  };
 
   return (
-    <div
-      role="group"
-      aria-label="Panels"
-      className="flex h-8 items-center gap-0.5 rounded-lg border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 p-0.5"
-    >
-      <Segment
-        label="Chat"
-        icon="i-ph:chat-circle-text"
-        active={showChat}
-        disabled={!canHideChat}
-        onClick={() => chatStore.setKey('showChat', !showChat)}
-      />
-      <Segment
-        label="Code and preview"
-        icon="i-ph:code"
-        active={showWorkbench}
-        onClick={() => {
-          if (showWorkbench && !showChat) {
-            chatStore.setKey('showChat', true);
-          }
-
-          workbenchStore.showWorkbench.set(!showWorkbench);
-        }}
-      />
+    <div role="radiogroup" aria-label="Layout" className="seg lt-md:hidden" data-testid="foldo-layout">
+      {OPTIONS.map((o, i) => (
+        <button
+          key={o.mode}
+          ref={(el) => (refs.current[i] = el)}
+          type="button"
+          role="radio"
+          aria-checked={current === o.mode}
+          aria-label={o.label}
+          title={o.label}
+          tabIndex={current === o.mode ? 0 : -1}
+          className="seg-icon"
+          onClick={() => setLayout(o.mode)}
+          onKeyDown={(e) => onKeyDown(e, i)}
+        >
+          {o.icon}
+        </button>
+      ))}
     </div>
-  );
-}
-
-function Segment({
-  label,
-  icon,
-  active,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  icon: string;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      aria-label={label}
-      title={label}
-      aria-pressed={active}
-      disabled={disabled}
-      onClick={onClick}
-      className={classNames(
-        'flex h-7 w-7 items-center justify-center rounded-md text-base outline-none transition-theme focus-visible:ring-2 focus-visible:ring-bolt-elements-borderColorActive disabled:cursor-default',
-        active
-          ? 'bg-bolt-elements-background-depth-3 text-bolt-elements-textPrimary'
-          : 'text-bolt-elements-textTertiary hover:text-bolt-elements-textPrimary',
-      )}
-    >
-      <span className={icon} />
-    </button>
   );
 }

@@ -1,6 +1,5 @@
 import { useStore } from '@nanostores/react';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels';
+import { memo, useEffect, useMemo } from 'react';
 import {
   CodeMirrorEditor,
   type EditorDocument,
@@ -9,20 +8,14 @@ import {
   type OnSaveCallback as OnEditorSave,
   type OnScrollCallback as OnEditorScroll,
 } from '~/components/editor/codemirror/CodeMirrorEditor';
-import { IconButton } from '~/components/ui/IconButton';
-import { PanelHeader } from '~/components/ui/PanelHeader';
-import { PanelHeaderButton } from '~/components/ui/PanelHeaderButton';
-import { shortcutEventEmitter } from '~/lib/hooks';
 import type { FileMap } from '~/lib/stores/files';
 import { themeStore } from '~/lib/stores/theme';
 import { workbenchStore } from '~/lib/stores/workbench';
-import { classNames } from '~/utils/classNames';
 import { WORK_DIR } from '~/utils/constants';
 import { renderLogger } from '~/utils/logger';
 import { isMobile } from '~/utils/mobile';
-import { FileBreadcrumb } from './FileBreadcrumb';
+import { useFileActivity } from './actions';
 import { FileTree } from './FileTree';
-import { Terminal, type TerminalRef } from './terminal/Terminal';
 
 interface EditorPanelProps {
   files?: FileMap;
@@ -37,220 +30,105 @@ interface EditorPanelProps {
   onFileReset?: () => void;
 }
 
-const MAX_TERMINALS = 3;
-const DEFAULT_TERMINAL_SIZE = 25;
-const DEFAULT_EDITOR_SIZE = 100 - DEFAULT_TERMINAL_SIZE;
+const editorSettings: EditorSettings = { tabSize: 2, fontSize: '13px', gutterFontSize: '13px' };
 
-const editorSettings: EditorSettings = { tabSize: 2 };
+const Spin = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16140F" strokeWidth="2" strokeLinecap="round" aria-hidden="true" className="flex-none animate-spin">
+    <path d="M12 3a9 9 0 1 1-9 9" />
+  </svg>
+);
 
+// Code view (Build-Streaming): Files on Paper at the left, the open file on Code bg, read-only while Foldo writes
 export const EditorPanel = memo(
-  ({
-    files,
-    unsavedFiles,
-    editorDocument,
-    selectedFile,
-    isStreaming,
-    onFileSelect,
-    onEditorChange,
-    onEditorScroll,
-    onFileSave,
-    onFileReset,
-  }: EditorPanelProps) => {
+  ({ files, unsavedFiles, editorDocument, selectedFile, isStreaming, onFileSelect, onEditorChange, onEditorScroll, onFileSave, onFileReset }: EditorPanelProps) => {
     renderLogger.trace('EditorPanel');
 
     const theme = useStore(themeStore);
-    const showTerminal = useStore(workbenchStore.showTerminal);
+    const { writing, updated } = useFileActivity(isStreaming);
+    const writingKey = [...writing].join('|');
 
-    const terminalRefs = useRef<Array<TerminalRef | null>>([]);
-    const terminalPanelRef = useRef<ImperativePanelHandle>(null);
-    const terminalToggledByShortcut = useRef(false);
-
-    const [activeTerminal, setActiveTerminal] = useState(0);
-    const [terminalCount, setTerminalCount] = useState(1);
-
-    const activeFileSegments = useMemo(() => {
-      if (!editorDocument) {
-        return undefined;
-      }
-
-      return editorDocument.filePath.split('/');
-    }, [editorDocument]);
-
-    const activeFileUnsaved = useMemo(() => {
-      return editorDocument !== undefined && unsavedFiles?.has(editorDocument.filePath);
-    }, [editorDocument, unsavedFiles]);
-
+    // follow Foldo: open the file it is writing as soon as it exists
     useEffect(() => {
-      const unsubscribeFromEventEmitter = shortcutEventEmitter.on('toggleTerminal', () => {
-        terminalToggledByShortcut.current = true;
-      });
+      const next = [...writing].reverse().find((path) => files?.[path]?.type === 'file');
 
-      const unsubscribeFromThemeStore = themeStore.subscribe(() => {
-        for (const ref of Object.values(terminalRefs.current)) {
-          ref?.reloadStyles();
-        }
-      });
-
-      return () => {
-        unsubscribeFromEventEmitter();
-        unsubscribeFromThemeStore();
-      };
-    }, []);
-
-    useEffect(() => {
-      const { current: terminal } = terminalPanelRef;
-
-      if (!terminal) {
-        return;
+      if (next && next !== selectedFile) {
+        workbenchStore.setSelectedFile(next);
       }
+    }, [writingKey, files]);
 
-      const isCollapsed = terminal.isCollapsed();
-
-      if (!showTerminal && !isCollapsed) {
-        terminal.collapse();
-      } else if (showTerminal && isCollapsed) {
-        terminal.resize(DEFAULT_TERMINAL_SIZE);
-      }
-
-      terminalToggledByShortcut.current = false;
-    }, [showTerminal]);
-
-    const addTerminal = () => {
-      if (terminalCount < MAX_TERMINALS) {
-        setTerminalCount(terminalCount + 1);
-        setActiveTerminal(terminalCount);
-      }
-    };
+    const segments = useMemo(() => editorDocument?.filePath.replace(`${WORK_DIR}/`, '').split('/'), [editorDocument]);
+    const unsaved = editorDocument !== undefined && unsavedFiles?.has(editorDocument.filePath);
+    const beingWritten = editorDocument !== undefined && writing.has(editorDocument.filePath);
 
     return (
-      <PanelGroup direction="vertical">
-        <Panel defaultSize={showTerminal ? DEFAULT_EDITOR_SIZE : 100} minSize={20}>
-          <PanelGroup direction="horizontal">
-            <Panel defaultSize={20} minSize={10} collapsible>
-              <div className="flex flex-col border-r border-bolt-elements-borderColor h-full">
-                <PanelHeader>
-                  <div className="i-ph:tree-structure-duotone shrink-0" />
-                  Files
-                </PanelHeader>
-                <FileTree
-                  className="h-full"
-                  files={files}
-                  hideRoot
-                  unsavedFiles={unsavedFiles}
-                  rootFolder={WORK_DIR}
-                  selectedFile={selectedFile}
-                  onFileSelect={onFileSelect}
-                />
-              </div>
-            </Panel>
-            <PanelResizeHandle />
-            <Panel className="flex flex-col" defaultSize={80} minSize={20}>
-              <PanelHeader className="overflow-x-auto">
-                {activeFileSegments?.length && (
-                  <div className="flex items-center flex-1 text-sm">
-                    <FileBreadcrumb pathSegments={activeFileSegments} files={files} onFileSelect={onFileSelect} />
-                    {activeFileUnsaved && (
-                      <div className="flex gap-1 ml-auto -mr-1.5">
-                        <PanelHeaderButton onClick={onFileSave}>
-                          <div className="i-ph:floppy-disk-duotone" />
-                          Save
-                        </PanelHeaderButton>
-                        <PanelHeaderButton onClick={onFileReset}>
-                          <div className="i-ph:clock-counter-clockwise-duotone" />
-                          Reset
-                        </PanelHeaderButton>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </PanelHeader>
-              <div className="h-full flex-1 overflow-hidden">
-                <CodeMirrorEditor
-                  theme={theme}
-                  editable={!isStreaming && editorDocument !== undefined}
-                  settings={editorSettings}
-                  doc={editorDocument}
-                  autoFocusOnDocumentChange={!isMobile()}
-                  onScroll={onEditorScroll}
-                  onChange={onEditorChange}
-                  onSave={onFileSave}
-                />
-              </div>
-            </Panel>
-          </PanelGroup>
-        </Panel>
-        <PanelResizeHandle />
-        <Panel
-          ref={terminalPanelRef}
-          defaultSize={showTerminal ? DEFAULT_TERMINAL_SIZE : 0}
-          minSize={10}
-          collapsible
-          onExpand={() => {
-            if (!terminalToggledByShortcut.current) {
-              workbenchStore.toggleTerminal(true);
-            }
-          }}
-          onCollapse={() => {
-            if (!terminalToggledByShortcut.current) {
-              workbenchStore.toggleTerminal(false);
-            }
-          }}
-        >
-          <div className="h-full">
-            <div className="bg-bolt-elements-terminals-background h-full flex flex-col">
-              <div className="flex items-center bg-bolt-elements-background-depth-2 border-y border-bolt-elements-borderColor gap-1.5 min-h-[34px] p-2">
-                {Array.from({ length: terminalCount }, (_, index) => {
-                  const isActive = activeTerminal === index;
-
-                  return (
-                    <button
-                      key={index}
-                      className={classNames(
-                        'flex items-center text-sm cursor-pointer gap-1.5 px-3 py-2 h-full whitespace-nowrap rounded-full',
-                        {
-                          'bg-bolt-elements-terminals-buttonBackground text-bolt-elements-textPrimary': isActive,
-                          'bg-bolt-elements-background-depth-2 text-bolt-elements-textSecondary hover:bg-bolt-elements-terminals-buttonBackground':
-                            !isActive,
-                        },
-                      )}
-                      onClick={() => setActiveTerminal(index)}
-                    >
-                      <div className="i-ph:terminal-window-duotone text-lg" />
-                      Terminal {terminalCount > 1 && index + 1}
-                    </button>
-                  );
-                })}
-                {terminalCount < MAX_TERMINALS && <IconButton icon="i-ph:plus" size="md" onClick={addTerminal} />}
-                <IconButton
-                  className="ml-auto"
-                  icon="i-ph:caret-down"
-                  title="Close"
-                  size="md"
-                  onClick={() => workbenchStore.toggleTerminal(false)}
-                />
-              </div>
-              {Array.from({ length: terminalCount }, (_, index) => {
-                const isActive = activeTerminal === index;
-
-                return (
-                  <Terminal
-                    key={index}
-                    className={classNames('h-full overflow-hidden', {
-                      hidden: !isActive,
-                    })}
-                    ref={(ref) => {
-                      terminalRefs.current.push(ref);
-                    }}
-                    onTerminalReady={(terminal) => workbenchStore.attachTerminal(terminal)}
-                    onTerminalResize={(cols, rows) => workbenchStore.onTerminalResize(cols, rows)}
-                    theme={theme}
-                  />
-                );
-              })}
-            </div>
+      <div className="flex h-full min-h-0">
+        <nav aria-label="Files" className="flex w-[224px] flex-none flex-col border-r border-rule bg-paper lt-md:hidden">
+          <div className="flex h-[40px] flex-none items-center border-b border-rule2 px-[14px] font-mono text-[12px] uppercase tracking-[.08em] text-pencil">
+            Files
           </div>
-        </Panel>
-      </PanelGroup>
+          <FileTree
+            className="min-h-0 flex-1 overflow-y-auto"
+            files={files}
+            hideRoot
+            unsavedFiles={unsavedFiles}
+            writingFiles={writing}
+            updatedFiles={updated}
+            rootFolder={WORK_DIR}
+            selectedFile={selectedFile}
+            onFileSelect={onFileSelect}
+          />
+        </nav>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex h-[40px] flex-none items-center gap-[10px] border-b border-rule2 px-[14px]">
+            {segments && (
+              <span className="min-w-0 truncate font-mono text-[12px] text-pencil">
+                {segments.map((part, i) =>
+                  i === segments.length - 1 ? (
+                    <span key={i} className="font-medium text-ink">
+                      {part}
+                    </span>
+                  ) : (
+                    <span key={i}>
+                      {part} <span aria-hidden="true">/</span>{' '}
+                    </span>
+                  ),
+                )}
+              </span>
+            )}
+            {beingWritten && (
+              <span className="inline-flex h-[24px] flex-none items-center gap-[6px] rounded-full border border-rule bg-wash px-[9px] text-[12px] font-medium text-ink2">
+                <Spin /> Foldo is writing this file
+              </span>
+            )}
+            {isStreaming ? (
+              <span className="ml-auto whitespace-nowrap font-mono text-[12px] text-pencil">Read-only while writing</span>
+            ) : (
+              unsaved && (
+                <span className="ml-auto flex gap-2">
+                  <button type="button" className="btn-secondary h-[28px] rounded-[6px] px-[10px] text-[12px]" onClick={onFileReset}>
+                    Reset
+                  </button>
+                  <button type="button" className="btn-dark h-[28px] rounded-[6px] px-[10px] text-[12px]" onClick={() => onFileSave?.()}>
+                    Save
+                  </button>
+                </span>
+              )
+            )}
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden bg-codebg">
+            <CodeMirrorEditor
+              theme={theme}
+              editable={!isStreaming && editorDocument !== undefined}
+              settings={editorSettings}
+              doc={editorDocument}
+              autoFocusOnDocumentChange={!isMobile()}
+              onScroll={onEditorScroll}
+              onChange={onEditorChange}
+              onSave={onFileSave}
+            />
+          </div>
+        </div>
+      </div>
     );
   },
 );

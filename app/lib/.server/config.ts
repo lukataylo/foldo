@@ -89,7 +89,19 @@ export const reasoningEffortFor = (model: string): string | number => harness().
 export const describeReasoning = (r: string | number) => (typeof r === 'number' ? `high (${Math.round(r / 1000)}k thinking tokens)` : r);
 
 export function pauseState() {
-  return { paused: getSetting('paused') === '1', message: getSetting('pause_message') };
+  const paused = getSetting('paused') === '1';
+  let since = Number(getSetting('paused_at')) || null;
+
+  // remember when the pause began (the studio shows "Since 9:42 pm"), whichever way it was switched on
+  if (paused && !since) {
+    since = Date.now();
+    setSetting('paused_at', String(since));
+  } else if (!paused && since) {
+    setSetting('paused_at', '');
+    since = null;
+  }
+
+  return { paused, message: getSetting('pause_message'), since };
 }
 
 export interface EventInfo {

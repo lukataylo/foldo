@@ -1,9 +1,11 @@
 import { useStore } from '@nanostores/react';
 import { useState } from 'react';
+import { SIcon } from '~/components/chat/studio-icons';
 import { ShareDialog } from '~/components/share/ShareDialog';
 import { chatId, description, listed, shareId } from '~/lib/persistence';
 
-export function ShareButton() {
+// The header trigger for the share dialog (the dialog itself belongs to components/share)
+export function ShareButton({ tone = 'primary' }: { tone?: 'primary' | 'secondary' }) {
   const id = useStore(chatId);
   const sid = useStore(shareId);
   const inGallery = useStore(listed);
@@ -17,12 +19,14 @@ export function ShareButton() {
   return (
     <>
       <button
+        type="button"
         data-testid="foldo-canvas-topbar-share"
+        data-shared={sid ? 'true' : undefined}
         onClick={() => setOpen(true)}
-        className={sid ? 'btn-secondary btn-sm' : 'btn-primary btn-sm'}
+        className={`${tone === 'primary' ? 'btn-primary' : 'btn-secondary'} btn-sm px-[14px]`}
       >
-        <span className={sid ? 'i-ph:globe-hemisphere-west text-bolt-elements-item-contentAccent' : 'i-ph:share-network-bold'} />
-        {sid ? 'Shared' : 'Share'}
+        <SIcon.Upload size={15} />
+        Share
       </button>
       <ShareDialog
         open={open}

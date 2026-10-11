@@ -234,6 +234,7 @@ try {
   check(P2, 'gallery shows the listed project to anonymous visitors', gal.status === 200 && gal.text.includes('Alpha app') && gal.text.includes('Team Alpha'));
   const sharePage = await anon.req(`/p/${shareA.shareId}`);
   check(P2, 'public share page loads without login', sharePage.status === 200);
+  check(P2, 'share page names the team that built it, and leaks no owner id', sharePage.text.includes('Team Alpha') && !/"owner_id"|"user_id"/.test(sharePage.text));
   check(P2, 'share page has absolute link-preview tags', sharePage.text.includes(`property="og:image" content="${BASE}/og.jpg"`) && sharePage.text.includes(`property="og:url" content="${BASE}/p/${shareA.shareId}"`) && sharePage.text.includes('property="og:title" content="Alpha app"'));
   const forgedHost = await anon.req(`/p/${shareA.shareId}`, { headers: { 'x-forwarded-host': 'evil.example"><script>x</script>', 'x-forwarded-proto': 'javascript' } });
   check(P2, 'forged forwarded headers cannot inject into link-preview tags', forgedHost.status === 200 && !forgedHost.text.includes('evil.example"') && !forgedHost.text.includes('<script>x') && !forgedHost.text.includes('javascript://'), forgedHost.text.match(/og:url" content="[^"]*"/)?.[0]);
@@ -399,6 +400,7 @@ try {
   const paused = await F.chat('hi', { provider: 'custom' });
   check(P6B, 'pause switch blocks new builds with the organizer message', paused.status === 503 && /Fixing Wi-Fi/.test(paused.text));
   check(P6B, 'teams see a banner while paused', (await F.req('/')).text.includes('Fixing Wi-Fi'));
+  check(P6B, 'the pause remembers when it started', /"since":\d{13}/.test((await F.req('/')).text));
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-pause', pause_message: '' } });
   check(P6B, 'unpausing restores service', (await F.chat('hi again', { provider: 'custom' })).status === 200);
   // backup

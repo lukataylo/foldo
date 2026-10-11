@@ -38,7 +38,13 @@ function publicOrigin(request: Request) {
 
 // Public share link: anyone can open and run the project; chatting requires an account and forks it.
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const row = db.prepare('SELECT description, messages, template FROM projects WHERE share_id = ?').get(params.shareId!) as any;
+  const row = db
+    .prepare(
+      `SELECT p.id, p.description, p.messages, p.template, p.listed, p.user_id AS owner, u.name AS ownerName,
+         (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id) AS likes
+       FROM projects p LEFT JOIN users u ON u.id = p.user_id WHERE p.share_id = ?`,
+    )
+    .get(params.shareId!) as any;
 
   if (!row) {
     throw new Response('Shared project not found', { status: 404 });
@@ -47,11 +53,22 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const user = await getUser(request);
   const origin = publicOrigin(request);
 
+  const liked = user ? Boolean(db.prepare('SELECT 1 FROM likes WHERE project_id = ? AND user_id = ?').get(row.id, user.id)) : false;
+
   return json({
     shared: true,
     origin,
     url: `${origin}/p/${params.shareId}`,
     ...shell(user),
+    // for the viewer card: who built it, likes (listed projects only), and whether this visitor owns it
+    sharedInfo: {
+      shareId: params.shareId!,
+      owner: row.ownerName || 'A Foldo team',
+      listed: Boolean(row.listed),
+      likes: row.likes as number,
+      liked,
+      mine: user?.id === row.owner,
+    },
     description: row.description,
     template: row.template ?? undefined,
     messages: JSON.parse(row.messages),

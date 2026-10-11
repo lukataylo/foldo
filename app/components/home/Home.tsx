@@ -134,7 +134,15 @@ function HomeExtras({ onStartTemplate }: { onStartTemplate?: (id: string) => voi
   );
 }
 
-export function Home({ prompt, onStartTemplate }: { prompt: ReactNode; onStartTemplate?: (id: string) => void }) {
+export function Home({
+  prompt,
+  onStartTemplate,
+}: {
+  prompt: ReactNode | ((variant: 'hero' | 'home') => ReactNode);
+  onStartTemplate?: (id: string) => void;
+}) {
+  const box = typeof prompt === 'function' ? prompt('home') : prompt;
+
   return (
     <>
       <div id="intro" className="mt-[12vh] max-w-chat mx-auto px-4 text-center">
@@ -144,7 +152,7 @@ export function Home({ prompt, onStartTemplate }: { prompt: ReactNode; onStartTe
           Pick a starter for your track, or describe your own idea. Foldo builds it and runs it right here.
         </p>
       </div>
-      <div className="pt-6 px-6">{prompt}</div>
+      <div className="pt-6 px-6">{box}</div>
       <div id="examples" className="relative w-full mt-6 px-6 pb-16">
         <div className="mx-auto w-full max-w-chat">
           <HomeExtras onStartTemplate={onStartTemplate} />

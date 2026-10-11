@@ -1,19 +1,110 @@
 import { useStore } from '@nanostores/react';
-import { saveState } from '~/lib/persistence';
+import { useLoaderData } from '@remix-run/react';
+import { useEffect, useRef, useState } from 'react';
+import { SIcon } from '~/components/chat/studio-icons';
+import { clock, useOnline } from '~/components/chat/studio-state';
+import { Icon } from '~/components/ui/icons';
+import { lastSaved, saveState } from '~/lib/persistence';
 
-const LABEL = { saved: 'Saved', saving: 'Saving…', retrying: 'Reconnecting…', failed: 'Not saved' } as const;
-
+/*
+ * Next to the project name: "Saved" / "Saving…", or a Reconnecting pill while offline or a save is retrying. The pill
+ * opens the "Listening for the line" popover (Offline board); it opens on its own the first time the line drops.
+ */
 export function SaveStatus() {
   const state = useStore(saveState);
+  const isOnline = useOnline();
+  const { updated } = useLoaderData() as { updated?: number };
+  const saved = useStore(lastSaved) ?? updated;
+  const [open, setOpen] = useState(false);
+  const shownOnce = useRef(false);
+  const wrap = useRef<HTMLSpanElement>(null);
+  const trouble = !isOnline || state === 'retrying' || state === 'failed';
+
+  useEffect(() => {
+    if (trouble && !shownOnce.current) {
+      shownOnce.current = true;
+      setOpen(true);
+    }
+
+    if (!trouble) {
+      setOpen(false);
+      shownOnce.current = false;
+    }
+  }, [trouble]);
+
+  // the popover's picture has to be in the cache before the line drops
+  useEffect(() => {
+    new Image().src = '/art/offline.webp';
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const onDown = (event: PointerEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && setOpen(false);
+
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  if (!trouble) {
+    return (
+      <span data-testid="foldo-save-status" role="status" className="inline-flex flex-none items-center gap-1 whitespace-nowrap text-[12px] text-pencil">
+        {state === 'saving' ? <SIcon.Arc /> : <Icon.Check size={14} strokeWidth={1.5} />}
+        {state === 'saving' ? 'Saving…' : 'Saved'}
+      </span>
+    );
+  }
 
   return (
-    <span
-      data-testid="foldo-save-status"
-      role="status"
-      className={`hidden items-center gap-1.5 text-xs sm:flex ${state === 'failed' ? 'text-bolt-elements-icon-error' : 'text-bolt-elements-textTertiary'}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${state === 'saved' ? 'bg-bolt-elements-icon-success' : state === 'failed' ? 'bg-bolt-elements-icon-error' : 'bg-[var(--foldo-yellow)]'}`} />
-      {LABEL[state]}
+    <span ref={wrap} className="relative flex-none">
+      <button
+        type="button"
+        data-testid="foldo-save-status"
+        aria-expanded={open}
+        aria-controls="foldo-save-pop"
+        onClick={() => setOpen(!open)}
+        className="inline-flex h-[24px] items-center gap-[5px] whitespace-nowrap rounded-full border border-warning-border bg-warning-bg px-[9px] text-[12px] font-medium text-warning"
+      >
+        <SIcon.Arc size={13} />
+        {state === 'failed' && isOnline ? 'Not saved' : 'Reconnecting…'}
+      </button>
+      {open && (
+        <div
+          id="foldo-save-pop"
+          role="dialog"
+          aria-label="Connection status"
+          className="absolute left-1/2 top-[calc(100%+23px)] z-max flex w-[360px] -translate-x-[231px] items-center gap-[14px] rounded-[12px] border border-rule bg-sheet p-[14px] shadow-float"
+        >
+          <span
+            aria-hidden="true"
+            className="absolute left-[236px] top-[-7px] h-[12px] w-[12px] rotate-45 border-l border-t border-rule bg-sheet"
+          />
+          <img
+            src="/art/offline.webp"
+            alt="Foldo holding a cup-and-string phone to its ear, listening"
+            width={120}
+            height={120}
+            className="block h-[120px] w-[120px] flex-none rounded-[12px] border border-rule object-cover"
+          />
+          <div className="flex min-w-0 flex-1 flex-col gap-[6px]">
+            <span className="font-serif text-[21px] leading-[1.1]">Listening for the line</span>
+            <span className="text-[13px] text-ink2">Your last change is on screen. We’ll save it the moment the connection is back.</span>
+            {saved && <span className="font-mono text-[12px] text-pencil">Last saved {clock(saved)}</span>}
+          </div>
+        </div>
+      )}
     </span>
   );
 }

@@ -5,7 +5,7 @@ import { createScopedLogger, renderLogger } from '~/utils/logger';
 
 const logger = createScopedLogger('FileTree');
 
-const NODE_PADDING_LEFT = 8;
+const NODE_INDENT = 20;
 const DEFAULT_HIDDEN_FILES = [/\/node_modules\//, /\/\.next/, /\/\.astro/];
 
 interface Props {
@@ -18,6 +18,8 @@ interface Props {
   allowFolderSelection?: boolean;
   hiddenFiles?: Array<string | RegExp>;
   unsavedFiles?: Set<string>;
+  writingFiles?: Set<string>;
+  updatedFiles?: Set<string>;
   className?: string;
 }
 
@@ -33,6 +35,8 @@ export const FileTree = memo(
     hiddenFiles,
     className,
     unsavedFiles,
+    writingFiles,
+    updatedFiles,
   }: Props) => {
     renderLogger.trace('FileTree');
 
@@ -111,7 +115,7 @@ export const FileTree = memo(
     };
 
     return (
-      <div className={classNames('text-sm', className)}>
+      <ul className={classNames('m-0 flex list-none flex-col gap-px px-[6px] py-2 text-[13px]', className)}>
         {filteredFileList.map((fileOrFolder) => {
           switch (fileOrFolder.kind) {
             case 'file': {
@@ -121,6 +125,8 @@ export const FileTree = memo(
                   selected={selectedFile === fileOrFolder.fullPath}
                   file={fileOrFolder}
                   unsavedChanges={unsavedFiles?.has(fileOrFolder.fullPath)}
+                  writing={writingFiles?.has(fileOrFolder.fullPath)}
+                  updated={updatedFiles?.has(fileOrFolder.fullPath)}
                   onClick={() => {
                     onFileSelect?.(fileOrFolder.fullPath);
                   }}
@@ -145,7 +151,7 @@ export const FileTree = memo(
             }
           }
         })}
-      </div>
+      </ul>
     );
   },
 );
@@ -159,23 +165,37 @@ interface FolderProps {
   onClick: () => void;
 }
 
+const icon = (children: ReactNode, size = 15) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="flex-none">
+    {children}
+  </svg>
+);
+
+const FILE_ICON = icon(
+  <>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z" />
+    <path d="M14 3v5h5" />
+  </>,
+);
+
+const FOLDER_ICON = icon(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />);
+
+// rows from the Build-Streaming board: 30 high, folders with a chevron, the open file is a white chip
+const row = (selected: boolean) =>
+  classNames(
+    'flex h-[30px] w-full items-center gap-[6px] rounded-[6px] border border-solid pr-2 text-left font-sans text-[13px] outline-none focus-visible:shadow-[0_0_0_2px_#16140F]',
+    selected ? 'border-rule bg-sheet font-semibold text-ink' : 'border-transparent bg-transparent text-ink2 hover:bg-wash hover:text-ink',
+  );
+
 function Folder({ folder: { depth, name }, collapsed, selected = false, onClick }: FolderProps) {
   return (
-    <NodeButton
-      className={classNames('group', {
-        'bg-transparent text-bolt-elements-item-contentDefault hover:text-bolt-elements-item-contentActive hover:bg-bolt-elements-item-backgroundActive':
-          !selected,
-        'bg-bolt-elements-item-backgroundAccent text-bolt-elements-item-contentAccent': selected,
-      })}
-      depth={depth}
-      iconClasses={classNames({
-        'i-ph:caret-right scale-98': collapsed,
-        'i-ph:caret-down scale-98': !collapsed,
-      })}
-      onClick={onClick}
-    >
-      {name}
-    </NodeButton>
+    <li>
+      <button type="button" aria-expanded={!collapsed} className={row(selected)} style={{ paddingLeft: 8 + depth * NODE_INDENT }} onClick={onClick}>
+        {icon(<path d={collapsed ? 'M9 6l6 6-6 6' : 'M6 9l6 6 6-6'} />, 14)}
+        {FOLDER_ICON}
+        <span className="truncate">{name}</span>
+      </button>
+    </li>
   );
 }
 
@@ -183,55 +203,38 @@ interface FileProps {
   file: FileNode;
   selected: boolean;
   unsavedChanges?: boolean;
+  writing?: boolean;
+  updated?: boolean;
   onClick: () => void;
 }
 
-function File({ file: { depth, name }, onClick, selected, unsavedChanges = false }: FileProps) {
+function File({ file: { depth, name }, onClick, selected, unsavedChanges = false, writing, updated }: FileProps) {
   return (
-    <NodeButton
-      className={classNames('group', {
-        'bg-transparent hover:bg-bolt-elements-item-backgroundActive text-bolt-elements-item-contentDefault': !selected,
-        'bg-bolt-elements-item-backgroundAccent text-bolt-elements-item-contentAccent': selected,
-      })}
-      depth={depth}
-      iconClasses={classNames('i-ph:file-duotone scale-98', {
-        'group-hover:text-bolt-elements-item-contentActive': !selected,
-      })}
-      onClick={onClick}
-    >
-      <div
-        className={classNames('flex items-center', {
-          'group-hover:text-bolt-elements-item-contentActive': !selected,
-        })}
+    <li>
+      <button
+        type="button"
+        aria-current={selected ? 'page' : undefined}
+        className={row(selected)}
+        style={{ paddingLeft: depth === 0 ? 8 : 8 + depth * NODE_INDENT }}
+        onClick={onClick}
       >
-        <div className="flex-1 truncate pr-2">{name}</div>
-        {unsavedChanges && <span className="i-ph:circle-fill scale-68 shrink-0 text-orange-500" />}
-      </div>
-    </NodeButton>
-  );
-}
-
-interface ButtonProps {
-  depth: number;
-  iconClasses: string;
-  children: ReactNode;
-  className?: string;
-  onClick?: () => void;
-}
-
-function NodeButton({ depth, iconClasses, onClick, className, children }: ButtonProps) {
-  return (
-    <button
-      className={classNames(
-        'flex items-center gap-1.5 w-full pr-2 border-2 border-transparent text-faded py-0.5',
-        className,
-      )}
-      style={{ paddingLeft: `${6 + depth * NODE_PADDING_LEFT}px` }}
-      onClick={() => onClick?.()}
-    >
-      <div className={classNames('scale-120 shrink-0', iconClasses)}></div>
-      <div className="truncate w-full text-left">{children}</div>
-    </button>
+        {depth === 0 && <span className="w-[14px] flex-none" />}
+        {FILE_ICON}
+        <span className="min-w-0 truncate">{name}</span>
+        {writing ? (
+          <span className="ml-auto inline-flex flex-none items-center gap-1 font-mono text-[11px] font-normal text-ink2">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16140F" strokeWidth="2" strokeLinecap="round" aria-hidden="true" className="animate-spin">
+              <path d="M12 3a9 9 0 1 1-9 9" />
+            </svg>
+            writing
+          </span>
+        ) : unsavedChanges ? (
+          <span className="ml-auto h-[6px] w-[6px] flex-none rounded-full bg-warning" aria-label="Unsaved changes" />
+        ) : updated ? (
+          <span className="ml-auto h-[6px] w-[6px] flex-none rounded-full bg-live" aria-label="Updated" />
+        ) : null}
+      </button>
+    </li>
   );
 }
 

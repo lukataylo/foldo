@@ -1,67 +1,113 @@
 import { useStore } from '@nanostores/react';
 import { useLoaderData } from '@remix-run/react';
 import { ClientOnly } from 'remix-utils/client-only';
-import { Logo } from '~/components/brand/Logo';
-import { ChatDescription } from '~/lib/persistence/ChatDescription.client';
-import { chatStore } from '~/lib/stores/chat';
-import { menuOpen } from '~/lib/stores/ui';
-import { classNames } from '~/utils/classNames';
+import { cutOffShown } from '~/components/chat/studio-state';
+import { Icon } from '~/components/ui/icons';
+import { chatId, description } from '~/lib/persistence';
+import { menuOpen, previewError, quota } from '~/lib/stores/ui';
 import { HeaderActionButtons } from './HeaderActionButtons.client';
+import { ProjectTitle } from './ProjectTitle.client';
 import { SaveStatus } from './SaveStatus.client';
 import { ShareButton } from './ShareButton.client';
 import { UserMenu } from './UserMenu';
 
+interface HeaderData {
+  email?: string;
+  name?: string;
+  admin?: boolean;
+  remaining?: number;
+  limit?: number;
+  shared?: boolean;
+  description?: string;
+  sharedInfo?: { owner: string };
+}
+
+/*
+ * Studio header (Build-* boards): 56 high. Left: projects sidebar, mark, project name in serif, save status.
+ * Right: messages-left pill (only at 0), Layout radiogroup, Share, account avatar.
+ * On a shared link: "by <team>" instead of the save status, and Sign in / Sign up free for visitors.
+ */
 export function Header() {
-  const chat = useStore(chatStore);
-  const { email, name, admin, remaining, limit } = useLoaderData() as {
-    email?: string;
-    name?: string;
-    admin?: boolean;
-    remaining?: number;
-    limit?: number;
-  };
+  const data = useLoaderData() as HeaderData;
+  const { email, name, admin, remaining, limit } = data;
+  const title = useStore(description) ?? data.description;
+  const id = useStore(chatId);
+  const left = useStore(quota) ?? remaining;
+  const error = useStore(previewError);
+  const cutOff = useStore(cutOffShown);
+  const viewing = Boolean(data.shared) && !id;
+
+  if (!email) {
+    return (
+      <header className="flex h-[52px] flex-none items-center justify-between gap-3 border-b border-rule pl-4 pr-3 md:h-[56px] md:pl-[18px] md:pr-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <a href="/" aria-label="Foldo home" className="flex items-center gap-2 text-ink no-underline">
+            <img src="/foldo-mark.svg" alt="" width={24} height={24} className="block" />
+            <span className="font-serif text-[21px] leading-none md:text-[22px]">Foldo</span>
+          </a>
+          <span aria-hidden="true" className="h-[20px] w-px bg-rule lt-md:hidden" />
+          <h1 className="m-0 truncate font-serif text-[21px] font-normal leading-none lt-md:hidden">{title || 'Shared project'}</h1>
+        </div>
+        <nav aria-label="Account" className="flex items-center gap-1 md:gap-2">
+          <a
+            href="/login"
+            className="inline-flex h-[36px] items-center rounded-[8px] px-[10px] text-[14px] font-medium text-ink2 no-underline hover:text-ink md:h-[34px] md:px-3 md:text-[13px]"
+          >
+            Sign in
+          </a>
+          <a href="/login?mode=register" className="btn-secondary btn-sm h-[36px] px-3 text-[14px] md:h-[34px] md:px-[14px] md:text-[13px]">
+            Sign up free
+          </a>
+        </nav>
+      </header>
+    );
+  }
+
+  // one yellow action per screen: Share steps back while "Fix this error" or the quota card owns the screen
+  const shareTone = error || cutOff || left === 0 ? 'secondary' : 'primary';
 
   return (
-    <header
-      className={classNames(
-        'flex shrink-0 items-center gap-4 bg-bolt-elements-background-depth-1 px-4 border-b h-[var(--header-height)]',
-        {
-          'border-transparent': !chat.started,
-          'border-bolt-elements-borderColor': chat.started,
-        },
-      )}
-    >
-      <div className="flex items-center gap-2 z-logo">
-        {email && (
-          <button
-            aria-label="Toggle projects sidebar"
-            className="btn-ghost h-8 w-8 !px-0"
-            onClick={() => menuOpen.set(!menuOpen.get())}
-          >
-            <span className="i-ph:sidebar-simple text-xl" />
-          </button>
-        )}
-        <Logo size={24} text={false} />
-      </div>
-      <span className="min-w-0 flex-1 truncate text-center text-sm font-medium text-bolt-elements-textSecondary">
-        <ClientOnly>{() => <ChatDescription />}</ClientOnly>
-      </span>
-      <div className="flex shrink-0 items-center gap-2">
-        {chat.started && <ClientOnly>{() => <SaveStatus />}</ClientOnly>}
-        <ClientOnly>{() => <ShareButton />}</ClientOnly>
-        {chat.started && <ClientOnly>{() => <HeaderActionButtons />}</ClientOnly>}
-        {email ? (
-          <UserMenu email={email} name={name} admin={admin} remaining={remaining} limit={limit} variant="avatar" />
+    <header className="flex h-[56px] flex-none items-center justify-between gap-3 border-b border-rule pl-[10px] pr-3">
+      <div className="flex min-w-0 items-center gap-[10px]">
+        <button
+          type="button"
+          aria-label="Toggle sidebar"
+          title="Your projects"
+          className="btn-icon"
+          onClick={() => menuOpen.set(!menuOpen.get())}
+        >
+          <Icon.Sidebar size={18} />
+        </button>
+        <a href="/" aria-label="Foldo home" className="flex flex-none">
+          <img src="/foldo-mark.svg" alt="" width={24} height={24} className="block" />
+        </a>
+        <span aria-hidden="true" className="h-[20px] w-px flex-none bg-rule" />
+        {viewing ? (
+          <h1 className="m-0 min-w-0 truncate font-serif text-[21px] font-normal leading-none" data-testid="foldo-project-title">
+            {title || 'Shared project'}
+          </h1>
         ) : (
-          <>
-            <a href="/login" className="btn-ghost btn-sm">
-              Sign in
-            </a>
-            <a href="/login?mode=register" className="btn-primary btn-sm">
-              Sign up free
-            </a>
-          </>
+          <ClientOnly
+            fallback={<h1 className="m-0 min-w-0 truncate font-serif text-[21px] font-normal leading-none">{title || 'New project'}</h1>}
+          >
+            {() => <ProjectTitle fallback={data.description} />}
+          </ClientOnly>
         )}
+        {viewing ? (
+          data.sharedInfo && <span className="whitespace-nowrap text-[12px] text-pencil">by {data.sharedInfo.owner}</span>
+        ) : (
+          <ClientOnly>{() => <SaveStatus />}</ClientOnly>
+        )}
+      </div>
+      <div className="flex flex-none items-center gap-[10px]">
+        {left === 0 && (
+          <span className="pill-warning lt-md:hidden" data-testid="foldo-quota-pill">
+            <span className="pill-dot" />0 messages left today
+          </span>
+        )}
+        <ClientOnly>{() => <HeaderActionButtons />}</ClientOnly>
+        <ClientOnly>{() => <ShareButton tone={shareTone} />}</ClientOnly>
+        <UserMenu email={email} name={name} admin={admin} remaining={remaining} limit={limit} variant="avatar" />
       </div>
     </header>
   );

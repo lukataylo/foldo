@@ -1,24 +1,27 @@
 import type { Message } from 'ai';
 import { useStore } from '@nanostores/react';
-import React, { type RefCallback } from 'react';
+import { useLoaderData } from '@remix-run/react';
+import React, { useEffect, useState, type RefCallback } from 'react';
 import { ClientOnly } from 'remix-utils/client-only';
 import { Home } from '~/components/home/Home';
 import { Menu } from '~/components/sidebar/Menu.client';
-import { IconButton } from '~/components/ui/IconButton';
 import { Workbench } from '~/components/workbench/Workbench.client';
+import { chatId } from '~/lib/persistence';
+import { chatStore } from '~/lib/stores/chat';
 import { quota } from '~/lib/stores/ui';
+import { workbenchStore } from '~/lib/stores/workbench';
+import { activeTemplate } from '~/lib/templates/client';
 import { classNames } from '~/utils/classNames';
-import { ModelPicker } from './ModelPicker';
+import { Composer } from './Composer';
 import { Messages } from './Messages.client';
-import { SendButton } from './SendButton.client';
-
-import styles from './BaseChat.module.scss';
+import { SharedAbout, useSharedMeta } from './SharedAbout';
+import { CutOffCard, OriginalConversation, PausedCard, QuotaCard, RemixCard, RemixNote, UsedUpBar } from './StudioCards';
+import { cutOffShown, useLayout, useOnline } from './studio-state';
 
 interface BaseChatProps {
   textareaRef?: React.RefObject<HTMLTextAreaElement> | undefined;
   messageRef?: RefCallback<HTMLDivElement> | undefined;
   scrollRef?: RefCallback<HTMLDivElement> | undefined;
-  showChat?: boolean;
   chatStarted?: boolean;
   isStreaming?: boolean;
   messages?: Message[];
@@ -32,7 +35,14 @@ interface BaseChatProps {
   onStartTemplate?: (id: string) => void;
 }
 
-const TEXTAREA_MIN_HEIGHT = 76;
+interface LoaderBits {
+  email?: string;
+  shared?: boolean;
+  remaining?: number;
+  template?: string;
+  messages?: Message[];
+  paused?: { paused: boolean; since?: number | null };
+}
 
 export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
   (
@@ -40,12 +50,11 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
       textareaRef,
       messageRef,
       scrollRef,
-      showChat = true,
       chatStarted = false,
       isStreaming = false,
       enhancingPrompt = false,
       promptEnhanced = false,
-      messages,
+      messages = [],
       input = '',
       sendMessage,
       handleInputChange,
@@ -55,133 +64,147 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     },
     ref,
   ) => {
-    const TEXTAREA_MAX_HEIGHT = chatStarted ? 400 : 200;
-    const left = useStore(quota);
+    const data = useLoaderData() as LoaderBits;
+    const left = useStore(quota) ?? data.remaining;
+    const layout = useLayout();
+    const isOnline = useOnline();
+    const id = useStore(chatId);
+    const artifacts = useStore(workbenchStore.artifacts);
+    const [showOriginal, setShowOriginal] = useState(false);
+    const template = useStore(activeTemplate) ?? data.template;
+    const shared = useSharedMeta();
+    const lastMessage = messages.at(-1);
+    const { aborted } = useStore(chatStore);
+    // a reply the team stopped on purpose is not "cut off"
+    const cutOff = chatStarted && !isStreaming && !aborted && lastMessage?.role === 'assistant' && artifacts[lastMessage.id]?.closed === false;
 
-    const promptBox = (
-      <div
-        className={classNames('relative w-full max-w-chat mx-auto z-prompt', {
-          'sticky bottom-0': chatStarted,
-        })}
-      >
-        <div
-          className={classNames(
-            'shadow-sm border border-bolt-elements-borderColor bg-bolt-elements-prompt-background backdrop-filter backdrop-blur-[8px] rounded-lg overflow-hidden',
-          )}
-        >
-          <textarea
-            ref={textareaRef}
-            className={`w-full pl-4 pt-4 pr-16 focus:outline-none resize-none text-md text-bolt-elements-textPrimary placeholder-bolt-elements-textTertiary bg-transparent`}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                if (event.shiftKey) {
-                  return;
-                }
+    useEffect(() => cutOffShown.set(Boolean(cutOff)), [cutOff]);
 
-                event.preventDefault();
+    const composerProps = {
+      textareaRef,
+      input,
+      isStreaming,
+      enhancingPrompt,
+      promptEnhanced,
+      left,
+      offline: !isOnline,
+      onChange: handleInputChange,
+      onSend: (event: React.SyntheticEvent) => sendMessage?.(event as React.UIEvent),
+      onStop: handleStop,
+      onEnhance: enhancePrompt,
+    };
 
-                sendMessage?.(event);
-              }
-            }}
-            value={input}
-            onChange={(event) => {
-              handleInputChange?.(event);
-            }}
-            style={{
-              minHeight: TEXTAREA_MIN_HEIGHT,
-              maxHeight: TEXTAREA_MAX_HEIGHT,
-            }}
-            placeholder={chatStarted ? 'Ask for a change…' : 'Describe your app, e.g. a habit tracker with streaks'}
-            translate="no"
-          />
-          <ClientOnly>
-            {() => (
-              <SendButton
-                show={input.length > 0 || isStreaming}
-                isStreaming={isStreaming}
-                onClick={(event) => {
-                  if (isStreaming) {
-                    handleStop?.();
-                    return;
-                  }
-
-                  sendMessage?.(event);
-                }}
+    if (!chatStarted) {
+      return (
+        <div ref={ref} className="min-h-0 flex-1 overflow-y-auto">
+          <Home
+            prompt={(variant: 'hero' | 'home') => (
+              <Composer
+                variant={variant}
+                placeholder={variant === 'hero' ? 'A scam checker for text messages, with a risk score' : 'Describe your app, e.g. a habit tracker with streaks'}
+                {...composerProps}
               />
             )}
-          </ClientOnly>
-          <div className="flex justify-between text-sm p-4 pt-2">
-            <div className="flex gap-1 items-center">
-              <IconButton
-                title="Enhance prompt"
-                disabled={input.length === 0 || enhancingPrompt}
-                className={classNames({
-                  'opacity-100!': enhancingPrompt,
-                  'text-bolt-elements-item-contentAccent! pr-1.5 enabled:hover:bg-bolt-elements-item-backgroundAccent!':
-                    promptEnhanced,
-                })}
-                onClick={() => enhancePrompt?.()}
-              >
-                {enhancingPrompt ? (
-                  <>
-                    <div className="i-svg-spinners:90-ring-with-bg text-bolt-elements-loader-progress text-xl"></div>
-                    <div className="ml-1.5">Enhancing prompt...</div>
-                  </>
-                ) : (
-                  <>
-                    <div className="i-bolt:stars text-xl"></div>
-                    {promptEnhanced && <div className="ml-1.5">Prompt enhanced</div>}
-                  </>
-                )}
-              </IconButton>
-              <ModelPicker />
-            </div>
-            {input.length > 3 ? (
-              <div className="text-xs text-bolt-elements-textTertiary">
-                Use <kbd className="kdb">Shift</kbd> + <kbd className="kdb">Return</kbd> for a new line
-              </div>
-            ) : left !== undefined ? (
-              <div className="text-xs text-bolt-elements-textTertiary">{left} messages left today</div>
-            ) : null}
-          </div>
+            onStartTemplate={onStartTemplate}
+          />
         </div>
-        <div className="bg-bolt-elements-background-depth-1 pb-6">{/* Ghost Element */}</div>
-      </div>
+      );
+    }
+
+    const viewer = Boolean(data.shared) && !data.email;
+    const remixing = Boolean(data.shared) && Boolean(data.email) && !id;
+    const original = data.messages?.length ?? 0;
+    const paused = data.paused?.paused;
+
+    // cutOff: the reply ended before its closing tag (length limit), so the card offers to continue it
+    const blocked = !isOnline ? 'Waiting for connection' : paused ? 'Builds are paused' : undefined;
+
+    const footer = cutOff ? (
+      <CutOffCard left={left} blocked={blocked} onContinue={() => sendMessage?.({} as React.UIEvent, 'continue')} />
+    ) : null;
+
+    const conversation = (list: Message[], withFooter = true) => (
+      <ClientOnly>
+        {() => (
+          <Messages
+            ref={withFooter ? messageRef : undefined}
+            className="flex w-full flex-col gap-5"
+            messages={list}
+            isStreaming={isStreaming}
+            onSend={(text) => sendMessage?.({} as React.UIEvent, text)}
+            footer={withFooter ? footer : null}
+          />
+        )}
+      </ClientOnly>
     );
 
+    let composer: React.ReactNode;
+
+    if (paused && !isStreaming) {
+      composer = <PausedCard since={data.paused?.since} />;
+    } else if (left === 0 && !isStreaming) {
+      composer = (
+        <>
+          <QuotaCard />
+          <UsedUpBar />
+        </>
+      );
+    } else {
+      composer = (
+        <>
+          <Composer
+            variant="studio"
+            autoFocus={remixing}
+            placeholder={template && messages.length <= 1 ? 'Ask for a change to this starter…' : 'Ask for a change…'}
+            {...composerProps}
+          />
+          {remixing && <RemixNote />}
+        </>
+      );
+    }
+
     return (
-      <div
-        ref={ref}
-        className={classNames(
-          styles.BaseChat,
-          'relative flex h-full w-full overflow-hidden bg-bolt-elements-background-depth-1',
-        )}
-        data-chat-visible={showChat}
-      >
+      <div ref={ref} className="relative flex min-h-0 w-full flex-1">
         <ClientOnly>{() => <Menu />}</ClientOnly>
-        <div ref={scrollRef} className="flex overflow-y-auto w-full h-full">
-          <div className={classNames(styles.Chat, 'flex flex-col flex-grow min-w-[var(--chat-min-width)] h-full')}>
-            {chatStarted ? (
-              <div className="pt-6 px-6 h-full flex flex-col">
-                <ClientOnly>
-                  {() => (
-                    <Messages
-                      ref={messageRef}
-                      className="flex flex-col w-full flex-1 max-w-chat pb-6 mx-auto z-1"
-                      messages={messages}
-                      isStreaming={isStreaming}
-                      onSend={(text) => sendMessage?.({} as React.UIEvent, text)}
-                    />
-                  )}
-                </ClientOnly>
-                {promptBox}
+        {viewer ? (
+          <SharedAbout conversation={conversation(messages, false)} />
+        ) : (
+          <section
+            aria-label="Chat"
+            className={classNames('min-h-0 flex-col', {
+              'flex w-full md:w-[440px] md:flex-none': layout === 'both',
+              'flex w-full flex-1': layout === 'chat',
+              hidden: layout === 'workspace',
+            })}
+          >
+            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+              <div
+                className={classNames('flex w-full flex-col pb-4 pl-[22px] pr-5', remixing ? 'gap-[14px] pt-5' : 'gap-5 pt-6', {
+                  'mx-auto max-w-[760px]': layout === 'chat',
+                })}
+              >
+                {remixing ? (
+                  <>
+                    <OriginalConversation
+                      open={showOriginal}
+                      onToggle={() => setShowOriginal(!showOriginal)}
+                      meta={`Built by ${shared.line}`}
+                    >
+                      {conversation(messages.slice(0, original), false)}
+                    </OriginalConversation>
+                    {messages.length <= original ? <RemixCard /> : conversation(messages.slice(original))}
+                  </>
+                ) : (
+                  conversation(messages)
+                )}
               </div>
-            ) : (
-              <Home prompt={promptBox} onStartTemplate={onStartTemplate} />
-            )}
-          </div>
-          <ClientOnly>{() => <Workbench chatStarted={chatStarted} isStreaming={isStreaming} />}</ClientOnly>
-        </div>
+            </div>
+            <div className={classNames('flex flex-none flex-col gap-[10px] pb-4 pl-[22px] pr-5', { 'mx-auto w-full max-w-[760px]': layout === 'chat' })}>
+              {composer}
+            </div>
+          </section>
+        )}
+        <ClientOnly>{() => <Workbench chatStarted={chatStarted} isStreaming={isStreaming} layout={layout} viewer={viewer} />}</ClientOnly>
       </div>
     );
   },

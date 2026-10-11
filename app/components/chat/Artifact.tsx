@@ -1,238 +1,174 @@
 import { useStore } from '@nanostores/react';
-import { AnimatePresence, motion } from 'framer-motion';
-import { computed } from 'nanostores';
-import { memo, useEffect, useRef, useState } from 'react';
-import { createHighlighter, type BundledLanguage, type BundledTheme, type HighlighterGeneric } from 'shiki';
+import { memo, useState } from 'react';
 import { isServerCommand, type ActionState } from '~/lib/runtime/action-runner';
-import { workbenchStore } from '~/lib/stores/workbench';
 import { requestFix } from '~/lib/stores/ui';
-import { classNames } from '~/utils/classNames';
-import { cubicEasingFn } from '~/utils/easings';
-
-const highlighterOptions = {
-  langs: ['shell'],
-  themes: ['light-plus', 'dark-plus'],
-};
-
-const shellHighlighter: HighlighterGeneric<BundledLanguage, BundledTheme> =
-  import.meta.hot?.data.shellHighlighter ?? (await createHighlighter(highlighterOptions));
-
-if (import.meta.hot) {
-  import.meta.hot.data.shellHighlighter = shellHighlighter;
-}
+import { workbenchStore } from '~/lib/stores/workbench';
+import { activeTemplate } from '~/lib/templates/client';
+import { WORK_DIR } from '~/utils/constants';
+import { Icon } from '~/components/ui/icons';
+import { SIcon } from './studio-icons';
+import { streamingNow } from './studio-state';
 
 interface ArtifactProps {
   messageId: string;
 }
 
-export const Artifact = memo(({ messageId }: ArtifactProps) => {
-  const userToggledActions = useRef(false);
-  const [showActions, setShowActions] = useState(false);
+type Row = { kind: 'done' | 'running' | 'serving' | 'queued' | 'failed' | 'stopped'; note?: string };
 
+const isDone = (row: Row) => row.kind === 'done' || row.kind === 'serving';
+
+/*
+ * Step log (SPEC "Step log"): a Sheet card with the build's title in serif, a mono "done / total" count and one row per
+ * action. While anything is still to do it is open; once every step is done it folds to a single row (click to open).
+ */
+export const Artifact = memo(({ messageId }: ArtifactProps) => {
   const artifacts = useStore(workbenchStore.artifacts);
   const artifact = artifacts[messageId];
+  const actions = Object.values(useStore(artifact.runner.actions));
+  const live = useStore(streamingNow);
+  const template = useStore(activeTemplate);
+  const [toggled, setToggled] = useState<boolean | undefined>(undefined);
 
-  const actions = useStore(
-    computed(artifact.runner.actions, (actions) => {
-      return Object.values(actions);
-    }),
-  );
+  // a reply that ended before its closing tag was cut off: its unwritten steps never start
+  const streaming = !artifact.closed && workbenchStore.artifactIdList.at(-1) === messageId && live;
 
-  const toggleActions = () => {
-    userToggledActions.current = true;
-    setShowActions(!showActions);
-  };
+  const earlier = new Set<string>();
 
-  useEffect(() => {
-    if (actions.length && !showActions && !userToggledActions.current) {
-      setShowActions(true);
+  for (const id of workbenchStore.artifactIdList) {
+    if (id === messageId) {
+      break;
     }
-  }, [actions]);
+
+    for (const a of Object.values(artifacts[id]?.runner.actions.get() ?? {})) {
+      if (a.type === 'file') {
+        earlier.add(a.filePath);
+      }
+    }
+  }
+
+  const rows = actions.map((action) => ({ action, row: rowState(action, streaming || artifact.closed) }));
+  const done = rows.filter(({ row }) => isDone(row)).length;
+  const finished = artifact.closed && done === rows.length && rows.length > 0;
+  const open = toggled ?? !finished;
 
   return (
-    <div className="artifact border border-bolt-elements-borderColor flex flex-col overflow-hidden rounded-lg w-full transition-border duration-150">
-      <div className="flex">
-        <button
-          className="flex items-stretch bg-bolt-elements-artifacts-background hover:bg-bolt-elements-artifacts-backgroundHover w-full overflow-hidden"
-          onClick={() => {
-            const showWorkbench = workbenchStore.showWorkbench.get();
-            workbenchStore.showWorkbench.set(!showWorkbench);
-          }}
-        >
-          <div className="px-5 p-3.5 w-full text-left">
-            <div className="w-full text-bolt-elements-textPrimary font-medium leading-5 text-sm">{artifact?.title}</div>
-            <div className="w-full w-full text-bolt-elements-textSecondary text-xs mt-0.5">Click to open Workbench</div>
-          </div>
-        </button>
-        <div className="bg-bolt-elements-artifacts-borderColor w-[1px]" />
-        <AnimatePresence>
-          {actions.length && (
-            <motion.button
-              initial={{ width: 0 }}
-              animate={{ width: 'auto' }}
-              exit={{ width: 0 }}
-              transition={{ duration: 0.15, ease: cubicEasingFn }}
-              className="bg-bolt-elements-artifacts-background hover:bg-bolt-elements-artifacts-backgroundHover"
-              onClick={toggleActions}
-            >
-              <div className="p-4">
-                <div className={showActions ? 'i-ph:caret-up-bold' : 'i-ph:caret-down-bold'}></div>
-              </div>
-            </motion.button>
-          )}
-        </AnimatePresence>
-      </div>
-      <AnimatePresence>
-        {showActions && actions.length > 0 && (
-          <motion.div
-            className="actions"
-            initial={{ height: 0 }}
-            animate={{ height: 'auto' }}
-            exit={{ height: '0px' }}
-            transition={{ duration: 0.15 }}
-          >
-            <div className="bg-bolt-elements-artifacts-borderColor h-[1px]" />
-            <div className="p-5 text-left bg-bolt-elements-actions-background">
-              <ActionList actions={actions} />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div className="artifact actions rounded-[8px] border border-rule bg-sheet" data-testid="foldo-step-log">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setToggled(!open)}
+        className={`flex w-full items-center justify-between gap-3 border-0 bg-transparent px-3 py-[10px] text-left text-ink ${open ? 'border-b border-solid border-rule2' : ''}`}
+      >
+        <span className="inline-flex min-w-0 items-center gap-2">
+          {!open && finished && <Icon.Check size={14} className="flex-none text-live" />}
+          <span className="truncate font-serif text-[18px] leading-[1.2]">{artifact.title}</span>
+        </span>
+        <span className="flex-none font-mono text-[11px] text-pencil">
+          {done} / {rows.length}
+        </span>
+      </button>
+      {open && rows.length > 0 && (
+        <ul className="m-0 flex list-none flex-col gap-[5px] px-3 pb-[10px] pt-2 text-[13px]">
+          {rows.map(({ action, row }, index) => (
+            <Step key={index} action={action} row={row} update={action.type === 'file' && (earlier.has(action.filePath) || Boolean(template))} />
+          ))}
+        </ul>
+      )}
     </div>
   );
 });
 
-interface ShellCodeBlockProps {
-  classsName?: string;
-  code: string;
-}
+function rowState(action: ActionState, live: boolean): Row {
+  const server = action.type === 'shell' && isServerCommand(action.content);
 
-function ShellCodeBlock({ classsName, code }: ShellCodeBlockProps) {
-  return (
-    <div
-      className={classNames('text-xs', classsName)}
-      dangerouslySetInnerHTML={{
-        __html: shellHighlighter.codeToHtml(code, {
-          lang: 'shell',
-          theme: 'light-plus',
-        }),
-      }}
-    ></div>
-  );
-}
+  switch (action.status) {
+    case 'complete':
+      return { kind: 'done' };
+    case 'failed':
+      return { kind: 'failed' };
+    case 'aborted':
+      return { kind: 'stopped', note: 'stopped' };
+    case 'running':
+      if (server && action.executed) {
+        return { kind: 'serving' };
+      }
 
-interface ActionListProps {
-  actions: ActionState[];
-}
-
-const actionVariants = {
-  hidden: { opacity: 0, y: 20 },
-  visible: { opacity: 1, y: 0 },
-};
-
-const ActionList = memo(({ actions }: ActionListProps) => {
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
-      <ul className="list-none space-y-2.5">
-        {actions.map((action, index) => {
-          const { status, type, content } = action;
-          const isLast = index === actions.length - 1;
-
-          return (
-            <motion.li
-              key={index}
-              variants={actionVariants}
-              initial="hidden"
-              animate="visible"
-              transition={{
-                duration: 0.2,
-                ease: cubicEasingFn,
-              }}
-            >
-              <div className="flex items-center gap-1.5 text-sm">
-                <div className={classNames('text-lg', getIconColor(action.status))}>
-                  {status === 'running' && type === 'shell' && isServerCommand(content) ? (
-                    // a dev server never exits, so show a steady "live" dot instead of an endless spinner
-                    <div className="relative flex h-[1em] w-[1em] items-center justify-center">
-                      <span className="absolute h-2 w-2 animate-ping rounded-full bg-bolt-elements-icon-success opacity-60" />
-                      <span className="h-2 w-2 rounded-full bg-bolt-elements-icon-success" />
-                    </div>
-                  ) : status === 'running' ? (
-                    <div className="i-svg-spinners:90-ring-with-bg"></div>
-                  ) : status === 'pending' ? (
-                    <div className="i-ph:circle-duotone"></div>
-                  ) : status === 'complete' ? (
-                    <div className="i-ph:check"></div>
-                  ) : status === 'failed' || status === 'aborted' ? (
-                    <div className="i-ph:x"></div>
-                  ) : null}
-                </div>
-                {type === 'file' ? (
-                  <div>
-                    Create{' '}
-                    <code className="bg-bolt-elements-artifacts-inlineCode-background text-bolt-elements-artifacts-inlineCode-text px-1.5 py-1 rounded-md">
-                      {action.filePath}
-                    </code>
-                  </div>
-                ) : type === 'shell' ? (
-                  <div className="flex items-center w-full min-h-[28px]">
-                    <span className="flex-1">
-                      {status === 'running' && isServerCommand(content)
-                        ? 'Dev server running'
-                        : status === 'failed'
-                          ? 'Command failed'
-                          : 'Run command'}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-              {type === 'shell' && status === 'failed' && 'error' in action && action.error && (
-                <div className="mt-1 rounded-md border border-bolt-elements-icon-error/40 bg-bolt-elements-artifacts-inlineCode-background p-2">
-                  <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-xs text-bolt-elements-textSecondary">{action.error}</pre>
-                  <button
-                    className="btn-primary btn-sm mt-2"
-                    onClick={() => requestFix(`The command "${content.trim()}" failed:\n${action.error}`)}
-                  >
-                    Fix this error
-                  </button>
-                </div>
-              )}
-              {type === 'shell' && (
-                <ShellCodeBlock
-                  classsName={classNames('mt-1', {
-                    'mb-3.5': !isLast,
-                  })}
-                  code={content}
-                />
-              )}
-            </motion.li>
-          );
-        })}
-      </ul>
-    </motion.div>
-  );
-});
-
-function getIconColor(status: ActionState['status']) {
-  switch (status) {
-    case 'pending': {
-      return 'text-bolt-elements-textTertiary';
-    }
-    case 'running': {
-      return 'text-bolt-elements-loader-progress';
-    }
-    case 'complete': {
-      return 'text-bolt-elements-icon-success';
-    }
-    case 'aborted': {
-      return 'text-bolt-elements-textSecondary';
-    }
-    case 'failed': {
-      return 'text-bolt-elements-icon-error';
-    }
-    default: {
-      return undefined;
-    }
+      // a file is "running" while it streams in; after a cut-off it never arrives
+      return action.executed || live ? { kind: 'running', note: action.type === 'file' ? 'writing…' : 'running…' } : { kind: 'queued', note: 'not started' };
+    default:
+      return live || action.executed ? { kind: 'queued' } : { kind: 'queued', note: 'not started' };
   }
 }
 
+const code = 'font-mono text-[12px]';
+const chip = 'rounded-[4px] border border-solid border-rule2 bg-codebg px-[5px] font-mono text-[12px]';
+
+function Step({ action, row, update }: { action: ActionState; row: Row; update: boolean }) {
+  const server = action.type === 'shell' && isServerCommand(action.content);
+
+  const icon =
+    row.kind === 'done' ? (
+      <Icon.Check size={14} className="flex-none text-live" />
+    ) : row.kind === 'running' ? (
+      <SIcon.Arc className="text-ink" />
+    ) : row.kind === 'serving' ? (
+      <span className="inline-flex w-[14px] flex-none justify-center">
+        <span className="h-[7px] w-[7px] rounded-full bg-live" />
+      </span>
+    ) : row.kind === 'failed' ? (
+      <SIcon.Failed size={14} className="text-error" />
+    ) : (
+      <SIcon.Queued size={14} />
+    );
+
+  const tone = row.kind === 'running' ? 'font-medium text-ink' : row.kind === 'queued' || row.kind === 'stopped' ? 'text-pencil' : 'text-ink';
+
+  const openFile = () => {
+    if (action.type === 'file') {
+      workbenchStore.showWorkbench.set(true);
+      workbenchStore.currentView.set('code');
+      workbenchStore.setSelectedFile(`${WORK_DIR}/${action.filePath.replace(/^\.?\//, '')}`);
+    }
+  };
+
+  return (
+    <li>
+      <div className={`flex min-w-0 items-center gap-2 ${tone}`}>
+        {icon}
+        {action.type === 'file' ? (
+          <button type="button" onClick={openFile} className="inline-flex min-w-0 items-center gap-2 border-0 bg-transparent p-0 text-left text-inherit">
+            {update ? 'Update' : 'Create'} <code className={`${code} truncate`}>{action.filePath}</code>
+          </button>
+        ) : (
+          <>
+            <span className="whitespace-nowrap">
+              {row.kind === 'failed'
+                ? 'Command failed'
+                : server
+                  ? row.kind === 'serving'
+                    ? 'Dev server running'
+                    : 'Start dev server'
+                  : 'Run command'}
+            </span>
+            <code className={`${chip} min-w-0 truncate`}>{action.content.trim()}</code>
+          </>
+        )}
+        {row.note && <span className="whitespace-nowrap text-[12px] font-normal text-pencil">{row.note}</span>}
+      </div>
+      {action.status === 'failed' && 'error' in action && action.error && (
+        <div className="ml-[22px] mt-[6px] flex flex-col items-start gap-2">
+          <pre className="m-0 max-h-32 w-full overflow-auto whitespace-pre-wrap rounded-[6px] border border-rule bg-codebg !px-2 !py-[6px] font-mono text-[12px] leading-[1.5] text-ink2">
+            {action.error}
+          </pre>
+          <button
+            type="button"
+            className="btn-primary btn-sm"
+            onClick={() => requestFix(action.type === 'shell' ? `The command "${action.content.trim()}" failed:\n${action.error}` : action.error)}
+          >
+            <SIcon.Wrench size={15} /> Fix this error
+          </button>
+        </div>
+      )}
+    </li>
+  );
+}

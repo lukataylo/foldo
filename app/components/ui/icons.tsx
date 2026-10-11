@@ -158,4 +158,7 @@ export const Icon = {
     </>,
   ),
   Refresh: make(<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" />),
+  // outline by default; pass fill="currentColor" for the liked state
+  Heart: make(<path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20z" />),
+  Menu: make(<path d="M4 7h16M4 12h16M4 17h16" />),
 };

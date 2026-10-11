@@ -22,7 +22,16 @@ app.use((req, res, next) => {
     const origin = req.get('origin');
     const host = req.get('x-forwarded-host') || req.get('host');
 
-    if (origin && new URL(origin).host !== host) {
+    // "null" (sandboxed frames, file://) or a malformed Origin is never this host: 403, not a crash
+    let originHost = null;
+
+    try {
+      originHost = origin && new URL(origin).host;
+    } catch {
+      // stays null
+    }
+
+    if (origin && originHost !== host) {
       return res.status(403).type('text').send('Cross-origin request blocked');
     }
 

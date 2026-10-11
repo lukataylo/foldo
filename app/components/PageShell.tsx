@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Logo } from '~/components/brand/Logo';
 import { EventBar, type EventInfo } from '~/components/header/EventBar';
 import { UserMenu } from '~/components/header/UserMenu';
+import { MobileNav, NavMenu } from '~/components/landing/MarketingNav';
 import { Icon } from '~/components/ui/icons';
 import { quota } from '~/lib/stores/ui';
 import { classNames } from '~/utils/classNames';
@@ -31,9 +32,9 @@ export function AppHeader({ data, active }: { data: ShellData; active?: ShellSec
 
   return (
     <header className="shrink-0 border-b border-rule bg-paper">
-      <div className="container-app flex h-[64px] items-center gap-7">
+      <div className="container-app flex h-[64px] items-center gap-3 md:gap-7">
         <Logo />
-        <nav aria-label="Main" className="flex items-center gap-1">
+        <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
           {APP_NAV.map((n) => (
             <a
               key={n.id}
@@ -54,6 +55,10 @@ export function AppHeader({ data, active }: { data: ShellData; active?: ShellSec
               {left} {left === 1 ? 'message' : 'messages'} left today
             </span>
           )}
+          {/* below md the nav labels move into a menu so the header never wraps */}
+          <div className="md:hidden">
+            <NavMenu tone="paper" links={APP_NAV.map((n) => ({ href: n.href, label: n.label, current: active === n.id }))} />
+          </div>
           <UserMenu email={data.email!} name={data.name} admin={data.admin} remaining={data.remaining} limit={data.limit} />
         </div>
       </div>
@@ -66,7 +71,11 @@ export function SiteHeader({ active, tone = 'paper' }: { active?: 'gallery'; ton
   const link = 'inline-flex min-h-[44px] items-center px-[14px] text-[15px] text-ink outline-none focus-visible:shadow-[0_0_0_2px_#16140F] rounded-[6px]';
 
   return (
-    <header className="container-marketing flex h-[84px] items-center justify-between gap-4">
+    <>
+      <div className="md:hidden">
+        <MobileNav active={active} tone={tone} />
+      </div>
+      <header className="container-marketing hidden h-[84px] items-center justify-between gap-4 md:flex">
       <Logo size={32} textSize={30} className="gap-[10px] text-ink" />
       <nav aria-label="Main" className="flex items-center gap-[6px]">
         <a
@@ -87,22 +96,26 @@ export function SiteHeader({ active, tone = 'paper' }: { active?: 'gallery'; ton
         </a>
       </nav>
     </header>
+    </>
   );
 }
 
 /*
  * Frame for every page outside the studio: event bar, one header, then <main> in the 1312 container.
- * Pages own their vertical rhythm: pass mainClassName to replace the default padding (48 top, 72 bottom).
+ * Pages own their vertical rhythm: pass mainClassName to replace the default padding (48 top, 72 bottom). `footer` renders
+ * after <main> (Gallery's marketing footer).
  */
 export function PageShell({
   data,
   active,
   mainClassName = 'pt-12 pb-[72px]',
+  footer,
   children,
 }: {
   data: ShellData;
   active?: ShellSection;
   mainClassName?: string;
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   const signedIn = Boolean(data.email);
@@ -112,6 +125,7 @@ export function PageShell({
       <EventBar event={data.event} variant={signedIn ? 'app' : 'marketing'} />
       {signedIn ? <AppHeader data={data} active={active} /> : <SiteHeader active={active === 'gallery' ? 'gallery' : undefined} />}
       <main className={classNames(signedIn ? 'container-app' : 'container-marketing', mainClassName)}>{children}</main>
+      {footer}
     </div>
   );
 }

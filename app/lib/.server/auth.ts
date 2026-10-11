@@ -1,7 +1,7 @@
 import { createCookie, redirect } from '@remix-run/node';
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { adminEmails, getEvent, globalLimit, perUserLimit, publicModels } from './config';
+import { adminEmails, getEvent, getSetting, globalLimit, perUserLimit, publicModels, setSetting } from './config';
 import { templateIndex } from './templates';
 import { db, today } from './db';
 
@@ -153,10 +153,20 @@ export async function requireUser(request: Request): Promise<User> {
   const user = await getUser(request);
 
   if (!user) {
-    throw redirect('/login');
+    const { pathname, search } = new URL(request.url);
+    const next = request.method === 'GET' && pathname !== '/' ? `?next=${encodeURIComponent(pathname + search)}` : '';
+
+    throw redirect(`/login${next}`);
   }
 
   return user;
+}
+
+// where to go after signing in: a same-origin path only ("/x", never "//host" or "/\host"), else home
+export function safeNext(value: unknown): string {
+  const next = typeof value === 'string' ? value : '';
+
+  return /^\/(?![/\\])[^\s]*$/.test(next) && next.length < 500 ? next : '/';
 }
 
 export async function requireAdmin(request: Request): Promise<User> {
@@ -173,10 +183,43 @@ export async function requireAdmin(request: Request): Promise<User> {
 
 export const dailyLimit = perUserLimit;
 
-export function remainingQuota(userId: string): number {
-  const row = db.prepare('SELECT n FROM usage WHERE user_id = ? AND day = ?').get(userId, today()) as any;
+/*
+ * Organizer quota tweaks for today only (admin "Adjust quota"), kept in settings keyed by day:
+ * quota_extra = extra messages granted, quota_reset = messages used before "Reset today's count".
+ * The usage table stays truthful (global cap, provider usage and spend still count every message).
+ */
+export const MAX_EXTRA_PER_DAY = 1000;
+const dayKey = (kind: 'extra' | 'reset', userId: string, day = today()) => `quota_${kind}:${day}:${userId}`;
+const dayNum = (kind: 'extra' | 'reset', userId: string) => Math.max(0, Number(getSetting(dayKey(kind, userId))) || 0);
+export const extraToday = (userId: string) => dayNum('extra', userId);
 
-  return Math.max(0, perUserLimit() - (row?.n ?? 0));
+// drop earlier days' tweaks (they no longer apply)
+export function pruneQuotaTweaks() {
+  const day = today();
+  db.prepare("DELETE FROM settings WHERE (key LIKE 'quota_extra:%' OR key LIKE 'quota_reset:%') AND key NOT LIKE ? AND key NOT LIKE ?").run(
+    `quota_extra:${day}:%`,
+    `quota_reset:${day}:%`,
+  );
+}
+
+export function addExtraToday(userId: string, n: number) {
+  pruneQuotaTweaks();
+  setSetting(dayKey('extra', userId), String(extraToday(userId) + n));
+}
+
+const rawUsedToday = (userId: string) =>
+  ((db.prepare('SELECT n FROM usage WHERE user_id = ? AND day = ?').get(userId, today()) as any)?.n as number) ?? 0;
+
+// messages that count against the team's own limit today (after any reset)
+export const usedToday = (userId: string) => Math.max(0, rawUsedToday(userId) - dayNum('reset', userId));
+
+export function resetUsageToday(userId: string) {
+  pruneQuotaTweaks();
+  setSetting(dayKey('reset', userId), String(rawUsedToday(userId)));
+}
+
+export function remainingQuota(userId: string): number {
+  return Math.max(0, perUserLimit() + extraToday(userId) - usedToday(userId));
 }
 
 export const globalUsedToday = () =>
@@ -214,6 +257,8 @@ export function refundQuota(userId: string, provider: string) {
 
 const active = new Map<string, number[]>();
 export const activeStreams = () => [...active.values()].reduce((n, v) => n + v.length, 0);
+// logins with at least one build running (the admin "Teams building now" number)
+export const activeTeams = () => active.size;
 const MAX_STREAMS = Number(process.env.MAX_CONCURRENT_STREAMS || 40);
 
 export function acquireStream(userId: string, perUser: number): (() => void) | 'user' | 'busy' {
@@ -295,7 +340,7 @@ export function shell(user?: User) {
     name: user?.name,
     admin: user?.admin,
     remaining: user ? remainingQuota(user.id) : undefined,
-    limit: user ? dailyLimit() : undefined,
+    limit: user ? dailyLimit() + extraToday(user.id) : undefined,
     event: getEvent(),
     templates: templateIndex().templates.map(({ guide, ...rest }) => rest),
     ...publicModels(),

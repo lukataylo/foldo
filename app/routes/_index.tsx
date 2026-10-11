@@ -3,7 +3,9 @@ import { useLoaderData } from '@remix-run/react';
 import { Studio } from '~/components/Studio';
 import { Landing } from '~/components/landing/Landing';
 import { getUser, shell } from '~/lib/.server/auth';
+import { inviteCode } from '~/lib/.server/config';
 import { db } from '~/lib/.server/db';
+import { galleryItems } from '~/lib/.server/gallery';
 
 export const meta: MetaFunction = () => [
   { title: 'Foldo · Describe it. Watch it build. Share the link.' },
@@ -19,7 +21,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const user = await getUser(request);
 
   if (!user) {
-    return json({ event: shell().event, templates: shell().templates });
+    const { event, templates } = shell();
+
+    return json({
+      event,
+      templates,
+      gallery: galleryItems(undefined, { sort: 'top', limit: 3 }),
+      inviteRequired: inviteCode() !== '',
+      now: Date.now(), // "2h ago" is computed against this on both server and client
+    });
   }
 
   const recent = db

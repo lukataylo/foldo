@@ -2,7 +2,8 @@ import { json, type LoaderFunctionArgs } from '@remix-run/node';
 import { useLoaderData, useRevalidator } from '@remix-run/react';
 import { useState } from 'react';
 import { ClientOnly } from 'remix-utils/client-only';
-import { PageShell } from '~/components/PageShell';
+import { AdminShell, cardClass, h2Class } from '~/components/admin/AdminShell';
+import { Icon } from '~/components/ui/icons';
 import { requireAdmin, shell } from '~/lib/.server/auth';
 import { snapshotStatus, templateIndex } from '~/lib/.server/templates';
 
@@ -12,7 +13,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const admin = await requireAdmin(request);
   const { templates, packs } = templateIndex();
 
-  return json({ ...shell(admin), packs: Object.values(packs).map((p) => ({ ...p, templates: templates.filter((t) => t.pack === p.id).map((t) => t.title), snapshot: snapshotStatus()[p.id] })) });
+  return json({
+    ...shell(admin),
+    now: Date.now(),
+    packs: Object.values(packs).map((p) => ({ ...p, templates: templates.filter((t) => t.pack === p.id).map((t) => t.title), snapshot: snapshotStatus()[p.id] })),
+  });
 }
 
 function Builder({ pack }: { pack: { id: string; hash: string } }) {
@@ -37,16 +42,22 @@ function Builder({ pack }: { pack: { id: string; hash: string } }) {
   };
 
   return (
-    <div className="mt-4">
-      <button data-testid={`foldo-build-${pack.id}`} className="btn-primary btn-sm" disabled={busy} onClick={run}>
-        {busy ? 'Building...' : 'Build snapshot'}
-      </button>
+    <>
+      <div>
+        <button data-testid={`foldo-build-${pack.id}`} className="btn-secondary btn-md" aria-busy={busy} disabled={busy} onClick={run}>
+          {busy && <Icon.Spinner />}
+          {busy ? 'Building…' : 'Build snapshot'}
+        </button>
+      </div>
       {log.length > 0 && (
-        <pre data-testid={`foldo-build-log-${pack.id}`} className="mt-3 max-h-64 overflow-auto rounded-lg bg-bolt-elements-background-depth-1 p-3 text-xs text-bolt-elements-textSecondary">
+        <pre
+          data-testid={`foldo-build-log-${pack.id}`}
+          className="m-0 max-h-64 overflow-auto rounded-[10px] border border-solid border-rule2 bg-codebg px-[14px] py-3 font-mono text-[12px] leading-[1.6] text-ink2"
+        >
           {log.join('\n')}
         </pre>
       )}
-    </div>
+    </>
   );
 }
 
@@ -54,34 +65,47 @@ export default function AdminTemplates() {
   const d = useLoaderData<typeof loader>() as any;
 
   return (
-    <PageShell data={d} active="admin">
-      <main className="space-y-6" data-testid="foldo-admin-templates">
-        <div>
-          <a href="/admin" className="text-sm text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary">
-            ← Admin
-          </a>
-          <h1 className="mt-1 text-3xl font-bold">Template packs</h1>
-          <p className="mt-1 max-w-2xl text-sm text-bolt-elements-textSecondary">
-            Each pack is a shared set of npm packages. Build its snapshot once from a fast connection: teams then download one cached file instead of running npm install, which keeps venue Wi-Fi free.
-            Rebuild only when a pack's dependencies change (the hash changes).
+    <AdminShell data={d} now={d.now} page="templates">
+      <div data-testid="foldo-admin-templates" className="contents">
+        <section aria-labelledby="t-head" className={`${cardClass} gap-2`}>
+          <h1 id="t-head" className={h2Class}>
+            Template packs
+          </h1>
+          <p className="m-0 max-w-[680px] text-[13px] text-ink2 [text-wrap:pretty]">
+            Each pack is a shared set of npm packages. Build its snapshot once from a fast connection: teams then download one cached file instead of running npm
+            install, which keeps the venue Wi-Fi free. Rebuild only when a pack's dependencies change (the hash changes).
           </p>
-        </div>
+        </section>
         {d.packs.map((p: any) => (
-          <section key={p.id} className="surface p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold capitalize">{p.id} pack</h2>
-                <p className="mt-1 text-sm text-bolt-elements-textSecondary">Used by: {p.templates.join(', ')}</p>
-                <p className="mt-1 text-xs text-bolt-elements-textTertiary">{p.dependencies.length} packages · hash {p.hash}</p>
-              </div>
-              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${p.snapshot.url ? 'bg-[#e8f6ec] text-[#14532d]' : 'bg-[#fff4d6] text-[#7a5000]'}`}>
-                {p.snapshot.url ? `Snapshot ready · ${(p.snapshot.bytes / 1e6).toFixed(1)} MB` : 'No snapshot yet (teams run npm install)'}
-              </span>
+          <section key={p.id} aria-labelledby={`t-${p.id}`} className={`${cardClass} gap-4`}>
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 id={`t-${p.id}`} className={`${h2Class} capitalize`}>
+                {p.id} pack
+              </h2>
+              {p.snapshot.url ? (
+                <span className="pill-live">
+                  <span className="pill-dot" />
+                  Snapshot ready · {(p.snapshot.bytes / 1e6).toFixed(1)} MB
+                </span>
+              ) : (
+                <span className="pill-warning">
+                  <span className="pill-dot" />
+                  No snapshot yet · teams run npm install
+                </span>
+              )}
             </div>
+            <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-6 gap-y-[6px] border-y border-rule2 py-3 text-[13px]">
+              <dt className="text-pencil">Used by</dt>
+              <dd className="m-0 text-ink2">{p.templates.join(', ') || '—'}</dd>
+              <dt className="text-pencil">Packages</dt>
+              <dd className="m-0 text-ink2">{p.dependencies.length}</dd>
+              <dt className="text-pencil">Hash</dt>
+              <dd className="m-0 font-mono text-[12px] text-ink2">{p.hash}</dd>
+            </dl>
             <ClientOnly>{() => <Builder pack={p} />}</ClientOnly>
           </section>
         ))}
-      </main>
-    </PageShell>
+      </div>
+    </AdminShell>
   );
 }

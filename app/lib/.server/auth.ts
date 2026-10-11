@@ -1,7 +1,7 @@
 import { createCookie, redirect } from '@remix-run/node';
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { adminEmails, getEvent, globalLimit, perUserLimit, publicModels } from './config';
+import { adminEmails, getEvent, getSetting, globalLimit, perUserLimit, publicModels, setSetting } from './config';
 import { templateIndex } from './templates';
 import { db, today } from './db';
 
@@ -167,10 +167,22 @@ export async function requireAdmin(request: Request): Promise<User> {
 
 export const dailyLimit = perUserLimit;
 
+// organizers can grant a team extra messages for today only (admin "Adjust quota"); kept in settings, keyed by day
+const extraKey = (userId: string, day = today()) => `quota_extra:${day}:${userId}`;
+export const extraToday = (userId: string) => Math.max(0, Number(getSetting(extraKey(userId))) || 0);
+
+export function addExtraToday(userId: string, n: number) {
+  const day = today();
+  db.prepare("DELETE FROM settings WHERE key LIKE 'quota_extra:%' AND key NOT LIKE ?").run(`quota_extra:${day}:%`);
+  setSetting(extraKey(userId, day), String(extraToday(userId) + n));
+}
+
+export const resetUsageToday = (userId: string) => db.prepare('DELETE FROM usage WHERE user_id = ? AND day = ?').run(userId, today());
+
 export function remainingQuota(userId: string): number {
   const row = db.prepare('SELECT n FROM usage WHERE user_id = ? AND day = ?').get(userId, today()) as any;
 
-  return Math.max(0, perUserLimit() - (row?.n ?? 0));
+  return Math.max(0, perUserLimit() + extraToday(userId) - (row?.n ?? 0));
 }
 
 export const globalUsedToday = () =>
@@ -208,6 +220,8 @@ export function refundQuota(userId: string, provider: string) {
 
 const active = new Map<string, number[]>();
 export const activeStreams = () => [...active.values()].reduce((n, v) => n + v.length, 0);
+// logins with at least one build running (the admin "Teams building now" number)
+export const activeTeams = () => active.size;
 const MAX_STREAMS = Number(process.env.MAX_CONCURRENT_STREAMS || 40);
 
 export function acquireStream(userId: string, perUser: number): (() => void) | 'user' | 'busy' {
@@ -289,7 +303,7 @@ export function shell(user?: User) {
     name: user?.name,
     admin: user?.admin,
     remaining: user ? remainingQuota(user.id) : undefined,
-    limit: user ? dailyLimit() : undefined,
+    limit: user ? dailyLimit() + extraToday(user.id) : undefined,
     event: getEvent(),
     templates: templateIndex().templates.map(({ guide, ...rest }) => rest),
     ...publicModels(),

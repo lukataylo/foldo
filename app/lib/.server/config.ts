@@ -233,6 +233,23 @@ export function listProviders(): Provider[] {
   });
 }
 
+// the last admin "Test" result per provider (a failed test shows in /admin and blocks making it the default)
+export interface ProviderTest {
+  ok: boolean;
+  note: string;
+  at: number;
+}
+
+export function providerTest(id: string): ProviderTest | undefined {
+  try {
+    return JSON.parse(getSetting(`provider_test:${id}`) || 'null') ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const setProviderTest = (id: string, t?: ProviderTest) => setSetting(`provider_test:${id}`, t ? JSON.stringify(t) : '');
+
 export const usableProviders = () => listProviders().filter((p) => p.key && p.enabled && p.baseURL && p.model);
 
 export function defaultProviderId(): string | undefined {

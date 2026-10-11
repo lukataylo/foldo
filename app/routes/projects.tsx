@@ -1,12 +1,13 @@
 import * as RadixDialog from '@radix-ui/react-dialog';
 import { json, type LoaderFunctionArgs } from '@remix-run/node';
-import { useLoaderData, useRevalidator } from '@remix-run/react';
+import { useLoaderData, useRevalidator, useSearchParams } from '@remix-run/react';
 import { motion } from 'framer-motion';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { ProjectThumb } from '~/components/home/ProjectThumb';
 import {
   editedAgo,
+  foldText,
   projectTag,
   projectTitle,
   PROMPT_PILL,
@@ -31,8 +32,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     )
     .all(user.id);
 
-  return json({ ...shell(user), projects });
+  return json({ ...shell(user), projects, now: Date.now() });
 }
+
 
 type Project = ProjectSummary & { listed: number };
 
@@ -44,14 +46,17 @@ const SORTS = {
 
 type SortKey = keyof typeof SORTS;
 
-const FOCUS = 'outline-none focus-visible:shadow-[0_0_0_2px_#FBF8F1,0_0_0_4px_#16140F]';
+const isSort = (v: string | null): v is SortKey => v !== null && v in SORTS;
+
+// card actions: 34 high, radius 8 (Projects board)
+const ACTION = 'btn-sm rounded-[8px]';
 
 function EmptyState() {
   return (
     <section
       aria-labelledby="empty-title"
       data-testid="foldo-projects-empty"
-      className="flex flex-col items-center justify-center gap-[14px] rounded-[16px] border border-rule bg-sheet px-8 pb-16 pt-14 text-center"
+      className="flex flex-1 flex-col items-center justify-center gap-[14px] rounded-[16px] border border-rule bg-sheet px-8 pb-10 pt-8 text-center"
     >
       <img
         src="/art/empty-projects.webp"
@@ -76,31 +81,81 @@ function EmptyState() {
 function ProjectCard({
   p,
   templates,
+  now,
   onShare,
   onDelete,
+  onRename,
 }: {
   p: Project;
   templates: TemplateInfo[];
+  now: number;
   onShare: () => void;
-  onDelete: () => void;
+  onDelete: (trigger: HTMLButtonElement) => void;
+  onRename: (name: string) => void;
 }) {
   const tag = projectTag(p.template, templates);
   const title = projectTitle(p);
+  const [editing, setEditing] = useState(false);
+  const renameButton = useRef<HTMLButtonElement>(null);
+  const done = useRef(false);
+
+  // Enter or blur saves, Esc cancels; keyboard endings give focus back to the Rename button
+  const finish = (value: string | null, refocus: boolean) => {
+    if (done.current) {
+      return;
+    }
+
+    done.current = true;
+    setEditing(false);
+
+    const name = value?.trim();
+
+    if (name && name !== title) {
+      onRename(name);
+    }
+
+    if (refocus) {
+      requestAnimationFrame(() => renameButton.current?.focus());
+    }
+  };
 
   return (
     <li
       data-testid="foldo-project-card"
-      className="group relative flex flex-col overflow-hidden rounded-[12px] border border-rule bg-sheet transition-[border-color,box-shadow] duration-fast hover:border-ink hover:shadow-prompt focus-within:border-ink"
+      data-project-id={p.id}
+      className="group relative flex flex-col overflow-hidden rounded-[12px] border border-rule bg-sheet transition-[border-color,box-shadow] duration-fast hover:border-ink hover:shadow-[0_18px_40px_-28px_rgba(22,20,15,.35)] focus-within:border-ink"
     >
       <ProjectThumb template={p.template} height={176} />
-      <a
-        href={`/chat/${p.id}`}
-        data-testid="foldo-project-open"
-        className="flex flex-col gap-2 px-4 pb-4 pt-[14px] text-ink no-underline outline-none after:absolute after:inset-0 after:rounded-[12px] after:content-[''] focus-visible:after:shadow-[inset_0_0_0_2px_#16140F]"
-      >
-        <span className="truncate font-serif text-[22px] leading-[1.15] decoration-1 underline-offset-[3px] group-hover:underline">
-          {title}
-        </span>
+      <div className="flex flex-col gap-2 px-4 pb-4 pt-[14px]">
+        {editing ? (
+          <input
+            autoFocus
+            aria-label={`Rename ${title}`}
+            defaultValue={title}
+            maxLength={80}
+            data-testid="foldo-project-rename-input"
+            onFocus={(e) => e.currentTarget.select()}
+            onBlur={(e) => finish(e.currentTarget.value, false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                finish(e.currentTarget.value, true);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                finish(null, true);
+              }
+            }}
+            className="relative z-2 -mx-[5px] -my-[3px] min-w-0 rounded-[6px] border border-ink bg-sheet px-1 py-[2px] font-serif text-[22px] leading-[1.15] text-ink shadow-[0_0_0_3px_rgba(255,194,26,.45)] outline-none"
+          />
+        ) : (
+          <a
+            href={`/chat/${p.id}`}
+            data-testid="foldo-project-open"
+            className="truncate font-serif text-[22px] leading-[1.15] text-ink no-underline decoration-1 underline-offset-[3px] outline-none after:absolute after:inset-0 after:rounded-[12px] after:content-[''] group-hover:underline focus-visible:after:shadow-[inset_0_0_0_2px_#16140F]"
+          >
+            {title}
+          </a>
+        )}
         <span className="flex flex-wrap items-center gap-2">
           <span className={tag.prompt ? PROMPT_PILL : TAG_PILL}>{tag.label}</span>
           {p.shareId && (
@@ -109,21 +164,41 @@ function ProjectCard({
               Shared
             </span>
           )}
-          <span className="ml-auto text-[13px] text-pencil">Edited {editedAgo(p.updated)}</span>
+          <span className="ml-auto text-[13px] text-pencil">Edited {editedAgo(p.updated, now)}</span>
         </span>
-      </a>
+      </div>
       <div className="absolute right-3 top-3 z-1 flex gap-[6px] opacity-0 transition-opacity duration-fast focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+        <button
+          ref={renameButton}
+          type="button"
+          aria-label={`Rename ${title}`}
+          data-testid="foldo-project-rename"
+          onClick={() => {
+            done.current = false;
+            setEditing(true);
+          }}
+          className={`btn-secondary ${ACTION} shadow-[0_1px_0_rgba(22,20,15,.04)]`}
+        >
+          <Icon.Pencil />
+          Rename
+        </button>
         <button
           type="button"
           aria-label={`Share ${title}`}
           data-testid="foldo-project-share"
           onClick={onShare}
-          className="btn-secondary btn-sm shadow-[0_1px_0_rgba(22,20,15,.04)]"
+          className={`btn-secondary ${ACTION} shadow-[0_1px_0_rgba(22,20,15,.04)]`}
         >
           <Icon.Share />
           Share
         </button>
-        <button type="button" aria-label={`Delete ${title}`} data-testid="foldo-project-delete" onClick={onDelete} className="btn-danger btn-sm">
+        <button
+          type="button"
+          aria-label={`Delete ${title}`}
+          data-testid="foldo-project-delete"
+          onClick={(e) => onDelete(e.currentTarget)}
+          className={`btn-danger ${ACTION}`}
+        >
           <Icon.Trash />
           Delete
         </button>
@@ -132,14 +207,26 @@ function ProjectCard({
   );
 }
 
-function DeleteDialog({ project, onClose, onDeleted }: { project: Project | null; onClose: () => void; onDeleted: () => void }) {
+function DeleteDialog({
+  project,
+  onClose,
+  onDeleted,
+  onCloseFocus,
+}: {
+  project: Project | null;
+  onClose: () => void;
+  onDeleted: (id: string) => void;
+  onCloseFocus: () => void;
+}) {
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
 
   const remove = async () => {
-    if (!project) {
+    if (!project || inFlight.current) {
       return;
     }
 
+    inFlight.current = true;
     setBusy(true);
 
     try {
@@ -149,15 +236,17 @@ function DeleteDialog({ project, onClose, onDeleted }: { project: Project | null
         body: JSON.stringify({ id: project.id }),
       });
 
-      if (!res.ok) {
-        throw new Error(String(res.status));
+      // 404: already gone (another tab, or a repeat request): the same outcome for the team
+      if (res.ok || res.status === 404) {
+        toast.success('Project deleted.');
+        onDeleted(project.id);
+      } else {
+        toast.error('Something went wrong on our side. Try again in a moment.');
       }
-
-      toast.success('Project deleted.');
-      onDeleted();
     } catch {
       toast.error("Couldn't delete that project. Check your connection and try again.");
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
@@ -174,7 +263,13 @@ function DeleteDialog({ project, onClose, onDeleted }: { project: Project | null
             variants={dialogBackdropVariants}
           />
         </RadixDialog.Overlay>
-        <RadixDialog.Content asChild>
+        <RadixDialog.Content
+          asChild
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            onCloseFocus();
+          }}
+        >
           <motion.div
             data-testid="foldo-delete-dialog"
             className="fixed left-[50%] top-[50%] z-max max-h-[90vh] w-[calc(100vw-32px)] max-w-[460px] overflow-y-auto rounded-[16px] border border-rule bg-sheet text-ink shadow-float focus:outline-none"
@@ -193,7 +288,7 @@ function DeleteDialog({ project, onClose, onDeleted }: { project: Project | null
             <div className="flex items-start justify-between gap-4 px-6 pt-[22px]">
               <RadixDialog.Title className="m-0 font-serif text-[30px] font-normal leading-[1.1]">Delete project?</RadixDialog.Title>
               <RadixDialog.Close asChild>
-                <button type="button" aria-label="Close" className="btn-icon -mr-2 -mt-1 h-[36px] w-[36px]">
+                <button type="button" aria-label="Close" className="btn-icon -mr-2 -mt-1 h-[36px] w-[36px] rounded-[8px]">
                   <Icon.Close size={18} />
                 </button>
               </RadixDialog.Close>
@@ -201,7 +296,7 @@ function DeleteDialog({ project, onClose, onDeleted }: { project: Project | null
             <RadixDialog.Description asChild>
               <div className="flex flex-col gap-3 px-6 pb-[22px] pt-3 text-[15px] text-ink2">
                 <p className="m-0">You are about to delete</p>
-                <div className="flex items-center gap-[10px] rounded-[8px] border border-rule2 bg-codebg px-3 py-[10px] font-mono text-[14px] font-medium text-ink">
+                <div className="flex items-center gap-[10px] rounded-[8px] border border-rule2 bg-codebg px-3 py-[10px] font-mono text-[14px] font-medium leading-[normal] text-ink">
                   <Icon.Folder />
                   <span className="min-w-0 truncate">{project ? projectTitle(project) : ''}</span>
                 </div>
@@ -218,6 +313,7 @@ function DeleteDialog({ project, onClose, onDeleted }: { project: Project | null
                 type="button"
                 data-testid="foldo-delete-confirm"
                 className="btn-destructive btn-lg"
+                disabled={busy}
                 aria-busy={busy || undefined}
                 onClick={remove}
               >
@@ -233,28 +329,100 @@ function DeleteDialog({ project, onClose, onDeleted }: { project: Project | null
 }
 
 export default function Projects() {
-  const data = useLoaderData() as unknown as ShellData & { projects: Project[]; templates: TemplateInfo[] };
-  const { projects, templates } = data;
+  const data = useLoaderData() as unknown as ShellData & { projects: Project[]; templates: TemplateInfo[]; now: number };
+  const { templates, now } = data;
   const revalidator = useRevalidator();
+  const [params, setParams] = useSearchParams();
+  const sortParam = params.get('sort');
+  const sort: SortKey = isSort(sortParam) ? sortParam : 'recent';
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<SortKey>('recent');
   const [confirm, setConfirm] = useState<Project | null>(null);
   const [sharing, setSharing] = useState<Project | null>(null);
 
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
+  // optimistic edits until the loader catches up: renamed titles, deleted cards
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  const projects = useMemo(
+    () => data.projects.filter((p) => !removed.has(p.id)).map((p) => (names[p.id] ? { ...p, description: names[p.id] } : p)),
+    [data.projects, removed, names],
+  );
 
-    return projects.filter((p) => !q || projectTitle(p).toLowerCase().includes(q)).sort(SORTS[sort].fn);
+  // where focus goes when the delete dialog closes: back to the card's Delete button, or (after deleting) the next card
+  const deleteTrigger = useRef<HTMLButtonElement | null>(null);
+  const focusAfterDelete = useRef<string | null | undefined>(undefined);
+  const heading = useRef<HTMLHeadingElement>(null);
+
+  const shown = useMemo(() => {
+    const q = foldText(query.trim());
+
+    return projects.filter((p) => !q || foldText(projectTitle(p)).includes(q)).sort(SORTS[sort].fn);
   }, [projects, query, sort]);
+
+  const setSort = (next: SortKey) =>
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+
+        if (next === 'recent') {
+          p.delete('sort');
+        } else {
+          p.set('sort', next);
+        }
+
+        return p;
+      },
+      { replace: true, preventScrollReset: true },
+    );
+
+  const rename = async (p: Project, name: string) => {
+    const before = names[p.id];
+    setNames((n) => ({ ...n, [p.id]: name }));
+
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, rename: name }),
+      });
+
+      if (!res.ok) {
+        throw new Error(String(res.status));
+      }
+
+      const { description } = (await res.json()) as { description: string };
+      setNames((n) => ({ ...n, [p.id]: description }));
+      revalidator.revalidate();
+    } catch {
+      setNames((n) => {
+        const next = { ...n };
+
+        if (before) {
+          next[p.id] = before;
+        } else {
+          delete next[p.id];
+        }
+
+        return next;
+      });
+      toast.error("Couldn't rename. Try again.");
+    }
+  };
 
   const count = `${projects.length} ${projects.length === 1 ? 'project' : 'projects'}`;
 
   return (
     <PageShell data={data} active="projects">
-      <div data-testid="foldo-projects-page" className="flex flex-col gap-7">
+      {/* fills the viewport under the header so the empty state can centre itself (36 bar + 65 header + 48/72 padding) */}
+      <div data-testid="foldo-projects-page" className="flex min-h-[calc(100vh-221px)] flex-col gap-7">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div className="flex items-baseline gap-4">
-            <h1 className="m-0 font-serif text-[56px] font-normal leading-none tracking-[-.015em] max-sm:text-[44px]">Your projects</h1>
+            <h1
+              ref={heading}
+              tabIndex={-1}
+              className="m-0 font-serif text-[56px] font-normal leading-none tracking-[-.015em] outline-none max-sm:text-[44px]"
+            >
+              Your projects
+            </h1>
             <span className="eyebrow font-medium" data-testid="foldo-projects-count">
               {count}
             </span>
@@ -318,7 +486,19 @@ export default function Projects() {
             ) : (
               <ul className="m-0 grid list-none gap-6 p-0 [grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))]">
                 {shown.map((p) => (
-                  <ProjectCard key={p.id} p={p} templates={templates} onShare={() => setSharing(p)} onDelete={() => setConfirm(p)} />
+                  <ProjectCard
+                    key={p.id}
+                    p={p}
+                    templates={templates}
+                    now={now}
+                    onShare={() => setSharing(p)}
+                    onRename={(name) => rename(p, name)}
+                    onDelete={(trigger) => {
+                      deleteTrigger.current = trigger;
+                      focusAfterDelete.current = undefined;
+                      setConfirm(p);
+                    }}
+                  />
                 ))}
               </ul>
             )}
@@ -329,9 +509,25 @@ export default function Projects() {
       <DeleteDialog
         project={confirm}
         onClose={() => setConfirm(null)}
-        onDeleted={() => {
+        onDeleted={(id) => {
+          const i = shown.findIndex((p) => p.id === id);
+          focusAfterDelete.current = (shown[i + 1] ?? shown[i - 1])?.id ?? null;
+          setRemoved((r) => new Set(r).add(id));
           setConfirm(null);
           revalidator.revalidate();
+        }}
+        onCloseFocus={() => {
+          const next = focusAfterDelete.current;
+
+          requestAnimationFrame(() => {
+            if (next === undefined) {
+              deleteTrigger.current?.focus();
+            } else if (next) {
+              document.querySelector<HTMLElement>(`[data-project-id="${next}"] [data-testid=foldo-project-open]`)?.focus();
+            } else {
+              heading.current?.focus();
+            }
+          });
         }}
       />
 

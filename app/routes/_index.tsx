@@ -27,7 +27,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     .all(user.id);
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM projects WHERE user_id = ?').get(user.id) as { n: number };
 
-  return json({ ...shell(user), recent, projectCount: n });
+  return json({ ...shell(user), recent, projectCount: n, now: Date.now() });
 }
 
 export default function Index() {

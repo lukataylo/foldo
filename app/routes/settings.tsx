@@ -1,5 +1,5 @@
 import { json, redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node';
-import { useFetcher, useLoaderData } from '@remix-run/react';
+import { useActionData, useFetcher, useLoaderData } from '@remix-run/react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'react-toastify';
 import { PageShell, type ShellData } from '~/components/PageShell';
@@ -15,6 +15,7 @@ import {
   verifyPasswordFor,
 } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
+import { cleanName, teamNameError } from '~/lib/.server/names';
 import { classNames } from '~/utils/classNames';
 
 export const meta = () => [{ title: 'Settings · Foldo' }];
@@ -23,27 +24,30 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json(shell(await requireUser(request)));
 }
 
+type Form = 'profile' | 'password' | 'delete';
 type Field = 'name' | 'current' | 'next';
-type Result = { ok?: string; error?: string; field?: Field };
 
-const fail = (field: Field, error: string, status = 400) => json<Result>({ error, field }, status);
+// `form` tells the no-JS page render which card the result belongs to (with JS each card has its own fetcher)
+type Result = { form?: Form; ok?: string; error?: string; field?: Field };
 
 export async function action({ request }: ActionFunctionArgs) {
   const user = await requireUser(request);
   const f = await request.formData();
   const s = (k: string) => String(f.get(k) ?? '');
-  const intent = s('intent');
+  const intent = s('intent') as Form;
+  const fail = (field: Field, error: string, status = 400) => json<Result>({ form: intent, error, field }, status);
 
   if (intent === 'profile') {
-    const name = s('name').replace(/\s+/g, ' ').trim().slice(0, 40);
+    const name = cleanName(s('name'), 40);
+    const error = teamNameError(name, user.id);
 
-    if (name.length < 2) {
-      return fail('name', 'Use at least 2 characters for the name.');
+    if (error) {
+      return fail('name', error);
     }
 
     db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, user.id);
 
-    return json<Result>({ ok: 'Saved.' });
+    return json<Result>({ form: intent, ok: 'Saved.' });
   }
 
   // password-protected actions share a throttle so a stolen session can't be used to guess the password
@@ -64,7 +68,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
     await endOtherSessions(request, user.id);
 
-    return json<Result>({ ok: 'Password updated.' });
+    return json<Result>({ form: intent, ok: 'Password updated.' });
   }
 
   if (intent === 'delete') {
@@ -107,22 +111,37 @@ const SECTIONS = [
   { id: 'danger', label: 'Danger zone', icon: <TriangleIcon />, danger: true },
 ];
 
-// one fetcher per form: its own busy state, inline field error, and a toast on success
-function useSettingsForm() {
+/*
+ * One fetcher per form: its own busy state, inline field error, and a toast on success. Without JavaScript the form
+ * posts the whole page, so the result comes back as action data instead (and success shows inline: no toasts).
+ */
+function useSettingsForm(form: Form) {
   const fetcher = useFetcher<Result>();
+  const page = useActionData<Result>();
   const busy = fetcher.state !== 'idle';
-  const result = busy ? undefined : fetcher.data;
+  const fromPage = !fetcher.data && page?.form === form ? page : undefined;
+  const result = busy ? undefined : (fetcher.data ?? fromPage);
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    if (result?.ok) {
+    if (result?.ok && result === fetcher.data) {
       toast.success(result.ok);
     }
   }, [result]);
 
   const errorFor = (field: Field) => (result?.field === field ? result.error : undefined);
+  const inlineOk = fromPage?.ok;
 
-  return { fetcher, busy, result, errorFor, formRef };
+  return { fetcher, busy, result, errorFor, formRef, inlineOk };
+}
+
+function InlineOk({ children }: { children?: string }) {
+  return children ? (
+    <span role="status" className="mr-auto inline-flex items-center gap-[6px] self-center text-[14px] text-live">
+      <Icon.Check />
+      {children}
+    </span>
+  ) : null;
 }
 
 function FieldError({ id, children }: { id: string; children?: string }) {
@@ -146,7 +165,7 @@ function Card({ id, title, intro, eyebrow, danger, children }: { id: string; tit
       data-testid={`foldo-settings-section-${id}`}
     >
       <div className={classNames('flex flex-col px-6 pb-1 pt-[22px]', danger ? 'gap-[6px]' : 'gap-1')}>
-        {eyebrow && <span className="font-mono text-[12px] font-medium uppercase tracking-[.08em] text-error">{eyebrow}</span>}
+        {eyebrow && <span className="font-mono text-[12px] font-medium uppercase leading-[normal] tracking-[.08em] text-error">{eyebrow}</span>}
         <h2 id={`${id}-title`} className="m-0 font-serif text-[28px] font-normal leading-[1.1]">
           {title}
         </h2>
@@ -171,7 +190,7 @@ function Busy({ busy, children, label }: { busy: boolean; children: ReactNode; l
 }
 
 function ProfileForm({ name, email }: { name?: string; email?: string }) {
-  const { fetcher, busy, errorFor } = useSettingsForm();
+  const { fetcher, busy, errorFor, inlineOk } = useSettingsForm('profile');
   const error = errorFor('name');
 
   return (
@@ -217,6 +236,7 @@ function ProfileForm({ name, email }: { name?: string; email?: string }) {
           </div>
         </div>
         <div className={FOOTER}>
+          <InlineOk>{inlineOk}</InlineOk>
           <button type="submit" className="btn-primary btn-md" aria-busy={busy || undefined} data-testid="foldo-settings-save">
             <Busy busy={busy} label="Saving">
               Save
@@ -234,7 +254,7 @@ const Username = ({ email }: { email?: string }) => (
 );
 
 function PasswordForm({ email }: { email?: string }) {
-  const { fetcher, busy, result, errorFor, formRef } = useSettingsForm();
+  const { fetcher, busy, result, errorFor, formRef, inlineOk } = useSettingsForm('password');
   const [show, setShow] = useState(false);
   const current = errorFor('current');
   const next = errorFor('next');
@@ -304,6 +324,7 @@ function PasswordForm({ email }: { email?: string }) {
           <span className="text-ink">Changing your password signs out every other session.</span>
         </div>
         <div className={FOOTER}>
+          <InlineOk>{inlineOk}</InlineOk>
           <button type="submit" className="btn-secondary btn-md" aria-busy={busy || undefined} data-testid="foldo-settings-password">
             <Busy busy={busy} label="Updating">
               Update password
@@ -316,7 +337,7 @@ function PasswordForm({ email }: { email?: string }) {
 }
 
 function DeleteForm({ email }: { email?: string }) {
-  const { fetcher, busy, errorFor } = useSettingsForm();
+  const { fetcher, busy, errorFor } = useSettingsForm('delete');
   const error = errorFor('current');
 
   return (
@@ -370,24 +391,35 @@ function DeleteForm({ email }: { email?: string }) {
 
 function SectionNav() {
   const [active, setActive] = useState('profile');
+  const clickedAt = useRef(0);
 
-  // follow the section in view (the first card whose top has scrolled past a third of the viewport)
+  /*
+   * Follow the scroll: the last section whose top has passed a third of the viewport, or the last section once the
+   * page can't scroll further. Right after a click the clicked section stays highlighted (the jump itself scrolls, and a
+   * short last section can never reach the top).
+   */
   useEffect(() => {
-    const els = SECTIONS.map((s) => document.getElementById(s.id)).filter(Boolean) as HTMLElement[];
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+    const scroller = document.getElementById('profile')?.closest('.overflow-y-auto');
 
-        if (visible[0]) {
-          setActive(visible[0].target.id);
-        }
-      },
-      { rootMargin: '0px 0px -60% 0px' },
-    );
+    if (!scroller) {
+      return undefined;
+    }
 
-    els.forEach((el) => observer.observe(el));
+    const onScroll = () => {
+      if (Date.now() - clickedAt.current < 600) {
+        return;
+      }
 
-    return () => observer.disconnect();
+      const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
+      const line = scroller.getBoundingClientRect().top + scroller.clientHeight / 3;
+      const passed = SECTIONS.filter((s) => (document.getElementById(s.id)?.getBoundingClientRect().top ?? Infinity) <= line);
+
+      setActive(atBottom && scroller.scrollTop > 0 ? SECTIONS[SECTIONS.length - 1].id : (passed.at(-1) ?? SECTIONS[0]).id);
+    };
+
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+
+    return () => scroller.removeEventListener('scroll', onScroll);
   }, []);
 
   return (
@@ -397,7 +429,10 @@ function SectionNav() {
           key={s.id}
           href={`#${s.id}`}
           aria-current={active === s.id ? 'true' : undefined}
-          onClick={() => setActive(s.id)}
+          onClick={() => {
+            clickedAt.current = Date.now();
+            setActive(s.id);
+          }}
           className={classNames(
             'flex min-h-[40px] items-center gap-[10px] rounded-[6px] px-3 text-[14px] no-underline outline-none focus-visible:shadow-[0_0_0_2px_#16140F]',
             active === s.id ? 'bg-wash font-semibold' : 'font-medium hover:bg-wash',

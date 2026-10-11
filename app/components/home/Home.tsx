@@ -19,6 +19,7 @@ interface HomeData {
   recent?: ProjectSummary[];
   projectCount?: number;
   templates?: TemplateInfo[];
+  now?: number;
 }
 
 interface HomeProps {
@@ -31,21 +32,24 @@ const TRACKS = [
     track: 'Payments',
     img: 'track-payments',
     alt: 'Shopkeeper Foldo behind a paper counter, holding a coin for the next customer',
+    altCompact: 'Shopkeeper Foldo taking a payment with a paper coin',
     blurb: 'Checkouts, payment links and transfers.',
   },
   {
     track: 'Access to Finance',
     img: 'track-access',
     alt: 'Foldo turning a big paper key in the door of a little bank',
+    altCompact: 'Foldo unlocking the bank door with a big paper key',
     blurb: 'Budgeting, savings and fair micro-loans.',
   },
   {
     track: 'Fraud and Security',
     img: 'track-fraud',
     alt: 'Detective Foldo studying a hooked envelope through a magnifying glass',
+    altCompact: 'Detective Foldo inspecting a hooked envelope with a magnifying glass',
     blurb: 'Scam checkers and fraud monitoring.',
   },
-  { track: 'Any track', img: '', alt: '', blurb: '' },
+  { track: 'Any track', img: '', alt: '', altCompact: '', blurb: '' },
 ];
 
 // board order inside a track; the first one is what a big track card starts
@@ -118,12 +122,15 @@ function FirstRun({
 
   return (
     <div className="w-full bg-paper text-[15px] leading-[1.5] text-ink" data-testid="foldo-home-first-run">
+      {/*
+       * Wide screens: the band art sits right of the text column. Below 1240px it would slide under the build card, so the
+       * art stacks under the card instead (the mobile hero art, same #FDB914 field).
+       */}
       <section
         aria-labelledby="welcome-title"
-        className="flex min-h-[540px] items-center bg-heroyellow bg-no-repeat"
-        style={{ backgroundImage: 'url(/art/hero-band.webp)', backgroundSize: 'auto 100%', backgroundPosition: 'right bottom' }}
+        className="flex min-h-[540px] items-center bg-heroyellow bg-[length:auto_100%] bg-[position:right_bottom] bg-no-repeat min-[1240px]:bg-[url(/art/hero-band.webp)] max-[1239px]:min-h-0"
       >
-        <div className="container-app pb-16 pt-14">
+        <div className="container-app pb-16 pt-14 max-[1239px]:pb-0 max-sm:pt-10">
           <div className="flex max-w-[620px] flex-col gap-[14px]">
             <div id="intro" className="flex flex-col gap-[14px]">
               <Welcome name={name} />
@@ -131,6 +138,13 @@ function FirstRun({
             </div>
             <div className="mt-[14px]">{prompt}</div>
           </div>
+          <img
+            src="/art/hero-mobile.webp"
+            alt="Foldo, a paper-folded dachshund, typing on a paper laptop while a little app pops up out of the screen"
+            width={1536}
+            height={1024}
+            className="mt-6 block aspect-[3/2] h-auto w-full max-w-[620px] min-[1240px]:hidden"
+          />
         </div>
       </section>
 
@@ -148,7 +162,7 @@ function FirstRun({
                 disabled={!t.start}
                 onClick={() => t.start && onStartTemplate?.(t.start.id)}
                 aria-label={t.start ? `Start ${t.track}: ${t.start.title}` : undefined}
-                className={`group flex cursor-pointer flex-col overflow-hidden rounded-[14px] border border-rule bg-sheet p-0 text-left font-sans text-ink transition-[border-color,box-shadow] duration-fast hover:border-ink hover:shadow-prompt disabled:cursor-not-allowed ${FOCUS}`}
+                className={`group flex cursor-pointer flex-col overflow-hidden rounded-[14px] border border-rule bg-sheet p-0 text-left font-sans text-ink transition-[border-color,box-shadow] duration-fast hover:border-ink hover:shadow-[0_18px_40px_-28px_rgba(22,20,15,.35)] disabled:cursor-not-allowed ${FOCUS}`}
               >
                 <img
                   src={`/art/${t.img}.webp`}
@@ -173,14 +187,14 @@ function FirstRun({
   );
 }
 
-function RecentCard({ p, templates }: { p: ProjectSummary; templates: TemplateInfo[] }) {
+function RecentCard({ p, templates, now }: { p: ProjectSummary; templates: TemplateInfo[]; now: number }) {
   const tag = projectTag(p.template, templates);
 
   return (
     <a
       href={`/chat/${p.id}`}
       data-testid="foldo-home-recent"
-      className={`group flex flex-col overflow-hidden rounded-[12px] border border-rule bg-sheet text-ink no-underline transition-[border-color,box-shadow] duration-fast hover:border-ink hover:shadow-prompt ${FOCUS}`}
+      className={`group flex flex-col overflow-hidden rounded-[12px] border border-rule bg-sheet text-ink no-underline transition-[border-color,box-shadow] duration-fast hover:border-ink hover:shadow-[0_18px_40px_-28px_rgba(22,20,15,.35)] ${FOCUS}`}
     >
       <ProjectThumb template={p.template} height={168} />
       <div className="flex flex-col gap-2 px-4 pb-4 pt-[14px]">
@@ -196,7 +210,7 @@ function RecentCard({ p, templates }: { p: ProjectSummary; templates: TemplateIn
           ) : (
             <span className={tag.prompt ? PROMPT_PILL : TAG_PILL}>{tag.label}</span>
           )}
-          <span className="text-[13px] text-pencil">Edited {editedAgo(p.updated)}</span>
+          <span className="text-[13px] text-pencil">Edited {editedAgo(p.updated, now)}</span>
         </span>
       </div>
     </a>
@@ -218,12 +232,14 @@ function AnyTrackArt() {
 function Returning({
   recent,
   projectCount,
+  now,
   prompt,
   templates,
   onStartTemplate,
 }: {
   recent: ProjectSummary[];
   projectCount: number;
+  now: number;
   prompt: ReactNode;
   templates: TemplateInfo[];
   onStartTemplate?: (id: string) => void;
@@ -256,7 +272,7 @@ function Returning({
             </SectionHead>
             <div className="grid gap-6 [grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr))]">
               {recent.map((p) => (
-                <RecentCard key={p.id} p={p} templates={templates} />
+                <RecentCard key={p.id} p={p} templates={templates} now={now} />
               ))}
             </div>
           </section>
@@ -280,7 +296,7 @@ function Returning({
                     {t.img ? (
                       <img
                         src={`/art/${t.img}.webp`}
-                        alt={t.alt}
+                        alt={t.altCompact}
                         width={1536}
                         height={1152}
                         className="block h-[72px] w-[96px] flex-none rounded-[10px] border border-rule object-cover"
@@ -313,13 +329,22 @@ function Returning({
 }
 
 export function Home({ prompt, onStartTemplate }: HomeProps) {
-  const { name, recent = [], projectCount = 0, templates = [] } = useLoaderData() as HomeData;
+  const { name, recent = [], projectCount, templates = [], now = 0 } = useLoaderData() as HomeData;
+
+  /*
+   * Only `/` knows the project count. /chat/:id and /p/:id render the same studio and show this empty state for a moment
+   * before their messages load: keep that frame blank instead of flashing the first-run hero.
+   */
+  if (projectCount === undefined) {
+    return <div className="flex-1" aria-hidden="true" />;
+  }
+
   const firstRun = projectCount === 0;
   const box = typeof prompt === 'function' ? prompt(firstRun ? 'hero' : 'home') : prompt;
 
   return firstRun ? (
     <FirstRun name={name} prompt={box} templates={templates} onStartTemplate={onStartTemplate} />
   ) : (
-    <Returning recent={recent} projectCount={projectCount} prompt={box} templates={templates} onStartTemplate={onStartTemplate} />
+    <Returning recent={recent} projectCount={projectCount} now={now} prompt={box} templates={templates} onStartTemplate={onStartTemplate} />
   );
 }

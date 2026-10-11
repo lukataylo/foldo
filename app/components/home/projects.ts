@@ -18,8 +18,11 @@ export const projectTitle = (p: Pick<ProjectSummary, 'description'>) => p.descri
 
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'} ago`;
 
-// "12 minutes ago", "yesterday", "5 days ago" (the boards' wording; utils/timeAgo is the compact "12m ago")
-export function editedAgo(ts: number, now = Date.now()) {
+/*
+ * "12 minutes ago", "yesterday", "5 days ago" (the boards' wording; utils/timeAgo is the compact "12m ago").
+ * Pass the loader's `now` so the server render and hydration produce the same text.
+ */
+export function editedAgo(ts: number, now: number) {
   const min = Math.floor(Math.max(0, now - ts) / 60_000);
 
   if (min < 1) {
@@ -46,7 +49,7 @@ export function editedAgo(ts: number, now = Date.now()) {
     return plural(d, 'day');
   }
 
-  return d < 60 ? plural(Math.floor(d / 7), 'week') : `on ${new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
+  return d < 60 ? plural(Math.floor(d / 7), 'week') : `on ${new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}`;
 }
 
 // The tag pill: the template's track ("Payments"), the kit's name for the any-track kits, or "From a prompt"
@@ -59,6 +62,13 @@ export function projectTag(template: string | null, templates: TemplateInfo[]) {
 
   return { label: t.track === 'Any track' ? t.title : t.track, prompt: false };
 }
+
+// search: case- and accent-insensitive ("credito" finds "Crédito")
+export const foldText = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase();
 
 export const TAG_PILL = 'pill border-rule bg-wash px-[9px] text-ink2';
 export const PROMPT_PILL = 'pill border-rule bg-sheet px-[9px] text-ink2';

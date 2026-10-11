@@ -417,6 +417,12 @@ try {
   check(P7, 'a team with no projects gets the first-run home', firstRun.includes('foldo-home-first-run') && firstRun.includes('<em>Delta.</em>'));
   check(P7, 'an empty project list shows the empty state', (await D.req('/projects')).text.includes('No projects'));
   const idD = await D.save('Delta app');
+  const rn = await D.req('/api/projects', { method: 'POST', body: { id: idD, rename: '  Delta\u200b ledger  ' } });
+  check(P7, 'rename trims and strips invisible characters', rn.status === 200 && rn.json().description === 'Delta ledger', rn.text);
+  check(P7, 'an empty rename is refused', (await D.req('/api/projects', { method: 'POST', body: { id: idD, rename: ' \u200b ' } })).status === 400);
+  check(P7, "another team cannot rename D's project", (await A.req('/api/projects', { method: 'POST', body: { id: idD, rename: 'Mine now' } })).status === 404);
+  await D.req('/api/projects', { method: 'PUT', body: { id: idD, description: 'auto title from the prompt', messages: [{ id: '1', role: 'user', content: 'x' }] } });
+  check(P7, 'autosave keeps a name the team chose', (await D.req('/api/projects')).json().find((p) => p.id === idD)?.description === 'Delta ledger');
   const returning = (await D.req('/')).text;
   check(P7, 'a returning team sees its recent project on home', returning.includes('Continue where you left off') && returning.includes(`/chat/${idD}`));
   const sD = (await D.req('/api/projects', { method: 'POST', body: { id: idD, share: true } })).json().shareId;
@@ -426,6 +432,8 @@ try {
   check(P7, 'a short new password is refused (error on the field)', shortPw.status === 400 && shortPw.json().field === 'next');
   const badName = await D.req(SETTINGS_DATA, { method: 'POST', form: { intent: 'profile', name: ' x ' } });
   check(P7, 'a one-letter team name is refused', badName.status === 400 && badName.json().field === 'name');
+  const taken = await D.req(SETTINGS_DATA, { method: 'POST', form: { intent: 'profile', name: 'team ALPHA' } });
+  check(P7, 'a team name another team uses is refused', taken.status === 400 && /Another team/.test(taken.json().error), taken.text);
   const renamed = await D.req('/settings', { method: 'POST', form: { intent: 'profile', name: '  Team   Delta Prime ' } });
   check(P7, 'profile save updates the team name', renamed.status === 200 && (await D.req('/settings')).text.includes('Team Delta Prime'));
   const other = new Client();

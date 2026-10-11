@@ -30,6 +30,7 @@ export const shareId = atom<string | null | undefined>(undefined);
 export const listed = atom<boolean>(false);
 
 let saving: Promise<void> = Promise.resolve();
+let seeded = false;
 
 // 'saved' | 'saving' | 'retrying' | 'failed': shown next to the project name so teams always know their work is safe
 export const saveState = atom<'saved' | 'saving' | 'retrying' | 'failed'>('saved');
@@ -61,8 +62,12 @@ async function putWithRetry(body: unknown): Promise<Response | undefined> {
 export function useChatHistory() {
   const data = useLoaderData() as ProjectLoaderData;
 
-  // seed the stores once; shared links have no id, so the first edit by a signed-in viewer forks into a new project
-  if (data.id !== chatId.get()) {
+  /*
+   * seed the stores once; shared links have no id, so the first edit by a signed-in viewer forks into a new project.
+   * a fresh load of /p/:shareId compares undefined to undefined, so always seed on first use or a remix loses its template
+   */
+  if (!seeded || data.id !== chatId.get()) {
+    seeded = true;
     chatId.set(data.id);
     description.set(data.description);
     shareId.set(data.shareId);

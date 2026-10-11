@@ -1,13 +1,16 @@
 import { useLoaderData } from '@remix-run/react';
+import { toast } from 'react-toastify';
 import { ClientOnly } from 'remix-utils/client-only';
 import { BaseChat } from '~/components/chat/BaseChat';
 import { Chat } from '~/components/chat/Chat.client';
 import { EventBar, type EventInfo } from '~/components/header/EventBar';
 import { Header } from '~/components/header/Header';
+import { copyText } from '~/components/share/ShareDialog';
 
 export function Studio() {
-  const { shared, email, event, paused } = useLoaderData() as {
+  const { shared, url, email, event, paused } = useLoaderData() as {
     shared?: boolean;
+    url?: string;
     email?: string;
     event?: EventInfo | null;
     paused?: { paused: boolean; message: string };
@@ -33,6 +36,17 @@ export function Studio() {
             You're viewing a shared project.{' '}
             {email ? 'Send a message to remix it into your own copy.' : 'Sign up free to remix it.'}
           </span>
+          <button
+            data-testid="foldo-share-banner-copy"
+            onClick={async () => {
+              if (await copyText(url ?? location.href)) {
+                toast.success('Link copied.');
+              }
+            }}
+            className="btn h-7 border border-black/20 px-2.5 text-xs font-semibold text-[#111] hover:bg-black/10"
+          >
+            <span className="i-ph:link-simple-bold" /> Copy link
+          </button>
           {!email && (
             <a
               href="/login?mode=register"

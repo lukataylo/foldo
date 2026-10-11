@@ -120,6 +120,7 @@ export function AdminShell({
   page,
   active,
   badges = {},
+  onNavigate,
   children,
 }: {
   data: ShellData;
@@ -127,6 +128,7 @@ export function AdminShell({
   page: 'console' | 'templates';
   active?: SectionId;
   badges?: Partial<Record<SectionId, ReactNode>>;
+  onNavigate?: (id: SectionId) => void;
   children: ReactNode;
 }) {
   const event = data.event;
@@ -166,8 +168,8 @@ export function AdminShell({
             href="/admin/templates"
             aria-current={page === 'templates' ? 'page' : undefined}
             className={classNames(
-              'whitespace-nowrap text-[13px] font-medium text-ink2 decoration-field underline-offset-3 hover:text-ink',
-              page === 'templates' ? 'text-ink underline' : 'no-underline hover:underline',
+              'whitespace-nowrap text-[13px] font-medium underline decoration-field underline-offset-3 hover:text-ink',
+              page === 'templates' ? 'text-ink decoration-ink' : 'text-ink2',
             )}
           >
             Template packs
@@ -187,6 +189,7 @@ export function AdminShell({
                   <a
                     href={`${base}#${s.id}`}
                     aria-current={current ? 'true' : undefined}
+                    onClick={() => onNavigate?.(s.id)}
                     className={classNames(
                       'flex h-[38px] items-center gap-[10px] rounded-[8px] border border-solid px-[10px] text-[14px] no-underline outline-none focus-visible:shadow-[0_0_0_2px_#16140F]',
                       current ? 'border-rule bg-sheet font-semibold text-ink' : 'border-transparent text-ink2 hover:bg-wash hover:text-ink',
@@ -204,7 +207,7 @@ export function AdminShell({
             {page === 'console' ? 'Numbers refresh every 10 seconds while this page is open.' : 'Sections open the organizer console.'}
           </p>
         </nav>
-        <main className="flex min-w-0 flex-[999_1_720px] flex-col gap-6">{children}</main>
+        <main className="relative flex min-w-0 flex-[999_1_720px] flex-col gap-6">{children}</main>
       </div>
     </div>
   );

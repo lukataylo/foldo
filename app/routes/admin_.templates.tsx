@@ -79,7 +79,7 @@ export default function AdminTemplates() {
         {d.packs.map((p: any) => (
           <section key={p.id} aria-labelledby={`t-${p.id}`} className={`${cardClass} gap-4`}>
             <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <h2 id={`t-${p.id}`} className={`${h2Class} capitalize`}>
+              <h2 id={`t-${p.id}`} className={h2Class}>
                 {p.id} pack
               </h2>
               {p.snapshot.url ? (

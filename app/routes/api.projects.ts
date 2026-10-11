@@ -72,7 +72,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (request.method === 'POST') {
     // share: true keeps an existing link stable; share: false also removes it from the gallery
-    const existing = (db.prepare('SELECT share_id FROM projects WHERE id = ?').get(body.id) as any)?.share_id;
+    const row = db.prepare('SELECT share_id, hidden_at FROM projects WHERE id = ?').get(body.id) as any;
+
+    // an organizer hid it from the gallery: sharing still works, listing doesn't
+    if (body.listed && row?.hidden_at) {
+      return json({ error: 'The organizers removed this project from the gallery. Your share link still works.', hidden: true }, 403);
+    }
+
+    const existing = row?.share_id;
     const shareId = body.share ? existing || newId() + newId() : null;
     const listed = shareId ? (body.listed === undefined ? undefined : body.listed ? 1 : 0) : 0;
 

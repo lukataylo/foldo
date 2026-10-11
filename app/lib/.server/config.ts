@@ -20,6 +20,10 @@ export function setSetting(key: string, value: string) {
   }
 }
 
+// like setSetting, but an empty value is stored, so a blank field overrides the env fallback instead of reverting to it
+export const storeSetting = (key: string, value: string) =>
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, value);
+
 const num = (v: string, d: number) => (Number.isFinite(Number(v)) && v !== '' ? Number(v) : d);
 
 export const perUserLimit = () => num(getSetting('per_user_limit'), num(process.env.DAILY_MESSAGE_LIMIT ?? '', 50));

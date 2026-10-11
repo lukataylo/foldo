@@ -1,16 +1,6 @@
-import { adminEmails, getSetting, setSetting } from './config';
+import { adminEmails } from './config';
 
 // server helpers for the organizer console (routes/admin.tsx)
-// projects an organizer hid from the gallery (listed = 0), so they can be shown again: { projectId: hiddenAt }
-export function hiddenProjects(): Record<string, number> {
-  try {
-    return JSON.parse(getSetting('gallery_hidden') || '{}');
-  } catch {
-    return {};
-  }
-}
-
-export const saveHidden = (m: Record<string, number>) => setSetting('gallery_hidden', Object.keys(m).length ? JSON.stringify(m) : '');
 
 export const isAdminRow = (u: { role: string; email: string }) => u.role === 'admin' || adminEmails().includes(u.email);
 
@@ -18,6 +8,11 @@ export const isAdminRow = (u: { role: string; email: string }) => u.role === 'ad
 export function testNote(e: any) {
   // the AI SDK retries and wraps the last failure
   const err = e?.lastError ?? e;
+
+  if (err?.name === 'TimeoutError' || err?.name === 'AbortError' || err?.cause?.name === 'TimeoutError') {
+    return 'timed out after 15 s';
+  }
+
   const status: number | undefined = err?.statusCode ?? err?.status;
   const message = String(err?.message ?? 'no reply');
   const reason =

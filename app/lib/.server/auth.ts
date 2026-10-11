@@ -167,22 +167,43 @@ export async function requireAdmin(request: Request): Promise<User> {
 
 export const dailyLimit = perUserLimit;
 
-// organizers can grant a team extra messages for today only (admin "Adjust quota"); kept in settings, keyed by day
-const extraKey = (userId: string, day = today()) => `quota_extra:${day}:${userId}`;
-export const extraToday = (userId: string) => Math.max(0, Number(getSetting(extraKey(userId))) || 0);
+/*
+ * Organizer quota tweaks for today only (admin "Adjust quota"), kept in settings keyed by day:
+ * quota_extra = extra messages granted, quota_reset = messages used before "Reset today's count".
+ * The usage table stays truthful (global cap, provider usage and spend still count every message).
+ */
+export const MAX_EXTRA_PER_DAY = 1000;
+const dayKey = (kind: 'extra' | 'reset', userId: string, day = today()) => `quota_${kind}:${day}:${userId}`;
+const dayNum = (kind: 'extra' | 'reset', userId: string) => Math.max(0, Number(getSetting(dayKey(kind, userId))) || 0);
+export const extraToday = (userId: string) => dayNum('extra', userId);
 
-export function addExtraToday(userId: string, n: number) {
+// drop earlier days' tweaks (they no longer apply)
+export function pruneQuotaTweaks() {
   const day = today();
-  db.prepare("DELETE FROM settings WHERE key LIKE 'quota_extra:%' AND key NOT LIKE ?").run(`quota_extra:${day}:%`);
-  setSetting(extraKey(userId, day), String(extraToday(userId) + n));
+  db.prepare("DELETE FROM settings WHERE (key LIKE 'quota_extra:%' OR key LIKE 'quota_reset:%') AND key NOT LIKE ? AND key NOT LIKE ?").run(
+    `quota_extra:${day}:%`,
+    `quota_reset:${day}:%`,
+  );
 }
 
-export const resetUsageToday = (userId: string) => db.prepare('DELETE FROM usage WHERE user_id = ? AND day = ?').run(userId, today());
+export function addExtraToday(userId: string, n: number) {
+  pruneQuotaTweaks();
+  setSetting(dayKey('extra', userId), String(extraToday(userId) + n));
+}
+
+const rawUsedToday = (userId: string) =>
+  ((db.prepare('SELECT n FROM usage WHERE user_id = ? AND day = ?').get(userId, today()) as any)?.n as number) ?? 0;
+
+// messages that count against the team's own limit today (after any reset)
+export const usedToday = (userId: string) => Math.max(0, rawUsedToday(userId) - dayNum('reset', userId));
+
+export function resetUsageToday(userId: string) {
+  pruneQuotaTweaks();
+  setSetting(dayKey('reset', userId), String(rawUsedToday(userId)));
+}
 
 export function remainingQuota(userId: string): number {
-  const row = db.prepare('SELECT n FROM usage WHERE user_id = ? AND day = ?').get(userId, today()) as any;
-
-  return Math.max(0, perUserLimit() + extraToday(userId) - (row?.n ?? 0));
+  return Math.max(0, perUserLimit() + extraToday(userId) - usedToday(userId));
 }
 
 export const globalUsedToday = () =>

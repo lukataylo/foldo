@@ -203,6 +203,7 @@ try {
 
   check(P1, 'GET /api/projects is 401 (not a redirect)', (await anon.req('/api/projects')).status === 401);
   check(P1, 'POST /api/chat is 401', (await anon.chat('hi')).status === 401);
+  check(P1, 'Origin: null POST is refused, not a server error', (await anon.req('/login', { method: 'POST', form: { intent: 'login', email: 'a@b.co', password: 'x' }, headers: { origin: 'null' } })).status === 403);
   check(P1, 'cross-origin POST blocked (CSRF)', (await anon.req('/login', { method: 'POST', form: { intent: 'login', email: 'a@b.co', password: 'x' }, headers: { origin: 'https://evil.example' } })).status === 403);
   check(P1, '6.5MB body rejected before parsing', (await anon.req('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, raw: 'x'.repeat(6_500_000) })).status === 413);
   check(P1, 'register without invite code refused', (await anon.register('Evil', 'e@e.co', 'correct-horse-9', '')).status === 403);
@@ -355,6 +356,12 @@ try {
   check(P6, 'non-admin cannot hide gallery items', (await A.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: idA } })).status === 404);
   await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: idA } });
   check(P6, 'moderation: hiding removes it from the gallery, the share link keeps working', !(await anon.req('/gallery')).text.includes('Alpha app') && (await anon.req(`/p/${shareA.shareId}`)).status === 200);
+  const relist = await A.req('/api/projects', { method: 'POST', body: { id: idA, share: true, listed: true } });
+  check(P6, 'a team cannot re-list a project organizers hid (calm 403)', relist.status === 403 && relist.json().hidden === true && /organizers removed this project/.test(relist.text), relist.status);
+  check(P6, 'still out of the gallery after the re-list attempt', !(await anon.req('/gallery')).text.includes('Alpha app'));
+  const unshared = await A.save('Never shared', 'x');
+  check(P6, 'only shared projects can be hidden', (await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: unshared } })).status === 400);
+  check(P6, 'unknown project id is a 404', (await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: 'nope' } })).status === 404);
   check(P6, 'hidden item is listed for organizers with Show', /Show Alpha app in the gallery again/.test((await ADM.req('/admin')).text));
   await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-show', id: idA } });
   check(P6, 'moderation: Show puts it back in the gallery', (await anon.req('/gallery')).text.includes('Alpha app'));
@@ -399,8 +406,16 @@ try {
   await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: fId, extra: '2' } });
   check(P6B, 'organizer adds 2 messages for today: the team can send again', (await F.chat('x', { provider: 'custom' })).headers.get('x-foldo-remaining') === '1');
   check(P6B, 'non-admin cannot reset a count', (await F.req('/admin', { method: 'POST', form: { intent: 'quota-reset', id: fId } })).status === 404);
+  const globalUsed = () => new DatabaseSync(DB).prepare('SELECT SUM(n) AS n FROM usage').get().n;
+  const usedBefore = globalUsed();
   await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-reset', id: fId } });
+  check(P6B, "reset today's count keeps usage (global cap, spend) truthful", globalUsed() === usedBefore, `${usedBefore} -> ${globalUsed()}`);
   check(P6B, "reset today's count: limit + extra available again", (await F.chat('x', { provider: 'custom' })).headers.get('x-foldo-remaining') === '4');
+  const admId = new DatabaseSync(DB).prepare("SELECT id FROM users WHERE email='admin@t.co'").get().id;
+  check(P6B, 'organizer accounts are refused by team actions', (await Promise.all(['quota-add', 'quota-reset', 'user-reset', 'user-toggle'].map((intent) => ADM.req('/admin', { method: 'POST', form: { intent, id: admId, extra: '5' } })))).every((r) => r.status === 400));
+  check(P6B, 'team actions on unknown ids are 404', (await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: 'nope', extra: '5' } })).status === 404);
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: fId, extra: '998' } });
+  check(P6B, 'extra messages are capped at 1000 a day', (await ADM.req('/admin', { method: 'POST', form: { intent: 'quota-add', id: fId, extra: '1' } })).status === 400);
   // a failed provider test is remembered and shown
   const failedTest = await ADM.req('/admin', { method: 'POST', form: { intent: 'test-provider', id: 'deepseek' } });
   check(P6B, 'failed provider test is reported and shown in the table', failedTest.status === 400 && /Test failed/.test((await ADM.req('/admin')).text), failedTest.status);

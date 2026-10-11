@@ -1,6 +1,6 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node';
 import { Form, useActionData, useLoaderData, useNavigation, useRevalidator, useSubmit } from '@remix-run/react';
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'react-toastify';
 import { generateText } from 'ai';
 import { randomBytes } from 'node:crypto';
@@ -11,6 +11,10 @@ import {
   activeTeams,
   addExtraToday,
   endSessions,
+  extraToday,
+  MAX_EXTRA_PER_DAY,
+  pruneQuotaTweaks,
+  usedToday,
   globalUsedToday,
   requireAdmin,
   resetUsageToday,
@@ -36,6 +40,7 @@ import {
   providerTest,
   setProviderTest,
   setSetting,
+  storeSetting,
   inviteCode,
   maxSegments,
   maxUserStreams,
@@ -44,7 +49,7 @@ import {
   reasoningEffort,
   signupsOpen,
 } from '~/lib/.server/config';
-import { hiddenProjects, isAdminRow, saveHidden, testNote } from '~/lib/.server/admin';
+import { isAdminRow, testNote } from '~/lib/.server/admin';
 import { snapshot } from '~/lib/.server/metrics';
 import { autoBackupsPaused, listBackups, runBackup } from '~/lib/.server/backup';
 import { db, today } from '~/lib/.server/db';
@@ -63,26 +68,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const live = snapshot();
   const perTeam = perUserLimit();
 
-  const extras = new Map(
-    (db.prepare('SELECT key, value FROM settings WHERE key LIKE ?').all(`quota_extra:${day}:%`) as any[]).map((r) => [
-      r.key.slice(`quota_extra:${day}:`.length),
-      Number(r.value) || 0,
-    ]),
-  );
+  pruneQuotaTweaks();
 
   const users = (
     db
       .prepare(
         `SELECT u.id, u.email, u.name, u.role, u.disabled, u.created,
            (SELECT COUNT(*) FROM projects p WHERE p.user_id = u.id) AS projects,
-           (SELECT MAX(p.updated) FROM projects p WHERE p.user_id = u.id) AS lastActive,
-           COALESCE((SELECT n FROM usage x WHERE x.user_id = u.id AND x.day = ?), 0) AS today
+           (SELECT MAX(p.updated) FROM projects p WHERE p.user_id = u.id) AS lastActive
          FROM users u ORDER BY u.created DESC LIMIT 1000`,
       )
-      .all(day) as any[]
+      .all() as any[]
   )
     .filter((u) => !isAdminRow(u))
-    .map(({ role, ...u }) => ({ ...u, limit: perTeam + (extras.get(u.id) ?? 0) }));
+    .map(({ role, ...u }) => ({ ...u, today: usedToday(u.id), limit: perTeam + extraToday(u.id) }));
 
   const providers = listProviders().map((p) => {
     const test = providerTest(p.id);
@@ -106,17 +105,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
     };
   });
 
-  const hidden = hiddenProjects();
-  const hiddenIds = Object.keys(hidden);
+  // what /gallery shows (listed, shared, team not disabled) plus what organizers hid
   const gallery = db
     .prepare(
-      `SELECT p.id, p.description, p.share_id AS shareId, p.template, p.listed, u.name,
+      `SELECT p.id, p.description, p.share_id AS shareId, p.template, p.hidden_at AS hiddenAt, u.name,
+         (p.hidden_at IS NULL) AS listed,
          (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id) AS likes
        FROM projects p JOIN users u ON u.id = p.user_id
-       WHERE (p.listed = 1 AND p.share_id IS NOT NULL) OR (p.listed = 0 AND p.id IN (SELECT value FROM json_each(?)))
-       ORDER BY p.listed DESC, likes DESC, p.updated DESC LIMIT 200`,
+       WHERE u.disabled = 0 AND p.share_id IS NOT NULL AND ((p.listed = 1 AND p.hidden_at IS NULL) OR p.hidden_at IS NOT NULL)
+       ORDER BY listed DESC, likes DESC, p.updated DESC LIMIT 200`,
     )
-    .all(JSON.stringify(hiddenIds)) as any[];
+    .all() as any[];
 
   const backups = listBackups();
 
@@ -158,8 +157,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
     providers,
     settings: {
-      event_name: getSetting('event_name'),
-      event_ends_at: getSetting('event_ends_at'),
+      // effective values, env fallbacks included
+      event_name: getSetting('event_name', process.env.EVENT_NAME ?? ''),
+      event_ends_at: getSetting('event_ends_at', process.env.EVENT_ENDS_AT ?? ''),
       announcement: getSetting('announcement'),
       invite_code: inviteCode(),
       signups_open: signupsOpen(),
@@ -167,7 +167,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       global_limit: globalLimit(),
     },
     users,
-    gallery: gallery.map((g) => ({ ...g, hiddenAt: g.listed ? null : (hidden[g.id] ?? null) })),
+    gallery,
   });
 }
 
@@ -273,14 +273,21 @@ export async function action({ request }: ActionFunctionArgs) {
     const t0 = Date.now();
 
     try {
-      const { text } = await generateText({ model: getModel(p), prompt: 'Reply with the single word: ok', maxTokens: 8 });
+      // no retries and a hard timeout: a silent provider must not hang the console
+      const { text } = await generateText({
+        model: getModel(p),
+        prompt: 'Reply with the single word: ok',
+        maxTokens: 8,
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(15_000),
+      });
       setProviderTest(p.id, { ok: true, note: '', at: Date.now() });
 
       return json({ ok: `${p.label} works (${Date.now() - t0} ms): “${text.trim().slice(0, 40)}”` });
     } catch (e) {
       setProviderTest(p.id, { ok: false, note: testNote(e), at: Date.now() });
 
-      return json({ error: `${p.label} failed: ${(e as Error).message.slice(0, 200)}` }, 400);
+      return json({ error: `${p.label} failed: ${testNote(e)}.` }, 400);
     }
   }
 
@@ -297,10 +304,11 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    setSetting('event_name', s('event_name').slice(0, 80));
-    setSetting('event_ends_at', ends);
+    // stored even when blank, so a cleared field wins over an env fallback ("Leave blank for open sign-up")
+    storeSetting('event_name', s('event_name').slice(0, 80));
+    storeSetting('event_ends_at', ends);
     setSetting('announcement', s('announcement').slice(0, 240));
-    setSetting('invite_code', s('invite_code').slice(0, 60));
+    storeSetting('invite_code', s('invite_code').slice(0, 60));
     setSetting('signups_open', f.get('signups_open') ? '1' : '0');
     setSetting('per_user_limit', s('per_user_limit'));
     setSetting('global_limit', s('global_limit'));
@@ -376,87 +384,76 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: `Backup written: ${runBackup()}` });
   }
 
-  const team = () => db.prepare('SELECT id, email, name FROM users WHERE id = ?').get(s('id')) as { id: string; email: string; name: string } | undefined;
-
-  if (intent === 'user-toggle') {
-    if (s('id') === admin.id) {
-      return json({ error: "You can't disable your own account." }, 400);
-    }
-
-    db.prepare('UPDATE users SET disabled = 1 - disabled WHERE id = ?').run(s('id'));
-    endSessions(s('id'));
-
-    return json({ ok: 'Updated account.' });
-  }
-
-  if (intent === 'user-reset') {
-    const user = team();
-
-    if (!user) {
-      return json({ error: 'User not found' }, 404);
-    }
-
-    const temp = randomBytes(6).toString('base64url');
-    await setPassword(user.id, temp);
-    endSessions(user.id);
-
-    return json({ ok: `Temporary password for ${user.email} (shown once): ${temp}`, temp: { email: user.email, password: temp } });
-  }
-
-  if (intent === 'quota-add') {
-    const user = team();
-    const n = Math.floor(Number(s('extra')));
+  if (['user-toggle', 'user-reset', 'quota-add', 'quota-reset'].includes(intent)) {
+    const user = db.prepare('SELECT id, email, name, role FROM users WHERE id = ?').get(s('id')) as
+      | { id: string; email: string; name: string; role: string }
+      | undefined;
 
     if (!user) {
       return json({ error: 'Team not found' }, 404);
     }
 
-    if (!(n >= 1 && n <= 1000)) {
-      return json({ error: 'Extra messages must be between 1 and 1000.' }, 400);
+    if (isAdminRow(user)) {
+      return json({ error: "Organizer accounts can't be changed here." }, 400);
     }
 
-    addExtraToday(user.id, n);
+    const who = user.name || user.email;
 
-    return json({ ok: `${user.name || user.email} gets ${n} more messages today.` });
-  }
+    if (intent === 'user-toggle') {
+      db.prepare('UPDATE users SET disabled = 1 - disabled WHERE id = ?').run(user.id);
+      endSessions(user.id);
 
-  if (intent === 'quota-reset') {
-    const user = team();
+      return json({ ok: 'Updated account.' });
+    }
 
-    if (!user) {
-      return json({ error: 'Team not found' }, 404);
+    if (intent === 'user-reset') {
+      const temp = randomBytes(6).toString('base64url');
+      await setPassword(user.id, temp);
+      endSessions(user.id);
+
+      return json({ ok: `Temporary password for ${user.email} (shown once): ${temp}`, temp: { email: user.email, password: temp } });
+    }
+
+    if (intent === 'quota-add') {
+      const n = Math.floor(Number(s('extra')));
+
+      if (!(n >= 1 && n <= MAX_EXTRA_PER_DAY)) {
+        return json({ error: `Extra messages must be between 1 and ${MAX_EXTRA_PER_DAY}.` }, 400);
+      }
+
+      if (extraToday(user.id) + n > MAX_EXTRA_PER_DAY) {
+        return json({ error: `${who} already has ${extraToday(user.id)} extra today; the most is ${MAX_EXTRA_PER_DAY} a day.` }, 400);
+      }
+
+      addExtraToday(user.id, n);
+
+      return json({ ok: `${who} gets ${n} more ${n === 1 ? 'message' : 'messages'} today.` });
     }
 
     resetUsageToday(user.id);
 
-    return json({ ok: `Reset today's count for ${user.name || user.email}.` });
+    return json({ ok: `Reset today's count for ${who}.` });
   }
 
   if (intent === 'gallery-hide' || intent === 'gallery-show') {
-    const p = db.prepare('SELECT id, share_id FROM projects WHERE id = ?').get(s('id')) as any;
+    const p = db.prepare('SELECT id, share_id, hidden_at FROM projects WHERE id = ?').get(s('id')) as any;
 
     if (!p) {
       return json({ error: 'Project not found' }, 404);
     }
 
-    const hidden = hiddenProjects();
+    if (!p.share_id) {
+      return json({ error: 'That project is not shared, so it is not in the gallery.' }, 400);
+    }
 
     if (intent === 'gallery-hide') {
-      // off the public gallery only: the team's share link keeps working for judges
-      db.prepare('UPDATE projects SET listed = 0 WHERE id = ?').run(p.id);
-      hidden[p.id] = Date.now();
-      saveHidden(hidden);
+      // off the public gallery only (the team can't list it again); the share link keeps working for judges
+      db.prepare('UPDATE projects SET listed = 0, hidden_at = ? WHERE id = ?').run(Date.now(), p.id);
 
       return json({ ok: 'Hidden from the gallery. The share link still works.' });
     }
 
-    if (!p.share_id) {
-      return json({ error: 'The team stopped sharing this project, so it cannot be shown again.' }, 400);
-    }
-
-    db.prepare('UPDATE projects SET listed = 1 WHERE id = ?').run(p.id);
-    delete hidden[p.id];
-    saveHidden(hidden);
+    db.prepare('UPDATE projects SET listed = 1, hidden_at = NULL WHERE id = ?').run(p.id);
 
     return json({ ok: 'Back in the gallery.' });
   }
@@ -471,7 +468,7 @@ const cx = (...a: (string | false | null | undefined)[]) => a.filter(Boolean).jo
 const n = (v: number) => v.toLocaleString('en-US');
 const srOnly = 'absolute h-px w-px overflow-hidden whitespace-nowrap [clip:rect(0_0_0_0)]';
 const smallInput =
-  'h-[40px] w-full min-w-0 rounded-[8px] border border-solid border-field bg-sheet px-3 font-mono text-[14px] text-ink outline-none transition-[border-color,box-shadow] duration-120 focus:border-ink focus:shadow-[0_0_0_3px_rgba(255,194,26,.45)]';
+  'font-normal h-[40px] w-full min-w-0 rounded-[8px] border border-solid border-field bg-sheet px-3 font-mono text-[14px] text-ink outline-none transition-[border-color,box-shadow] duration-120 focus:border-ink focus:shadow-[0_0_0_3px_rgba(255,194,26,.45)]';
 const monoInput = 'input font-mono text-[14px]';
 
 function SectionHead({ id, title, children, align = 'baseline' }: { id: string; title: ReactNode; children?: ReactNode; align?: 'baseline' | 'center' }) {
@@ -531,8 +528,15 @@ export default function Admin() {
     }
   }, [result]);
 
+  // a nav click wins over the scroll spy while the page scrolls to it
+  const pinned = useRef(0);
+  const navigate = (id: SectionId) => {
+    pinned.current = Date.now();
+    setSection(id);
+  };
+
   useEffect(() => {
-    // highlight the section in view in the left nav
+    // highlight the section in view in the left nav: the lowest one whose top has passed 140px; on a shared row the first
     const root = document.querySelector('[data-testid=foldo-admin-shell]');
 
     if (!root) {
@@ -540,16 +544,20 @@ export default function Admin() {
     }
 
     const onScroll = () => {
-      let current: SectionId = 'live';
-
-      for (const el of root.querySelectorAll<HTMLElement>('main section[id]')) {
-        if (el.getBoundingClientRect().top < 140) {
-          current = el.id as SectionId;
-        }
+      if (Date.now() - pinned.current < 1000) {
+        return;
       }
 
-      if (root.scrollTop + root.clientHeight >= root.scrollHeight - 4) {
-        current = 'backups';
+      let current: SectionId = 'live';
+      let currentTop = -Infinity;
+
+      for (const el of root.querySelectorAll<HTMLElement>('main section[id]')) {
+        const top = el.getBoundingClientRect().top;
+
+        if (top < 140 && top > currentTop + 2) {
+          current = el.id as SectionId;
+          currentTop = top;
+        }
       }
 
       setSection(current);
@@ -582,7 +590,7 @@ export default function Admin() {
   };
 
   return (
-    <AdminShell data={d} now={d.now} page="console" active={section} badges={badges}>
+    <AdminShell data={d} now={d.now} page="console" active={section} badges={badges} onNavigate={navigate}>
       {/* SSR copy of the last action's result (screen readers, scripts); the toast is the visible one */}
       <p role="status" className={srOnly} data-testid="foldo-admin-result">
         {result?.error ?? result?.ok ?? ''}
@@ -628,7 +636,14 @@ function Live({ d }: { d: Data & any }) {
       </SectionHead>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))] border-y border-rule">
         {tiles.map(([k, v, sub], i) => (
-          <div key={k} className={cx('flex flex-col gap-[2px] pb-4 pt-[14px]', i === 0 ? 'pr-4' : 'border-l border-rule2 px-4', i === 3 && 'pr-0')}>
+          <div
+            key={k}
+            className={cx(
+              'flex flex-col gap-[2px] pb-4 pt-[14px]',
+              i === 0 ? 'pr-4' : 'border-l border-rule2 px-4 max-sm:border-l-0 max-sm:border-t max-sm:px-0',
+              i === 3 && 'pr-0',
+            )}
+          >
             <span className="text-[13px] text-pencil">{k}</span>
             <span className="font-serif text-[44px] leading-none tabular-nums">{v}</span>
             <span className="text-[13px] text-ink2">{sub}</span>
@@ -706,7 +721,9 @@ function Emergency({ d, busy }: { d: any; busy: Busy }) {
         )}
       </SectionHead>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(380px,100%),1fr))] gap-x-7 gap-y-5">
-        <Form method="post" preventScrollReset className="flex flex-col gap-[14px]">
+        <Form method="post" preventScrollReset className="relative flex flex-col gap-[14px]">
+          {/* first submit button = what Enter does in the message field: save the text, never pause or resume */}
+          <button name="intent" value="save-pause-message" tabIndex={-1} aria-hidden="true" className={srOnly} />
           <div role="note" className="flex items-start gap-[10px] rounded-[10px] border border-solid border-error-border bg-error-bg px-[14px] py-3 text-[13px]">
             <Icon.Warning className="mt-[2px] flex-none text-error" />
             <p className="m-0 text-ink [text-wrap:pretty]">
@@ -900,13 +917,12 @@ function Models({ d, busy, post }: { d: any; busy: Busy; post: (f: Record<string
           <span id="a-harness-l" className="text-[13px] font-medium">
             Harness
           </span>
-          <div role="radiogroup" aria-labelledby="a-harness-l" className="seg">
+          <div role="group" aria-labelledby="a-harness-l" className="seg">
             {d.controls.harnesses.map((h: any) => (
               <button
                 key={h.id}
                 type="button"
-                role="radio"
-                aria-checked={h.id === d.controls.harness}
+                aria-pressed={h.id === d.controls.harness}
                 title={h.note}
                 className="seg-item h-[30px]"
                 disabled={busy('apply-harness')}
@@ -948,10 +964,10 @@ function Models({ d, busy, post }: { d: any; busy: Busy; post: (f: Record<string
                       <ProviderStatus p={p} now={d.now} />
                     </td>
                     <td className="px-[14px] py-[10px]">
-                      <label className="inline-flex items-center gap-[6px] text-[13px]">
+                      <label className="relative inline-flex items-center gap-[6px] text-[13px]">
                         <input
                           type="radio"
-                          name="a-default"
+                          name={`a-default-${p.id}`}
                           checked={p.isDefault}
                           disabled={!canDefault || busy('set-default')}
                           onChange={() => post({ intent: 'set-default', id: p.id })}
@@ -1170,6 +1186,7 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
   const [page, setPage] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const [extra, setExtra] = useState('20');
+  const [confirmReset, setConfirmReset] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -1183,7 +1200,7 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
   const rows = filtered.slice(at * PAGE, at * PAGE + PAGE);
   const btn = cx('btn-secondary', tableBtn);
   const extraN = Math.floor(Number(extra));
-  const extraOk = extraN >= 1 && extraN <= 1000;
+  const extraOk = extraN >= 1 && extraN <= 200;
 
   return (
     <section id="teams" aria-labelledby="a-teams" className={cx(cardClass, 'gap-4')}>
@@ -1196,7 +1213,7 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
           </>
         }
       >
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex flex-wrap items-center gap-2">
           <label htmlFor="a-team-q" className={srOnly}>
             Search teams
           </label>
@@ -1211,7 +1228,7 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
             }}
             className="h-[36px] w-[240px] max-w-full rounded-[8px] border border-solid border-field bg-sheet px-3 text-[14px] text-ink outline-none placeholder:text-placeholder focus:border-ink focus:shadow-[0_0_0_3px_rgba(255,194,26,.45)]"
           />
-          <div role="tablist" aria-label="Sort teams" className="seg">
+          <div role="group" aria-label="Sort teams" className="seg">
             {(
               [
                 ['active', 'Most active'],
@@ -1221,8 +1238,7 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
               <button
                 key={k}
                 type="button"
-                role="tab"
-                aria-selected={sort === k}
+                aria-pressed={sort === k}
                 className="seg-item h-[30px] px-[10px]"
                 onClick={() => {
                   setSort(k);
@@ -1290,26 +1306,51 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
                     <td className={cx('px-[14px] py-[10px] text-right tabular-nums', off && 'text-pencil')}>{u.projects}</td>
                     <td className={cx('whitespace-nowrap px-[14px] py-[10px]', off ? 'text-pencil' : 'text-ink2')}>{ago(u.lastActive, d.now)}</td>
                     <td className="whitespace-nowrap px-[14px] py-2 text-right">
-                      <Form method="post" preventScrollReset className="inline-flex gap-[6px]">
+                      <Form method="post" preventScrollReset className="inline-flex gap-[6px]" onSubmit={() => setConfirmReset(null)}>
                         <input type="hidden" name="id" value={u.id} />
-                        {off ? (
-                          <button name="intent" value="user-toggle" className={btn} disabled={busy('user-toggle', u.id)}>
-                            Enable
-                          </button>
+                        {confirmReset === u.id ? (
+                          <>
+                            <button type="button" className={cx('btn-ghost', tableBtn)} onClick={() => setConfirmReset(null)}>
+                              Cancel
+                            </button>
+                            <button name="intent" value="user-reset" className={cx('btn-destructive', tableBtn)} disabled={busy('user-reset', u.id)} autoFocus>
+                              Confirm password reset
+                            </button>
+                          </>
                         ) : (
                           <>
                             <button
                               type="button"
-                              className={cx(btn, expanded && '!border-ink !bg-wash')}
-                              aria-expanded={expanded}
-                              aria-controls={`a-adj-${u.id}`}
-                              onClick={() => setOpen(expanded ? null : u.id)}
+                              className={cx(btn, 'w-[32px] px-0')}
+                              onClick={() => setConfirmReset(u.id)}
+                              aria-label={`Reset password for ${u.name || u.email}`}
+                              title="Reset password"
                             >
-                              Adjust quota
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <circle cx="8" cy="15" r="4" />
+                                <path d="M11 12l9-9M17 6l3 3M14 9l2 2" />
+                              </svg>
                             </button>
-                            <button name="intent" value="user-toggle" className={cx('btn-danger', tableBtn)} disabled={busy('user-toggle', u.id)}>
-                              Disable
-                            </button>
+                            {off ? (
+                              <button name="intent" value="user-toggle" className={btn} disabled={busy('user-toggle', u.id)}>
+                                Enable
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className={cx(btn, expanded && '!border-ink !bg-wash')}
+                                  aria-expanded={expanded}
+                                  aria-controls={`a-adj-${u.id}`}
+                                  onClick={() => setOpen(expanded ? null : u.id)}
+                                >
+                                  Adjust quota
+                                </button>
+                                <button name="intent" value="user-toggle" className={cx('btn-danger', tableBtn)} disabled={busy('user-toggle', u.id)}>
+                                  Disable
+                                </button>
+                              </>
+                            )}
                           </>
                         )}
                       </Form>
@@ -1318,7 +1359,7 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
                   {expanded && (
                     <tr id={`a-adj-${u.id}`} className={cx('bg-paper', !last && 'border-b border-rule2')}>
                       <td colSpan={6} className="px-[14px] pb-3">
-                        <Form method="post" preventScrollReset className="flex flex-wrap items-end gap-3 rounded-[10px] border border-solid border-rule bg-sheet px-[14px] py-3">
+                        <Form method="post" preventScrollReset className="flex w-0 min-w-full items-end gap-3 rounded-[10px] border border-solid border-rule bg-sheet px-[14px] py-3">
                           <input type="hidden" name="id" value={u.id} />
                           <div className="flex flex-col gap-1">
                             <label htmlFor={`a-adj-n-${u.id}`} className="text-[13px] font-medium">
@@ -1328,8 +1369,8 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
                               id={`a-adj-n-${u.id}`}
                               name="extra"
                               type="number"
-                              min={1}
-                              max={1000}
+                              min={0}
+                              max={200}
                               value={extra}
                               onChange={(e) => setExtra(e.target.value)}
                               autoFocus
@@ -1342,12 +1383,12 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
                           <button name="intent" value="quota-reset" className="btn-secondary h-[36px] rounded-[7px] px-3 text-[13px]" disabled={busy('quota-reset', u.id)}>
                             Reset today’s count
                           </button>
-                          <span className="flex-[1_1_220px] text-[13px] text-pencil">
+                          <span
+                            className="min-w-0 flex-1 truncate pb-[9px] text-[13px] text-pencil"
+                            title="Resets at midnight UTC; the team sees the new count straight away."
+                          >
                             {extraOk ? `New limit ${u.limit + extraN} today. ` : ''}Resets at midnight UTC; the team sees the new count straight away.
                           </span>
-                          <button name="intent" value="user-reset" className="btn-ghost h-[36px] px-1 text-[13px]" disabled={busy('user-reset', u.id)}>
-                            Reset password
-                          </button>
                         </Form>
                       </td>
                     </tr>
@@ -1429,7 +1470,7 @@ function Gallery({ d, busy }: { d: any; busy: Busy }) {
                   </span>
                 </div>
                 {g.listed ? (
-                  <span className="inline-flex items-center gap-1 text-[13px] tabular-nums text-ink2">
+                  <span className="relative inline-flex items-center gap-1 text-[13px] tabular-nums text-ink2">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z" />
                     </svg>
@@ -1507,7 +1548,7 @@ function Backups({ d, busy, post }: { d: any; busy: Busy; post: (f: Record<strin
             <li key={b.name} className={cx('flex items-center gap-3 px-[14px] py-[10px]', i < d.backups.length - 1 && 'border-b border-rule2')}>
               <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{b.name}</span>
               <span className="whitespace-nowrap text-[13px] tabular-nums text-pencil">{(b.bytes / 1e6).toFixed(1)} MB</span>
-              <a href={`/api/admin-backup?file=${b.name}`} download className="text-[13px] font-medium text-ink underline underline-offset-3">
+              <a href={`/api/admin-backup?file=${b.name}`} download className="relative text-[13px] font-medium text-ink underline underline-offset-3">
                 Download<span className={srOnly}> {b.name}</span>
               </a>
             </li>

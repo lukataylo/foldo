@@ -51,6 +51,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS providers (
     id TEXT PRIMARY KEY, base_url TEXT, model TEXT, key_enc TEXT, enabled INTEGER NOT NULL DEFAULT 1
   );
+  -- gallery thumbnails drawn per team per day (the per-team cap; never part of a team's message quota)
+  CREATE TABLE IF NOT EXISTS preview_usage (day TEXT NOT NULL, user_id TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, user_id));
   CREATE TABLE IF NOT EXISTS likes (project_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (project_id, user_id));
 `);
 
@@ -67,6 +69,11 @@ for (const ddl of [
   'ALTER TABLE projects ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0',
   // set when an organizer hides a project from the gallery (/admin); the team can't list it again
   'ALTER TABLE projects ADD COLUMN hidden_at INTEGER',
+  // AI-drawn gallery thumbnail (sanitized HTML, see previews.ts) and when it was made
+  'ALTER TABLE projects ADD COLUMN preview_html TEXT',
+  'ALTER TABLE projects ADD COLUMN preview_at INTEGER',
+  // failed thumbnail attempts for the current version of the project (3 = stop until the next edit)
+  'ALTER TABLE projects ADD COLUMN preview_fail_n INTEGER NOT NULL DEFAULT 0',
 ]) {
   try {
     db.exec(ddl);

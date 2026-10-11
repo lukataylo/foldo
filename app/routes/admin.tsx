@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { generateText } from 'ai';
 import { randomBytes } from 'node:crypto';
 import { AdminShell, ago, cardClass, h2Class, tableBtn, thClass, type SectionId } from '~/components/admin/AdminShell';
+import { PreviewFrame } from '~/components/landing/ProjectCard';
 import { Icon } from '~/components/ui/icons';
 import {
   activeStreams,
@@ -25,6 +26,8 @@ import {
   CATALOG,
   canStoreKeys,
   costPerMessage,
+  costPerPreview,
+  previewDailyLimit,
   defaultMaxTokens,
   defaultProviderId,
   fallbackProviderId,
@@ -54,6 +57,7 @@ import { snapshot } from '~/lib/.server/metrics';
 import { autoBackupsPaused, listBackups, runBackup } from '~/lib/.server/backup';
 import { db, today } from '~/lib/.server/db';
 import { getModel } from '~/lib/.server/llm/model';
+import { previewsToday, queuePreview } from '~/lib/.server/previews';
 import { iconProps } from '~/lib/templates/client';
 
 export const meta = () => [{ title: 'Organizer console · Foldo' }];
@@ -108,7 +112,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // what /gallery shows (listed, shared, team not disabled) plus what organizers hid
   const gallery = db
     .prepare(
-      `SELECT p.id, p.description, p.share_id AS shareId, p.template, p.hidden_at AS hiddenAt, u.name,
+      `SELECT p.id, p.description, p.share_id AS shareId, p.template, p.hidden_at AS hiddenAt, p.preview_at AS previewAt, u.name,
          (p.hidden_at IS NULL) AS listed,
          (SELECT COUNT(*) FROM likes l WHERE l.project_id = p.id) AS likes
        FROM projects p JOIN users u ON u.id = p.user_id
@@ -141,7 +145,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
       topTeams: db
         .prepare(`SELECT u.name, u.email, x.n FROM usage x JOIN users u ON u.id = x.user_id WHERE x.day = ? ORDER BY x.n DESC LIMIT 5`)
         .all(day),
-      estSpend: globalUsedToday() * costPerMessage(),
+      previewsToday: previewsToday(),
+      previewLimit: previewDailyLimit(),
+      // gallery thumbnails are billed too, at a fraction of a message (see costPerPreview)
+      estSpend: globalUsedToday() * costPerMessage() + previewsToday() * costPerPreview(),
     },
     controls: {
       max_tokens: defaultMaxTokens(),
@@ -454,6 +461,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     db.prepare('UPDATE projects SET listed = 1, hidden_at = NULL WHERE id = ?').run(p.id);
+    queuePreview(p.id);
 
     return json({ ok: 'Back in the gallery.' });
   }
@@ -622,7 +630,7 @@ function Live({ d }: { d: Data & any }) {
 
   const tiles = [
     ['Teams building now', n(s.teamsBuilding), `of ${n(s.teams)} teams signed up`],
-    ['Messages today', n(s.messagesToday), `of ${n(s.globalLimit)} global cap · ${pct}%`],
+    ['Messages today', n(s.messagesToday), `of ${n(s.globalLimit)} global cap · ${pct}% · ${n(s.previewsToday)} of ${n(s.previewLimit)} thumbnails`],
     ['Streams in flight', n(s.streams), `limit ${d.controls.max_user_streams} per login · ${s.requestsPerMinute} req/min`],
     ['Provider error rate', `${(s.errorRate * 100).toFixed(1)}%`, `last 15 min · ${s.failovers} ${s.failovers === 1 ? 'failover' : 'failovers'} since start`],
   ];
@@ -1427,10 +1435,14 @@ function Thumb({ g, templates }: { g: any; templates: { id: string; icon: string
 
   const icon = templates.find((t) => t.id === g.template)?.icon;
 
-  // same artwork as the gallery card (template icon, paper fallback)
+  // same artwork as the gallery card (AI thumbnail, else template icon, paper fallback)
   return (
     <span aria-hidden="true" className="block h-[44px] w-[64px] flex-none overflow-hidden rounded-[6px] border border-solid border-rule bg-paper">
-      <img {...iconProps(icon)} alt="" width={64} height={44} loading="lazy" className="block h-full w-full object-cover" />
+      {g.previewAt && g.shareId ? (
+        <PreviewFrame shareId={g.shareId} version={g.previewAt} scale={0.25} />
+      ) : (
+        <img {...iconProps(icon)} alt="" width={64} height={44} loading="lazy" className="block h-full w-full object-cover" />
+      )}
     </span>
   );
 }

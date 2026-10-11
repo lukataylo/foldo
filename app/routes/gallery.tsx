@@ -17,6 +17,7 @@ export const meta = () => [
 ];
 
 const PAGE = 9;
+const MAX_SHOWN = 60; // keeps the page (and its thumbnail frames) a sane size; filters narrow it further
 
 /*
  * Public showcase of projects their owners chose to list. Anyone can browse; signed-in teams can like.
@@ -27,7 +28,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const params = new URL(request.url).searchParams;
   const sort = params.get('sort') === 'new' ? 'new' : 'top';
   const track = TRACKS.find((t) => t === params.get('track')) ?? null;
-  const shown = Math.min(Math.max(Number(params.get('n')) || PAGE, PAGE), 300);
+  const shown = Math.min(Math.max(Number(params.get('n')) || PAGE, PAGE), MAX_SHOWN);
 
   // the featured card is the top of the "Most liked" list (all tracks), so it costs no extra query
   const withFeatured = sort === 'top' && !track;
@@ -255,7 +256,7 @@ export default function Gallery() {
               <ProjectCard key={item.id} item={item} signedIn={signedIn} now={now} />
             ))}
           </ul>
-          {remaining > 0 && (
+          {remaining > 0 && items.length < MAX_SHOWN && (
             <div className="mt-4 flex justify-center">
               <button
                 type="button"

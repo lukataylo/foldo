@@ -1,16 +1,30 @@
 import { createOpenAI } from '@ai-sdk/openai';
-import { pickKey, reasoningEffortFor, type Provider } from '../config';
+import { harness, pickKey, reasoningEffortFor, type Provider } from '../config';
 
 // Reasoning models (o-series, gpt-5/6...) reject `max_tokens` and sampling params. The pinned SDK only knows "o1-",
 // so for OpenAI-direct we rewrite the request body. Through OpenRouter this is normalised for us.
 const REASONING = /^(o\d|gpt-[5-9])/;
 
-const reasoningFetch: typeof fetch = (url, init) => {
+// does this model think before answering (so a token budget must leave room for it)?
+export const isReasoningModel = (provider: Provider) =>
+  REASONING.test(provider.model.replace(/^openai\//, '')) || provider.model in harness().reasoning;
+
+/*
+ * `effort` (an explicit override, e.g. 'low' for thumbnails) is sent as `reasoning_effort`; without one the API default
+ * applies, as before. 'low' is accepted by every OpenAI reasoning model we use ('minimal' and 'none' are not).
+ */
+const reasoningFetch =
+  (effort?: string | number): typeof fetch =>
+  (url, init) => {
   if (typeof init?.body === 'string') {
     try {
       const body = JSON.parse(init.body);
 
       if (REASONING.test(String(body.model))) {
+        if (typeof effort === 'string' && effort !== 'default') {
+          body.reasoning_effort = effort;
+        }
+
         if ('max_tokens' in body) {
           body.max_completion_tokens = body.max_tokens;
           delete body.max_tokens;
@@ -60,13 +74,14 @@ const withOpenRouterOptions =
 
 // Every provider (OpenAI, OpenRouter, DeepSeek, MiMo, Qwen, Kimi, GLM, MiniMax, custom) speaks the OpenAI chat protocol.
 // Non-OpenAI endpoints get 'compatible' mode so we don't send OpenAI-only fields (e.g. stream_options) they reject.
-export function getModel(provider: Provider) {
+// `effort` overrides the reasoning setting (small side jobs like gallery thumbnails shouldn't think for thousands of tokens)
+export function getModel(provider: Provider, effort?: string | number) {
   return createOpenAI({
     apiKey: pickKey(provider),
     baseURL: provider.baseURL,
     compatibility: provider.id === 'openai' ? 'strict' : 'compatible',
     // OpenRouter uses these to attribute traffic to the app
     headers: provider.id === 'openrouter' ? { 'HTTP-Referer': 'https://foldo.dev', 'X-Title': 'Foldo' } : undefined,
-    fetch: provider.id === 'openai' ? reasoningFetch : provider.baseURL.includes('openrouter.ai') ? withOpenRouterOptions(reasoningEffortFor(provider.model)) : undefined,
+    fetch: provider.id === 'openai' ? reasoningFetch(effort) : provider.baseURL.includes('openrouter.ai') ? withOpenRouterOptions(effort ?? reasoningEffortFor(provider.model)) : undefined,
   })(provider.model);
 }

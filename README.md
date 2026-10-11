@@ -196,23 +196,37 @@ Each gallery card shows a small wireframe of the app's main screen, drawn by the
 - **When.** A thumbnail is queued when a project is listed, when an organizer un-hides it, or when the gallery meets a
   listed project with no thumbnail, or one older than the project's last change (redrawn at most every 10 minutes).
   The job runs in the background, two at a time, with at most 50 queued and one per project. It never blocks a request
-  and never spends a team's messages. It skips work while the event is paused or the global daily cap is reached.
-- **How.** The prompt contains the app's name and up to 6,000 characters of its latest source, ranked so `App.jsx`, the
-  main page, the stylesheet and edited files come first. The default model answers in one non-streaming call: low
-  reasoning, 1,500 tokens, 20-second timeout, no retries. The prompt starts with the marker `FOLDO_PREVIEW`, which the
-  stub LLMs key on.
+  and never spends a team's messages.
+- **Limits.** No thumbnails while the event is paused, once the global daily message cap is reached, past
+  `preview_daily_limit` thumbnails a day (default 300), or past 10 a day for one team (`preview_usage` table). Each
+  call counts in `provider_usage` as `<provider>:preview` (never in a team's `usage`); `/admin` shows thumbnails today
+  next to messages, and adds them to the spend estimate at a tenth of `cost_per_message` each. A cut-off, empty or
+  rejected answer gives up on that version of the project; other failures retry after 10 minutes, at most 3 times in all
+  (`projects.preview_fail_n`, reset by the next edit).
+- **How.** The prompt contains the app's name (JSON-quoted) and up to 6,000 characters of its latest source, ranked so
+  `App.jsx`, the main page, the stylesheet and edited files come first. The source sits in a block marked untrusted,
+  whose delimiter is stripped from the source itself, and the rules say nothing inside it can change them. The default
+  model answers in one non-streaming call: low reasoning (sent as `reasoning_effort` to OpenAI reasoning models), 1,500
+  tokens (2,500 for reasoning models), 45-second timeout, no retries. The prompt starts with the marker
+  `FOLDO_PREVIEW`, which the stub LLMs key on.
 - **Safety model.** The output is HTML written by a model that read user-controlled code, so it is treated as hostile:
-  1. `preview-sanitize.ts` rebuilds the fragment from an allowlist rather than patching it. It keeps layout tags, basic
-     SVG shapes, `class`/`style` and SVG geometry attributes. It drops all text, links, images, scripts, forms and
-     event handlers, plus any CSS that could fetch (`url()`, `@import`, `@font-face`, `image-set()` and similar).
+  1. `preview-sanitize.ts` rebuilds the fragment from an allowlist rather than patching it. It keeps layout tags (no
+     lists), basic SVG shapes inside `<svg>` only, `class`/`style` and SVG geometry attributes. It drops all text,
+     links, images, scripts, forms and event handlers. CSS is judged one declaration at a time (inputs over 8,000
+     characters are dropped): anything with a string, `content`, counters, `attr()`, list markers, `quotes` or
+     `text-overflow` goes, so no words can be drawn, and so does anything that could fetch (`url()`, `@import`,
+     `@font-face`, `image-set()` and similar).
   2. After cleaning, a deny-list scan rejects the whole result if anything suspicious survived. That covers
-     `javascript:`, `data:`, entities, backslashes, comments, `href`/`src`, `on*=` and similar. Over 5,000 characters
-     is also rejected.
-  3. The browser renders it only in `<iframe sandbox="">` (no scripts, no same-origin, no forms) from a `srcDoc` whose
-     CSP is `default-src 'none'; style-src 'unsafe-inline'`, with pointer events off.
+     `javascript:`, `data:`, entities, backslashes, comments, `href`/`src`, `on*=`, CSS-generated text and similar.
+     Over 3,000 characters is also rejected.
+  3. `GET /preview/:shareId` (`routes/preview.$shareId.ts`) serves it as its own document with the header
+     `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'`, plus `nosniff`
+     and the page's COEP. It 404s unless the project is listed and visible. Cards load it as
+     `<iframe sandbox="" src="/preview/<shareId>?v=<preview_at>">` (no scripts, no same-origin, no forms), with
+     pointer events off, so the HTML never enters the gallery page or its hydration data.
 
   It is stored only while the project is still listed and not hidden. Cards without a thumbnail fall back to the
-  template's icon.
+  template's icon. `/gallery?n=` shows at most 60 projects.
 
 ### Auth, sessions and quotas
 
@@ -257,7 +271,7 @@ One page with seven sections:
 
 - **Live**: refreshes every 10 seconds. It shows builds and teams building now, requests per minute, the 15-minute error
   rate, failovers, errors and answers per model, top teams, messages used against the caps, and estimated spend
-  (messages × `cost_per_message`).
+  (messages × `cost_per_message`, plus gallery thumbnails at a tenth of that each).
 - **Emergency**: the pause switch and its message. New builds get a 503 with the message; running builds finish and
   saved work is untouched. Open studios poll `GET /api/status` every 20 seconds while visible, so the paused strip
   appears and clears without a reload. It shows when the pause began, and the messages-left counter stays current.
@@ -347,6 +361,7 @@ queue behind each other.
 | `max_user_streams` | 2 | AI models | Builds at once per login (1 to 10). |
 | `reasoning_effort` | env, then `low` | AI models | Effort for non-harness models. |
 | `cost_per_message` | 0.01 | AI models | USD per message, for the spend estimate. |
+| `preview_daily_limit` | 300 | (no field) | Gallery thumbnails drawn per day across all teams. |
 | `paused`, `pause_message`, `paused_at` | off | Emergency | The pause switch, its message, when it began. |
 | `backups_paused` | off | Backups | Pause automatic backups. |
 | `provider_test:<id>` | none | AI models | Last Test result per provider. |

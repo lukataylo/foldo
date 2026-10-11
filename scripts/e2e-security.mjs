@@ -411,16 +411,30 @@ try {
   // ============ Persona 7: account owner ============
   const D = new Client();
   const P7 = 'account owner';
+  const SETTINGS_DATA = '/settings?_data=routes%2Fsettings'; // what the page's fetchers call: JSON with the field in error
   await D.register('Team Delta', 'd@t.co');
+  const firstRun = (await D.req('/')).text;
+  check(P7, 'a team with no projects gets the first-run home', firstRun.includes('foldo-home-first-run') && firstRun.includes('<em>Delta.</em>'));
+  check(P7, 'an empty project list shows the empty state', (await D.req('/projects')).text.includes('No projects'));
   const idD = await D.save('Delta app');
+  const returning = (await D.req('/')).text;
+  check(P7, 'a returning team sees its recent project on home', returning.includes('Continue where you left off') && returning.includes(`/chat/${idD}`));
   const sD = (await D.req('/api/projects', { method: 'POST', body: { id: idD, share: true } })).json().shareId;
-  check(P7, 'wrong current password cannot change password', (await D.req('/settings', { method: 'POST', form: { intent: 'password', current: 'wrong-wrong', next: 'brand-new-pw-1' } })).status === 400);
-  const old = D.cookie;
+  const wrongPw = await D.req(SETTINGS_DATA, { method: 'POST', form: { intent: 'password', current: 'wrong-wrong', next: 'brand-new-pw-1' } });
+  check(P7, 'wrong current password cannot change password (error on the field)', wrongPw.status === 400 && wrongPw.json().field === 'current');
+  const shortPw = await D.req(SETTINGS_DATA, { method: 'POST', form: { intent: 'password', current: 'correct-horse-9', next: 'short' } });
+  check(P7, 'a short new password is refused (error on the field)', shortPw.status === 400 && shortPw.json().field === 'next');
+  const badName = await D.req(SETTINGS_DATA, { method: 'POST', form: { intent: 'profile', name: ' x ' } });
+  check(P7, 'a one-letter team name is refused', badName.status === 400 && badName.json().field === 'name');
+  const renamed = await D.req('/settings', { method: 'POST', form: { intent: 'profile', name: '  Team   Delta Prime ' } });
+  check(P7, 'profile save updates the team name', renamed.status === 200 && (await D.req('/settings')).text.includes('Team Delta Prime'));
+  const other = new Client();
+  await other.login('d@t.co');
   const chg = await D.req('/settings', { method: 'POST', form: { intent: 'password', current: 'correct-horse-9', next: 'brand-new-pw-1' } });
-  const stale = new Client();
-  stale.cookie = old;
-  check(P7, 'password change signs out every session', chg.status === 302 && (await stale.req('/api/projects')).status === 401);
+  check(P7, 'password change signs out every other session', chg.status === 200 && (await other.req('/api/projects')).status === 401, chg.status);
+  check(P7, 'password change keeps this browser signed in', (await D.req('/api/projects')).status === 200);
   check(P7, 'new password works', (await D.login('d@t.co', 'brand-new-pw-1')).status === 302);
+  check(P7, 'account deletion needs the right password', (await D.req('/settings', { method: 'POST', form: { intent: 'delete', current: 'nope-nope-1' } })).status === 400);
   await D.req('/settings', { method: 'POST', form: { intent: 'delete', current: 'brand-new-pw-1' } });
   check(P7, 'account deletion removes projects and share links', (await anon.req(`/p/${sD}`)).status === 404 && (await new Client().login('d@t.co', 'brand-new-pw-1')).status === 401);
 

@@ -33,7 +33,9 @@ The mark is `/foldo-mark.svg` (same geometry as the mockups' mark; favicons are 
 | `invite-invalid.webp` | 1:1 | deerstalker, blank ticket | Illustration |
 | `offline.webp` | 1:1 | cup-and-string phone | Illustration, Offline |
 | `paused.webp` | 3:2 yellow | asleep under a yellow blanket | Admin, Build-Paused, Illustration |
-| `privacy.webp` | 3:2 1536x1024, Paper bg | locking a padlock on a paper box | /privacy |
+| `pricing.webp` | 3:2 1536x1024, near-white bg | offering a gift box in front of a striped market stall | /pricing |
+| `privacy-policy.webp` | 3:2 1536x1024, near-white bg | resting on folders under a yellow umbrella | /privacy |
+| `privacy.webp` | 3:2 1536x1024, Paper bg | locking a padlock on a paper box | earlier /privacy notice (unused) |
 | `quota-empty.webp` | 1:1 | licked-clean bowl (messages used up) | Build-Limits, Illustration |
 | `remix.webp` | 3:2 paper | two paper-phone copies holding hands | Illustration, Shared-Remix |
 | `server-error.webp` | 1:1 | tangled in yellow tape (500) | Illustration, ServerError |
@@ -50,6 +52,7 @@ The mark is `/foldo-mark.svg` (same geometry as the mockups' mark; favicons are 
 | `step-share.webp` | 1:1 | paper plane balanced on nose | Illustration, Landing-Mobile, Landing |
 | `stop-sharing-cut.webp` | transparent cutout | stop-sharing for tinted surfaces | Illustration, Share-Stop |
 | `stop-sharing.webp` | 1:1 | pulling the shutter down on a stall | Illustration |
+| `terms.webp` | 3:2 1536x1024, near-white bg | stamping a paper scroll | /terms |
 | `track-access.webp` | 4:3 | unlocking the bank with a key | Home-FirstRun, Home, Illustration, Landing-Mobile, Landing |
 | `track-fraud.webp` | 4:3 | detective with magnifier | Home-FirstRun, Home, Illustration, Landing-Mobile, Landing, Shared-Viewer |
 | `track-payments.webp` | 4:3 | shopkeeper with coin | Build-Template, Components, Home-FirstRun, Home, Illustration, Landing-Mobile, Landing |

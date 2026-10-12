@@ -173,7 +173,7 @@ export function OriginalConversation({
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className="flex w-full items-center gap-3 rounded-[12px] border border-rule bg-sheet px-[14px] py-3 text-left font-sans leading-normal text-ink"
+        className="flex w-full items-center gap-3 rounded-[12px] border border-rule bg-sheet px-[14px] py-3 text-left font-sans leading-[normal] text-ink"
       >
         <span className="inline-flex h-[32px] w-[32px] flex-none items-center justify-center rounded-[8px] bg-wash text-ink2">
           <Icon.Chat />

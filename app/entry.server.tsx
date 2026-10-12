@@ -32,7 +32,14 @@ export default async function handleRequest(
 
   const body = new ReadableStream({
     start(controller) {
-      const head = renderHeadToString({ request, remixContext, Head });
+      /*
+       * When a loader threw (a dead share link, a server error), remix-island renders Remix's fallback document into the
+       * head, and the browser moves its <main> into the body as a 64px gap above the error page. The error boundary
+       * brings its own <Links />, so a plain head is enough there.
+       */
+      const head = remixContext.staticHandlerContext.errors
+        ? `<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><meta name="theme-color" content="#FBF8F1"/><title>${responseStatusCode === 404 ? 'Page not found' : 'Something went wrong'} · Foldo</title>`
+        : renderHeadToString({ request, remixContext, Head });
 
       controller.enqueue(
         new Uint8Array(

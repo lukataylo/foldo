@@ -35,6 +35,8 @@ const PROMPTS = [
 
 const pct = (arr, p) => (arr.length ? arr.slice().sort((a, b) => a - b)[Math.min(arr.length - 1, Math.floor(arr.length * p))] : 0);
 const results = [];
+// team names are unique, so a second run against the same database needs new ones
+const RUN = Date.now().toString(36);
 
 async function user(i) {
   const r = { i, ok: false, status: 0, ttfb: 0, total: 0, bytes: 0, model: '', artifact: false, step: '', ttfbs: [], totals: [] };
@@ -63,7 +65,7 @@ async function user(i) {
       const [email, password] = ACCOUNTS[i].split(':');
       res = await call('/login', form({ intent: 'login', email, password }));
     } else {
-      res = await call('/login', form({ intent: 'register', name: `Load Team ${i}`, email: `load${Date.now()}-${i}@example.com`, password: 'load-test-pw-1', invite: INVITE }));
+      res = await call('/login', form({ intent: 'register', name: `Load Team ${RUN}-${i}`, email: `load${RUN}-${i}@example.com`, password: 'load-test-pw-1', invite: INVITE }));
     }
 
     if (res.status !== 302 || !cookie) {

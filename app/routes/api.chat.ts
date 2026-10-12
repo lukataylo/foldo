@@ -77,7 +77,7 @@ async function chatAction({ request }: ActionFunctionArgs) {
       .filter((m) => m?.role === 'assistant' && typeof m.content === 'string')
       .flatMap((m) => [...m.content.matchAll(/<boltAction[^>]*filePath="([^"]+)"/g)].map((match) => match[1].replace(/^\.?\//, ''))),
   );
-  const guide = body.template ? templateGuide(body.template, rewritten) : undefined;
+  const guide = body.template ? templateGuide(body.template, rewritten, ev) : undefined;
   const system = guide ? getSystemPrompt() + guide + TEMPLATE_REMINDER : undefined;
   const tooLong = 'This chat has got very long. Click New project and paste your last prompt to keep going.';
 

@@ -89,8 +89,9 @@ const exportsOnly = (code: string) =>
 /**
  * @param rewritten files the model already wrote in this chat; its own latest version (in the conversation) is the current
  * one, so the template original would only mislead it
+ * @param event event mode (config.ts `eventMode()`): only then is the build framed as a judged hackathon entry
  */
-export function templateGuide(id: string, rewritten: Set<string> = new Set()): string | undefined {
+export function templateGuide(id: string, rewritten: Set<string> = new Set(), event = false): string | undefined {
   const meta = getTemplateMeta(id);
   const files = getTemplateFiles(id);
 
@@ -133,7 +134,7 @@ Rules for this project:
 - Keep the app working after every change; prefer extending existing components over rewriting everything.
 - Import only names that exist: for the UI kit, only the exports listed above; for packages, only components you are sure the installed version exports. Every file you import must already exist or be in this reply.
 - When you change a file, start from its current contents above: keep its existing imports, providers (e.g. the Toaster), pages and features unless the user asked to remove them.
-- This is a hackathon judged on: real-world impact, originality, execution and craft, and trust and responsibility. So: polished and accessible UI, mobile-friendly, clear empty/loading/error states, plain language for beginners, visible privacy and fairness notes where money or personal data appears, and an explicit "demo only" notice.
+- ${event ? 'This is a hackathon judged on' : 'Aim for'}: real-world impact, originality, execution and craft, and trust and responsibility. So: polished and accessible UI, mobile-friendly, clear empty/loading/error states, plain language for beginners, visible privacy and fairness notes where money or personal data appears, and an explicit "demo only" notice.
 - Use fake, seeded data only. Never ask for real card numbers, passwords or API keys, and never hardcode secrets.
 </starter_template>`;
 }

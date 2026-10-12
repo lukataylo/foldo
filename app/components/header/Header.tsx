@@ -19,7 +19,7 @@ interface HeaderData {
   limit?: number;
   shared?: boolean;
   description?: string;
-  sharedInfo?: { owner: string };
+  sharedInfo?: { owner: string; shareId?: string };
 }
 
 /*
@@ -38,6 +38,9 @@ export function Header() {
   const viewing = Boolean(data.shared) && !id;
 
   if (!email) {
+    // a visitor on a share link comes back to it after signing in or up
+    const next = data.sharedInfo?.shareId ? `next=${encodeURIComponent(`/p/${data.sharedInfo.shareId}`)}` : '';
+
     return (
       <header className="flex h-[52px] flex-none items-center justify-between gap-3 border-b border-rule pl-4 pr-3 md:h-[56px] md:pl-[18px] md:pr-4">
         <div className="flex min-w-0 items-center gap-3">
@@ -50,12 +53,12 @@ export function Header() {
         </div>
         <nav aria-label="Account" className="flex items-center gap-1 md:gap-2">
           <a
-            href="/login"
+            href={next ? `/login?${next}` : '/login'}
             className="inline-flex h-[36px] items-center rounded-[8px] px-[10px] text-[14px] font-medium text-ink2 no-underline hover:text-ink md:h-[34px] md:px-3 md:text-[13px]"
           >
             Sign in
           </a>
-          <a href="/login?mode=register" className="btn-secondary btn-sm h-[36px] rounded-[8px] px-3 text-[14px] md:h-[34px] md:px-[14px] md:text-[13px]">
+          <a href={`/login?mode=register${next ? `&${next}` : ''}`} className="btn-secondary btn-sm h-[36px] rounded-[8px] px-3 text-[14px] md:h-[34px] md:px-[14px] md:text-[13px]">
             Sign up free
           </a>
         </nav>

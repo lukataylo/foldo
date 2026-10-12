@@ -22,7 +22,7 @@ export interface StudioData extends ShellData {
   url?: string;
   paused?: { paused: boolean; message: string; since?: number | null };
   messages?: unknown[];
-  sharedInfo?: { mine?: boolean };
+  sharedInfo?: { mine?: boolean; shareId?: string };
 }
 
 const PAUSE_COPY = 'The organizers have paused new builds for a moment. Hang tight.';
@@ -56,7 +56,7 @@ export function Studio() {
           <AppHeader data={data} active="build" />
         </>
       )}
-      {data.shared ? <SharedBanner signedIn={Boolean(data.email)} url={data.url} mine={data.sharedInfo?.mine} /> : null}
+      {data.shared ? <SharedBanner signedIn={Boolean(data.email)} url={data.url} mine={data.sharedInfo?.mine} shareId={data.sharedInfo?.shareId} /> : null}
       {pause?.paused ? <PausedStrip message={pause.message} since={pause.since} /> : null}
       {started ? <ClientOnly>{() => <OfflineStrip />}</ClientOnly> : null}
       {started ? <ClientOnly>{() => <GoneStrip />}</ClientOnly> : null}
@@ -168,7 +168,7 @@ function GoneStrip() {
 }
 
 // Shared-Viewer (signed out: Ink strip) and Shared-Remix (signed in: Wash strip); gone once the visitor has remixed it
-function SharedBanner({ signedIn, url, mine }: { signedIn: boolean; url?: string; mine?: boolean }) {
+function SharedBanner({ signedIn, url, mine, shareId }: { signedIn: boolean; url?: string; mine?: boolean; shareId?: string }) {
   const remixed = useStore(chatId);
 
   if (remixed) {
@@ -231,7 +231,7 @@ function SharedBanner({ signedIn, url, mine }: { signedIn: boolean; url?: string
         <SIcon.Link size={14} /> Copy link
       </button>
       <a
-        href="/login?mode=register"
+        href={`/login?mode=register&next=${encodeURIComponent(`/p/${shareId ?? ''}`)}`}
         className="inline-flex h-[30px] flex-none items-center gap-[6px] rounded-[6px] border border-ink bg-highlighter px-3 text-[13px] font-semibold text-ink no-underline hover:bg-[#EFB619] lt-md:hidden"
       >
         Sign up to remix <Icon.ArrowRight size={14} />

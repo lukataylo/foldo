@@ -97,7 +97,7 @@ function LikeButton({ info, large }: { info: SharedInfo; large?: boolean }) {
 
   const toggle = async () => {
     if (!email) {
-      location.href = '/login';
+      location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
       return;
     }
 

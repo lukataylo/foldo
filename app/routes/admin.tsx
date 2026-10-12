@@ -66,7 +66,8 @@ import { iconProps } from '~/lib/templates/client';
 
 export const meta = () => [{ title: 'Organizer console · Foldo' }];
 
-const DEFAULT_PAUSE = 'The organizers have paused new builds for a moment. Hang tight.';
+// same default as the studio's (Studio.tsx): the organizers only while event mode is on
+const defaultPause = (eventMode: boolean) => `${eventMode ? 'The organizers have' : 'Foldo has'} paused new builds for a moment. Hang tight.`;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const admin = await requireAdmin(request);
@@ -736,7 +737,8 @@ function Live({ d }: { d: Data & any }) {
 
 function Emergency({ d, busy }: { d: any; busy: Busy }) {
   const paused: boolean = d.controls.paused;
-  const [message, setMessage] = useState<string>(d.controls.message || DEFAULT_PAUSE);
+  const pauseFallback = defaultPause(Boolean(d.settings.event_mode));
+  const [message, setMessage] = useState<string>(d.controls.message || pauseFallback);
   const submit = useSubmit();
   const toggle = () => submit({ intent: 'save-pause', paused: paused ? '' : 'on', pause_message: message }, { method: 'post', preventScrollReset: true });
 
@@ -820,7 +822,7 @@ function Emergency({ d, busy }: { d: any; busy: Busy }) {
           <div className="flex items-start gap-[10px] rounded-[10px] border border-solid border-ink bg-sheet px-3 py-[10px] text-[13px]">
             <Icon.Pause className="mt-[2px] flex-none" />
             <p className="m-0">
-              <strong className="font-semibold">Paused.</strong> {message.trim() || DEFAULT_PAUSE}
+              <strong className="font-semibold">Paused.</strong> {message.trim() || pauseFallback}
             </p>
           </div>
         </figure>
@@ -1140,7 +1142,14 @@ function Models({ d, busy, post }: { d: any; busy: Busy; post: (f: Record<string
 function EventSettings({ d, busy }: { d: any; busy: Busy }) {
   const st = d.settings;
   const [signups, setSignups] = useState<boolean>(st.signups_open);
-  const [eventOn, setEventOn] = useState<boolean>(st.event_mode);
+  /*
+   * null = untouched: the switch shows the live setting (the page revalidates every 10 s) and the form leaves event_mode
+   * out, so saving the announcement from a console opened before another organizer flipped the mode never flips it back
+   */
+  const [eventPick, setEventPick] = useState<boolean | null>(null);
+  const eventOn: boolean = eventPick ?? st.event_mode;
+
+  useEffect(() => setEventPick(null), [st.event_mode]);
 
   return (
     <section id="event" aria-labelledby="a-event" className={cx(cardClass, 'gap-4')}>
@@ -1152,12 +1161,12 @@ function EventSettings({ d, busy }: { d: any; busy: Busy }) {
         preventScrollReset
         onReset={() => {
           setSignups(st.signups_open);
-          setEventOn(st.event_mode);
+          setEventPick(null);
         }}
         className="grid grid-cols-[repeat(auto-fit,minmax(min(260px,100%),1fr))] gap-x-5 gap-y-4"
       >
         <input type="hidden" name="signups_open" value={signups ? 'on' : ''} />
-        <input type="hidden" name="event_mode" value={eventOn ? 'on' : ''} />
+        {eventPick !== null && <input type="hidden" name="event_mode" value={eventPick ? 'on' : ''} />}
         <div className="col-span-full flex items-center justify-between gap-4 rounded-[10px] border border-rule2 bg-paper px-4 py-3" data-testid="foldo-admin-event-mode">
           <div className="flex min-w-0 flex-col gap-[2px]">
             <span id="a-evmode-l" className="input-label">
@@ -1165,7 +1174,7 @@ function EventSettings({ d, busy }: { d: any; busy: Busy }) {
             </span>
             <span className="input-help">On shows the event bar, tracks, team wording and the code of conduct. Off is the everyday platform.</span>
           </div>
-          <Switch on={eventOn} label="a-evmode-l" onClick={() => setEventOn(!eventOn)} />
+          <Switch on={eventOn} label="a-evmode-l" onClick={() => setEventPick(!eventOn)} />
         </div>
         <div className="flex flex-col gap-[6px]">
           <label htmlFor="a-ev-name" className="input-label">

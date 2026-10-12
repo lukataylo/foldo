@@ -10,7 +10,7 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: 'slow down' }, 429);
   }
 
-  const body = (await request.json().catch(() => ({}))) as { shareId?: string; like?: boolean };
+  const body = ((await request.json().catch(() => null)) ?? {}) as { shareId?: string; like?: boolean };
   const row = db
     .prepare('SELECT id, user_id FROM projects WHERE share_id = ? AND listed = 1')
     .get(String(body.shareId ?? '')) as any;

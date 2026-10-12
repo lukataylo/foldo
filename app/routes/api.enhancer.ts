@@ -19,7 +19,7 @@ async function enhancerAction({ request }: ActionFunctionArgs) {
     return new Response('Please sign in again to keep building. Your work is saved.', { status: 401 });
   }
 
-  const body = (await request.json().catch(() => ({}))) as { message?: unknown };
+  const body = ((await request.json().catch(() => null)) ?? {}) as { message?: unknown };
   const message = typeof body.message === 'string' ? body.message.slice(0, 4000) : '';
   const provider = resolveProvider();
 
@@ -57,6 +57,8 @@ async function enhancerAction({ request }: ActionFunctionArgs) {
           .split('\n')
           .filter((line) => line !== '')
           .map(parseStreamPart)
+          // only the improved text: an error part (model down mid-stream) must never land in the team's prompt box
+          .filter((part) => part.type === 'text')
           .map((part) => part.value)
           .join('');
 

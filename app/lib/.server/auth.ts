@@ -19,6 +19,17 @@ const scryptAsync = promisify(scrypt) as (pw: string, salt: Buffer, len: number)
 
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 
+// the session token from the cookie; a malformed or foreign cookie value counts as signed out, never as a 500
+async function readToken(request: Request): Promise<string | undefined> {
+  try {
+    const token = await sessionCookie.parse(request.headers.get('Cookie'));
+
+    return typeof token === 'string' && token ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface User {
   id: string;
   email: string;
@@ -92,7 +103,7 @@ export const endSessions = (userId: string) => db.prepare('DELETE FROM sessions 
 
 // after a password change: sign out everywhere except the browser that made the change
 export async function endOtherSessions(request: Request, userId: string) {
-  const token = await sessionCookie.parse(request.headers.get('Cookie'));
+  const token = await readToken(request);
   db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?').run(userId, token ? hash(token) : '');
 }
 
@@ -110,7 +121,7 @@ export async function createSession(userId: string) {
 }
 
 export async function destroySession(request: Request) {
-  const token = await sessionCookie.parse(request.headers.get('Cookie'));
+  const token = await readToken(request);
 
   if (token) {
     db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hash(token));
@@ -120,7 +131,7 @@ export async function destroySession(request: Request) {
 }
 
 export async function getUser(request: Request): Promise<User | undefined> {
-  const token = await sessionCookie.parse(request.headers.get('Cookie'));
+  const token = await readToken(request);
 
   if (!token) {
     return undefined;

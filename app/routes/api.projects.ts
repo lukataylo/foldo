@@ -21,7 +21,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 // PUT {id?, description, messages} = save · POST {id, share} = (un)share · POST {id, rename} = rename · DELETE {id}
 export async function action({ request }: ActionFunctionArgs) {
   const user = await requireApiUser(request);
-  const body = (await request.json()) as any;
+  const body = (await request.json().catch(() => null)) as any;
+
+  if (!body || typeof body !== 'object') {
+    return json({ error: 'Bad request' }, 400);
+  }
   const owned = body.id && db.prepare('SELECT id FROM projects WHERE id = ? AND user_id = ?').get(body.id, user.id);
 
   if (request.method === 'PUT') {

@@ -62,7 +62,7 @@ async function chatAction({ request }: ActionFunctionArgs) {
   let body: { messages?: Messages; provider?: string; template?: string };
 
   try {
-    body = (await request.json()) as typeof body;
+    body = ((await request.json()) ?? {}) as typeof body;
   } catch {
     return text('Something went wrong sending that. Please press send again.', 400);
   }

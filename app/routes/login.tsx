@@ -32,7 +32,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const form = await request.formData();
+  const form = await request.formData().catch(() => null);
+
+  if (!form) {
+    return json({ error: 'Something went wrong. Please try again.' }, 400);
+  }
   const intent = form.get('intent');
 
   if (intent === 'logout') {

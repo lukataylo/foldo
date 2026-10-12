@@ -237,10 +237,24 @@ try {
     check(P1, `odd path ${p.slice(0, 18)} is a clean 404/302`, [404, 302].includes(r.status), String(r.status));
   }
 
+  // a stale, foreign or garbled session cookie is just "signed out", never a server error
+  for (const c of ['foldo_session=%', 'foldo_session=abc', 'foldo_session=eyJ', 'foldo_session=MTIz']) {
+    const r = await anon.req('/projects', { headers: { cookie: c } });
+    check(P1, `garbled cookie ${c.slice(14)} -> sign-in redirect`, r.status === 302, String(r.status));
+  }
+  check(P1, 'garbled cookie on the landing page still renders', (await anon.req('/', { headers: { cookie: 'foldo_session=abc' } })).status === 200);
+  const garbled = await new Client().req('/login', { method: 'POST', headers: { 'content-type': 'multipart/form-data; boundary=x' }, raw: 'garbage' });
+  check(P1, 'malformed sign-in body is a 400', garbled.status === 400, `${garbled.status} ${garbled.text.slice(0, 80)}`);
+
   // ============ Persona 2: team A (legit) ============
   const A = new Client();
   const P2 = 'team A';
   check(P2, 'registers with invite', (await A.register('Team Alpha', 'a@t.co')).status === 302 && Boolean(A.cookie));
+  for (const raw of ['{bad', 'null', '5']) {
+    const r = await A.req('/api/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, raw });
+    check(P2, `projects API answers a ${raw} body with a 400`, r.status === 400, String(r.status));
+  }
+  check(P2, 'like API ignores a null body', (await A.req('/api/like', { method: 'POST', headers: { 'content-type': 'application/json' }, raw: 'null' })).status === 404);
 
   // after signing in, ?next= only ever leads back into Foldo
   for (const [next, want] of [['/projects', '/projects'], ['//evil.example/x', '/'], ['/\\evil.example', '/'], ['https://evil.example', '/']]) {
@@ -354,6 +368,8 @@ try {
   const bigPage = await anon.req('/gallery?n=5000');
   check(PV, '/gallery?n= is capped (a huge n still renders a normal page)', bigPage.status === 200 && (bigPage.text.match(/<iframe/g) ?? []).length <= 61);
   const sharePage = await anon.req(`/p/${shareA.shareId}`);
+  const visitorPage = await new Client().req(`/p/${shareA.shareId}`);
+  check(P2, 'share page sign-up and sign-in return to the project', visitorPage.text.includes(`/login?mode=register&amp;next=%2Fp%2F${shareA.shareId}`) && visitorPage.text.includes(`/login?next=%2Fp%2F${shareA.shareId}`));
   check(P2, 'public share page loads without login', sharePage.status === 200);
   check(P2, 'share page names the team that built it, and leaks no owner id', sharePage.text.includes('Team Alpha') && !/"owner_id"|"user_id"/.test(sharePage.text));
   check(P2, 'share page has absolute link-preview tags', sharePage.text.includes(`property="og:image" content="${BASE}/og.jpg"`) && sharePage.text.includes(`property="og:url" content="${BASE}/p/${shareA.shareId}"`) && sharePage.text.includes('property="og:title" content="Alpha app"'));

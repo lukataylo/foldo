@@ -1,3 +1,4 @@
+import { useLoaderData } from '@remix-run/react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Logo } from '~/components/brand/Logo';
 import { Icon } from '~/components/ui/icons';
@@ -90,7 +91,7 @@ export function NavMenu({
 }
 
 // phone header for signed-out pages (Landing-Mobile board): mark, Sign in, menu with Gallery / Sign in / Get started
-export function MobileNav({ active, tone = 'yellow' }: { active?: 'gallery'; tone?: 'yellow' | 'paper' }) {
+export function MobileNav({ active, tone = 'yellow' }: { active?: 'gallery' | 'pricing'; tone?: 'yellow' | 'paper' }) {
   return (
     <header className="flex h-[64px] items-center justify-between gap-3 px-4">
       <Logo size={28} textSize={26} className="text-ink" />
@@ -103,6 +104,7 @@ export function MobileNav({ active, tone = 'yellow' }: { active?: 'gallery'; ton
           menuId="mobile-menu"
           links={[
             { href: '/gallery', label: 'Gallery', current: active === 'gallery' },
+            { href: '/pricing', label: 'Pricing', current: active === 'pricing' },
             { href: '/login', label: 'Sign in' },
           ]}
         >
@@ -118,6 +120,8 @@ export function MobileNav({ active, tone = 'yellow' }: { active?: 'gallery'; ton
 
 // marketing footer: Landing (stacked, 28 mark) and Gallery (one row, 24 mark) boards
 export function SiteFooter({ compact = false }: { compact?: boolean }) {
+  // every page with this footer spreads shell() into its loader
+  const { eventMode, contactEmail } = (useLoaderData() ?? {}) as { eventMode?: boolean; contactEmail?: string };
   const year = new Date().getFullYear();
   const link =
     'min-h-[44px] items-center rounded-[6px] px-3 text-[15px] text-ink2 no-underline outline-none hover:text-ink hover:underline focus-visible:shadow-[0_0_0_2px_#16140F]';
@@ -151,23 +155,30 @@ export function SiteFooter({ compact = false }: { compact?: boolean }) {
           )}
         </div>
         <span className="text-[13px] text-pencil md:hidden">{copy}</span>
-        {/* phones get only the two policy links; the rest are in the header menu */}
+        {/* Pricing · Gallery · Privacy · Terms (+ Code of conduct while an event runs) · the contact address when set */}
         <nav aria-label="Footer" className="-ml-3 flex w-full flex-wrap gap-x-1 md:ml-0 md:w-auto">
-          <a href="/gallery" className={`${link} hidden md:inline-flex`}>
+          <a href="/pricing" className={`${link} inline-flex`}>
+            Pricing
+          </a>
+          <a href="/gallery" className={`${link} inline-flex`}>
             Gallery
-          </a>
-          <a href="/login" className={`${link} hidden md:inline-flex`}>
-            Sign in
-          </a>
-          <a href="/login?mode=register" className={`${link} hidden md:inline-flex`}>
-            Get started
-          </a>
-          <a href="/conduct" className={`${link} inline-flex`}>
-            Code of conduct
           </a>
           <a href="/privacy" className={`${link} inline-flex`}>
             Privacy
           </a>
+          <a href="/terms" className={`${link} inline-flex`}>
+            Terms
+          </a>
+          {eventMode && (
+            <a href="/conduct" className={`${link} inline-flex`}>
+              Code of conduct
+            </a>
+          )}
+          {contactEmail && (
+            <a href={`mailto:${contactEmail}`} className={`${link} inline-flex`}>
+              {contactEmail}
+            </a>
+          )}
         </nav>
       </div>
     </footer>

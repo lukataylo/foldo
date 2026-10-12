@@ -15,9 +15,11 @@ export interface ShellData {
   remaining?: number;
   limit?: number;
   event?: EventInfo | null;
+  eventMode?: boolean;
+  contactEmail?: string;
 }
 
-export type ShellSection = 'build' | 'projects' | 'gallery' | 'settings' | 'admin';
+export type ShellSection = 'build' | 'projects' | 'gallery' | 'settings' | 'admin' | 'pricing';
 
 const APP_NAV = [
   { id: 'build', href: '/', label: 'Build' },
@@ -66,8 +68,15 @@ export function AppHeader({ data, active }: { data: ShellData; active?: ShellSec
   );
 }
 
+export type MarketingSection = 'gallery' | 'pricing';
+
+const MARKETING_NAV = [
+  { id: 'gallery', href: '/gallery', label: 'Gallery' },
+  { id: 'pricing', href: '/pricing', label: 'Pricing' },
+] as const;
+
 // Signed-out header (Gallery, Landing boards): 84 high, 1344 container. tone "yellow" sits on the hero band (Ink primary).
-export function SiteHeader({ active, tone = 'paper' }: { active?: 'gallery'; tone?: 'paper' | 'yellow' }) {
+export function SiteHeader({ active, tone = 'paper' }: { active?: MarketingSection; tone?: 'paper' | 'yellow' }) {
   const link = 'inline-flex min-h-[44px] items-center px-[14px] text-[15px] text-ink outline-none focus-visible:shadow-[0_0_0_2px_#16140F] rounded-[6px]';
 
   return (
@@ -78,16 +87,19 @@ export function SiteHeader({ active, tone = 'paper' }: { active?: 'gallery'; ton
       <header className="container-marketing hidden h-[84px] items-center justify-between gap-4 md:flex">
       <Logo size={32} textSize={30} className="gap-[10px] text-ink" />
       <nav aria-label="Main" className="flex items-center gap-[6px]">
-        <a
-          href="/gallery"
-          aria-current={active === 'gallery' ? 'page' : undefined}
-          className={classNames(
-            link,
-            active === 'gallery' ? 'font-semibold underline decoration-1 underline-offset-[6px]' : 'font-medium no-underline hover:underline',
-          )}
-        >
-          Gallery
-        </a>
+        {MARKETING_NAV.map((n) => (
+          <a
+            key={n.id}
+            href={n.href}
+            aria-current={active === n.id ? 'page' : undefined}
+            className={classNames(
+              link,
+              active === n.id ? 'font-semibold underline decoration-1 underline-offset-[6px]' : 'font-medium no-underline hover:underline',
+            )}
+          >
+            {n.label}
+          </a>
+        ))}
         <a href="/login" className={classNames(link, 'font-medium no-underline hover:underline')}>
           Sign in
         </a>
@@ -123,7 +135,7 @@ export function PageShell({
   return (
     <div className="h-full overflow-y-auto bg-paper text-[15px] leading-[1.5] text-ink">
       <EventBar event={data.event} variant={signedIn ? 'app' : 'marketing'} />
-      {signedIn ? <AppHeader data={data} active={active} /> : <SiteHeader active={active === 'gallery' ? 'gallery' : undefined} />}
+      {signedIn ? <AppHeader data={data} active={active} /> : <SiteHeader active={active === 'gallery' || active === 'pricing' ? active : undefined} />}
       <main className={classNames(signedIn ? 'container-app' : 'container-marketing', mainClassName)}>{children}</main>
       {footer}
     </div>

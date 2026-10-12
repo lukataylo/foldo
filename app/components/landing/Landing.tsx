@@ -3,6 +3,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { EventBar, type EventInfo } from '~/components/header/EventBar';
 import { SiteHeader } from '~/components/PageShell';
 import { Icon } from '~/components/ui/icons';
+import { useEventMode } from '~/lib/hooks/useEventMode';
 import type { TemplateCard } from '~/lib/templates/client';
 import { SiteFooter } from './MarketingNav';
 import { ProjectCard, type GalleryItem } from './ProjectCard';
@@ -110,7 +111,7 @@ function SectionHead({ id, eyebrow, title, aside }: { id: string; eyebrow: strin
 
 const Lead = ({ children }: { children: ReactNode }) => <p className="m-0 text-pretty text-[16px] leading-[1.55] text-ink2">{children}</p>;
 
-function Hero({ onStart }: { onStart: (prompt: string) => void }) {
+function Hero({ onStart, runningOn }: { onStart: (prompt: string) => void; runningOn?: string }) {
   const [prompt, setPrompt] = useState('');
   const field = useRef<HTMLTextAreaElement>(null);
 
@@ -125,6 +126,13 @@ function Hero({ onStart }: { onStart: (prompt: string) => void }) {
       <div className="container-marketing pt-5 lg:pb-12 lg:pt-8 min-[1360px]:!pb-24 min-[1360px]:!pt-12">
         {/* on the band, the column stops >= 24px short of the dog's tail (art starts ~713px from the right edge) */}
         <div className="flex max-w-[580px] flex-col gap-4 md:gap-5 min-[1360px]:max-w-[min(580px,calc(100vw-800px))]">
+          {/* event mode: the event is a guest on the platform, so say so once, above the headline */}
+          {runningOn !== undefined && (
+            <p className="m-0 text-pretty text-[14px] leading-[1.45] text-ink md:text-[15px]" data-testid="foldo-running-on">
+              <strong className="font-semibold">{runningOn || 'This event'} is running on Foldo</strong>, a vibe-coding platform anyone
+              can use.
+            </p>
+          )}
           <h1 id="hero-title" className="m-0 text-balance font-serif text-[56px] font-normal leading-[.92] tracking-[-.02em] text-ink md:text-[clamp(56px,7vw,100px)]">
             Describe it. Watch it <em>build.</em>
           </h1>
@@ -203,7 +211,7 @@ function Hero({ onStart }: { onStart: (prompt: string) => void }) {
   );
 }
 
-function Tracks({ onTrack }: { onTrack: (track: string) => void }) {
+function Tracks({ onTrack, eventMode }: { onTrack: (track: string) => void; eventMode: boolean }) {
   const [active, setActive] = useState(0);
 
   return (
@@ -211,16 +219,21 @@ function Tracks({ onTrack }: { onTrack: (track: string) => void }) {
       <div className="container-marketing flex flex-col gap-6 py-12 lg:gap-12 lg:pb-[104px] lg:pt-24">
         <SectionHead
           id="tracks-title"
-          eyebrow="Tracks"
+          eyebrow={eventMode ? 'Tracks' : 'Starter templates'}
           title={
             <>
-              Pick your track, <em>start in seconds.</em>
+              {eventMode ? 'Pick your track,' : 'Pick a starter,'} <em>start in seconds.</em>
             </>
           }
-          aside={<Lead>Each track opens a ready starter that runs instantly. Templates cost no AI messages, so your first build is free.</Lead>}
+          aside={
+            <Lead>
+              {eventMode ? 'Each track opens a ready starter' : 'Each one opens a ready app'} that runs instantly. Templates cost no AI
+              messages, so your first build is free.
+            </Lead>
+          }
         />
         <ul
-          aria-label="Tracks"
+          aria-label={eventMode ? 'Tracks' : 'Starter templates'}
           onScroll={(e) => {
             const el = e.currentTarget;
             setActive(Math.round(el.scrollLeft / 300));
@@ -321,7 +334,7 @@ function Steps() {
   );
 }
 
-function GalleryStrip({ items, now }: { items: GalleryItem[]; now: number }) {
+function GalleryStrip({ items, now, eventMode }: { items: GalleryItem[]; now: number; eventMode: boolean }) {
   if (!items.length) {
     return null;
   }
@@ -333,13 +346,19 @@ function GalleryStrip({ items, now }: { items: GalleryItem[]; now: number }) {
           id="gallery-title"
           eyebrow="From the gallery"
           title={
-            <>
-              Made tonight, <em>shared</em> by teams.
-            </>
+            eventMode ? (
+              <>
+                Made tonight, <em>shared</em> by teams.
+              </>
+            ) : (
+              <>
+                Made with Foldo, <em>shared</em> by their makers.
+              </>
+            )
           }
           aside={
             <>
-              <Lead>Projects teams chose to show off. Run one in your browser, then remix your own copy.</Lead>
+              <Lead>Projects {eventMode ? 'teams' : 'people'} chose to show off. Run one in your browser, then remix your own copy.</Lead>
               <a href="/gallery" className="btn-secondary btn-lg">
                 Browse the gallery <Icon.ArrowRight />
               </a>
@@ -356,7 +375,62 @@ function GalleryStrip({ items, now }: { items: GalleryItem[]; now: number }) {
   );
 }
 
-function Closing({ inviteRequired }: { inviteRequired: boolean }) {
+const EVENT_FEATURES = [
+  { title: 'Event bar and countdown', body: 'Your event’s name, a live clock and announcements in every header.' },
+  { title: 'Invite codes', body: 'Only your people sign up. Close sign-ups again with one switch.' },
+  { title: 'Daily limits per team', body: 'Choose how many AI messages each team gets, plus a cap for everyone.' },
+  { title: 'Starter templates per track', body: 'Each track opens a ready app, so teams are building within seconds.' },
+  { title: 'A public gallery', body: 'Teams share what they made, run each other’s projects and pick favourites.' },
+  { title: 'An admin console', body: 'Pause builds, adjust limits, hide projects and download backups.' },
+];
+
+// both modes: Foldo hosts events (hackathons, classrooms, workshops); the details and contact live on /pricing#events
+function RunYourEvent() {
+  const cta = (
+    <a href="/pricing#events" className="btn-secondary btn-lg">
+      Plan your event <Icon.ArrowRight />
+    </a>
+  );
+
+  return (
+    <section aria-labelledby="events-title" className="border-t border-solid border-rule" data-testid="foldo-landing-events">
+      <div className="container-marketing flex flex-col gap-7 py-12 lg:gap-12 lg:pb-[104px] lg:pt-24">
+        <SectionHead
+          id="events-title"
+          eyebrow="Foldo for events"
+          title={
+            <>
+              Run your event <em>on Foldo.</em>
+            </>
+          }
+          aside={
+            <>
+              <Lead>Hackathons, classrooms and workshops. Everyone builds in the browser, and nobody installs a thing.</Lead>
+              {cta}
+            </>
+          }
+        />
+        <ul className="m-0 grid list-none gap-x-8 gap-y-6 p-0 md:grid-cols-2 lg:grid-cols-3 lg:gap-y-10">
+          {EVENT_FEATURES.map((f, i) => (
+            <li key={f.title} className={`flex flex-col gap-2 border-t border-solid pt-4 lg:pt-5 ${i === 0 ? 'border-ink' : 'border-rule'}`}>
+              <span aria-hidden="true" className="font-mono text-[12px] text-pencil">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <h3 className="m-0 font-serif text-[26px] font-normal leading-none lg:text-[30px]">{f.title}</h3>
+              <p className="m-0 text-pretty text-[15px] leading-[1.5] text-ink2 lg:text-[16px]">{f.body}</p>
+            </li>
+          ))}
+        </ul>
+        <div className="flex flex-col gap-3 md:hidden">
+          <Lead>Hackathons, classrooms and workshops. Everyone builds in the browser, and nobody installs a thing.</Lead>
+          <div className="flex">{cta}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Closing({ inviteRequired, eventMode }: { inviteRequired: boolean; eventMode: boolean }) {
   return (
     <section aria-labelledby="closing-title" className="border-t border-solid border-rule md:bg-sheet">
       <div className="container-marketing grid items-center gap-5 py-12 md:grid-cols-2 md:gap-[clamp(32px,5vw,72px)] md:py-[104px]">
@@ -369,12 +443,26 @@ function Closing({ inviteRequired }: { inviteRequired: boolean }) {
           className="block aspect-[2/1] h-auto w-full rounded-[14px] border border-solid border-rule object-cover object-[center_45%] md:aspect-[3/2] md:object-center"
         />
         <div className="flex flex-col gap-5 md:gap-6">
-          <span className="eyebrow">The clock is running</span>
+          <span className="eyebrow">{eventMode ? 'The clock is running' : 'Your turn'}</span>
           <h2 id="closing-title" className="m-0 text-balance font-serif text-[44px] font-normal leading-[.95] tracking-[-.02em] md:text-[clamp(48px,6vw,88px)] md:leading-[.92]">
-            Make something before the clock runs <em>out.</em>
+            {eventMode ? (
+              <>
+                Make something before the clock runs <em>out.</em>
+              </>
+            ) : (
+              <>
+                Make something worth <em>sharing.</em>
+              </>
+            )}
           </h2>
           <p className="m-0 max-w-[460px] text-pretty text-[16px] leading-[1.5] text-ink2 md:text-[18px] lg:leading-[1.55]">
-            {inviteRequired ? 'Sign up with your team name and the invite code from your organizer.' : 'Sign up with your team name.'}
+            {eventMode
+              ? inviteRequired
+                ? 'Sign up with your team name and the invite code from your organizer.'
+                : 'Sign up with your team name.'
+              : inviteRequired
+                ? 'Sign up with your name and your invite code.'
+                : 'Sign up with your name and email.'}
             <span className="hidden md:inline"> Your first app can be running in a minute.</span>
           </p>
           <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center">
@@ -412,6 +500,7 @@ export function Landing() {
     now?: number;
     inviteRequired?: boolean;
   };
+  const eventMode = useEventMode();
 
   const start = (text: string) => {
     // the latest choice wins: a typed prompt replaces a starter picked earlier, and the other way round
@@ -443,12 +532,13 @@ export function Landing() {
       </div>
       <main>
         <div className="bg-heroyellow">
-          <Hero onStart={start} />
+          <Hero onStart={start} runningOn={eventMode ? (event?.name ?? '') : undefined} />
         </div>
-        <Tracks onTrack={startTrack} />
+        <Tracks onTrack={startTrack} eventMode={eventMode} />
         <Steps />
-        <GalleryStrip items={gallery} now={now} />
-        <Closing inviteRequired={inviteRequired} />
+        <GalleryStrip items={gallery} now={now} eventMode={eventMode} />
+        <RunYourEvent />
+        <Closing inviteRequired={inviteRequired} eventMode={eventMode} />
       </main>
       <SiteFooter />
     </div>

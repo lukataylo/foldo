@@ -21,10 +21,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const user = await getUser(request);
 
   if (!user) {
-    const { event, templates } = shell();
+    const { event, eventMode, contactEmail, templates } = shell();
 
     return json({
       event,
+      eventMode,
+      contactEmail,
       templates,
       gallery: galleryItems(undefined, { sort: 'top', limit: 3 }),
       inviteRequired: inviteCode() !== '',

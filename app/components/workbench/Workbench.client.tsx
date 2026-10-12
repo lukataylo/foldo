@@ -1,83 +1,84 @@
 import { useStore } from '@nanostores/react';
-import { motion, type HTMLMotionProps, type Variants } from 'framer-motion';
-import { computed } from 'nanostores';
-import { memo, useCallback, useEffect } from 'react';
+import { useLoaderData } from '@remix-run/react';
+import { memo, useCallback, useEffect, useRef } from 'react';
+import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels';
+import { toast } from 'react-toastify';
+import { SharedSheet } from '~/components/chat/SharedAbout';
+import { SIcon } from '~/components/chat/studio-icons';
+import type { LayoutMode } from '~/components/chat/studio-state';
 import {
   type OnChangeCallback as OnEditorChange,
   type OnScrollCallback as OnEditorScroll,
 } from '~/components/editor/codemirror/CodeMirrorEditor';
-import { IconButton } from '~/components/ui/IconButton';
-import { PanelHeaderButton } from '~/components/ui/PanelHeaderButton';
-import { toast } from 'react-toastify';
-import { description } from '~/lib/persistence';
-import { downloadProjectZip } from '~/utils/zip';
-import { Slider, type SliderOptions } from '~/components/ui/Slider';
+import { Icon } from '~/components/ui/icons';
+import { chatId, description } from '~/lib/persistence';
 import { workbenchStore, type WorkbenchViewType } from '~/lib/stores/workbench';
 import { classNames } from '~/utils/classNames';
-import { cubicEasingFn } from '~/utils/easings';
 import { renderLogger } from '~/utils/logger';
+import { downloadProjectZip } from '~/utils/zip';
 import { EditorPanel } from './EditorPanel';
-import { Preview } from './Preview';
+import { AddressBar, fullscreenPreview, Preview } from './Preview';
+import { TerminalPanel } from './TerminalPanel';
 
 interface WorkspaceProps {
   chatStarted?: boolean;
   isStreaming?: boolean;
+  layout: LayoutMode;
+  // a signed-out visitor on a share link: preview first, no download or terminal
+  viewer?: boolean;
 }
 
-const viewTransition = { ease: cubicEasingFn };
+const TERMINAL_SIZE = 30;
 
-const sliderOptions: SliderOptions<WorkbenchViewType> = {
-  left: {
-    value: 'code',
-    text: 'Code',
-  },
-  right: {
-    value: 'preview',
-    text: 'Preview',
-  },
-};
+const toolButton =
+  'inline-flex h-[32px] flex-none items-center gap-[6px] rounded-[7px] border border-solid border-rule bg-sheet text-[13px] font-medium text-ink outline-none hover:bg-wash focus-visible:shadow-[0_0_0_2px_#FBF8F1,0_0_0_4px_#16140F]';
 
-const workbenchVariants = {
-  closed: {
-    width: 0,
-    transition: {
-      duration: 0.2,
-      ease: cubicEasingFn,
-    },
-  },
-  open: {
-    width: 'var(--workbench-width)',
-    transition: {
-      duration: 0.2,
-      ease: cubicEasingFn,
-    },
-  },
-} satisfies Variants;
+let defaulted = false;
 
-export const Workbench = memo(({ chatStarted, isStreaming }: WorkspaceProps) => {
+/*
+ * Code and preview (Build-* boards): toolbar with Code / Preview, the preview address, Download zip and the terminal
+ * toggle; the view below; the terminal drawer under it. Hidden (never unmounted) in the "Chat only" layout so the
+ * running preview and terminals survive.
+ */
+export const Workbench = memo(({ chatStarted, isStreaming, layout, viewer }: WorkspaceProps) => {
   renderLogger.trace('Workbench');
 
-  const hasPreview = useStore(computed(workbenchStore.previews, (previews) => previews.length > 0));
-  const showWorkbench = useStore(workbenchStore.showWorkbench);
+  const { shared } = useLoaderData() as { shared?: boolean };
   const selectedFile = useStore(workbenchStore.selectedFile);
   const currentDocument = useStore(workbenchStore.currentDocument);
   const unsavedFiles = useStore(workbenchStore.unsavedFiles);
   const files = useStore(workbenchStore.files);
-  const selectedView = useStore(workbenchStore.currentView);
+  const view = useStore(workbenchStore.currentView);
+  const showTerminal = useStore(workbenchStore.showTerminal);
+  const previews = useStore(workbenchStore.previews);
+  const terminalRef = useRef<ImperativePanelHandle>(null);
+  const projectId = useStore(chatId);
 
-  const setSelectedView = (view: WorkbenchViewType) => {
-    workbenchStore.currentView.set(view);
-  };
-
+  // the preview leads: it shows the setup steps until the app runs
   useEffect(() => {
-    if (hasPreview) {
-      setSelectedView('preview');
+    if (!defaulted) {
+      defaulted = true;
+      workbenchStore.currentView.set('preview');
     }
-  }, [hasPreview]);
+  }, []);
 
   useEffect(() => {
     workbenchStore.setDocuments(files);
   }, [files]);
+
+  useEffect(() => {
+    const panel = terminalRef.current;
+
+    if (!panel) {
+      return;
+    }
+
+    if (showTerminal && panel.isCollapsed()) {
+      panel.resize(TERMINAL_SIZE);
+    } else if (!showTerminal && !panel.isCollapsed()) {
+      panel.collapse();
+    }
+  }, [showTerminal]);
 
   const onEditorChange = useCallback<OnEditorChange>((update) => {
     workbenchStore.setCurrentDocumentContent(update.content);
@@ -93,7 +94,7 @@ export const Workbench = memo(({ chatStarted, isStreaming }: WorkspaceProps) => 
 
   const onFileSave = useCallback(() => {
     workbenchStore.saveCurrentDocument().catch(() => {
-      toast.error('Failed to update file content');
+      toast.error("Couldn't save that file. Try again.");
     });
   }, []);
 
@@ -101,100 +102,131 @@ export const Workbench = memo(({ chatStarted, isStreaming }: WorkspaceProps) => 
     workbenchStore.resetCurrentDocument();
   }, []);
 
+  if (!chatStarted) {
+    return null;
+  }
+
+  const setView = (next: WorkbenchViewType) => workbenchStore.currentView.set(next);
+  // the terminal belongs to the team's own project (a remix gets one once it is saved as theirs)
+  const ownerTools = !shared || Boolean(projectId);
+
   return (
-    chatStarted && (
-      <motion.div
-        initial="closed"
-        animate={showWorkbench ? 'open' : 'closed'}
-        variants={workbenchVariants}
-        className="z-workbench"
-      >
-        <div
-          className={classNames(
-            'absolute top-3 bottom-3 right-3 z-0 transition-[left] duration-200 bolt-ease-cubic-bezier',
-            {
-              'left-[var(--workbench-left)]': showWorkbench,
-              'left-[100%]': !showWorkbench,
-            },
-          )}
-        >
-          <div className="absolute inset-0">
-            <div className="h-full flex flex-col bg-bolt-elements-background-depth-2 border border-bolt-elements-borderColor shadow-sm rounded-lg overflow-hidden">
-              <div className="flex items-center px-3 py-2 border-b border-bolt-elements-borderColor">
-                <Slider selected={selectedView} options={sliderOptions} setSelected={setSelectedView} />
-                <div className="ml-auto" />
-                <PanelHeaderButton
-                  className="mr-1 text-sm"
-                  onClick={() => {
-                    if (!downloadProjectZip(workbenchStore.files.get(), description.get() ?? 'foldo-project')) {
-                      toast.info('Nothing to download yet. Ask Foldo to build something first.');
-                    }
-                  }}
-                >
-                  <div className="i-ph:download-simple" />
-                  Download zip
-                </PanelHeaderButton>
-                {selectedView === 'code' && (
-                  <PanelHeaderButton
-                    className="mr-1 text-sm"
-                    onClick={() => {
-                      workbenchStore.toggleTerminal(!workbenchStore.showTerminal.get());
-                    }}
-                  >
-                    <div className="i-ph:terminal" />
-                    Toggle Terminal
-                  </PanelHeaderButton>
-                )}
-                <IconButton
-                  icon="i-ph:x-circle"
-                  className="-mr-1"
-                  size="xl"
-                  onClick={() => {
-                    workbenchStore.showWorkbench.set(false);
-                  }}
-                />
-              </div>
-              <div className="relative flex-1 overflow-hidden">
-                <View
-                  initial={{ x: selectedView === 'code' ? 0 : '-100%' }}
-                  animate={{ x: selectedView === 'code' ? 0 : '-100%' }}
-                >
-                  <EditorPanel
-                    editorDocument={currentDocument}
-                    isStreaming={isStreaming}
-                    selectedFile={selectedFile}
-                    files={files}
-                    unsavedFiles={unsavedFiles}
-                    onFileSelect={onFileSelect}
-                    onEditorScroll={onEditorScroll}
-                    onEditorChange={onEditorChange}
-                    onFileSave={onFileSave}
-                    onFileReset={onFileReset}
-                  />
-                </View>
-                <View
-                  initial={{ x: selectedView === 'preview' ? 0 : '100%' }}
-                  animate={{ x: selectedView === 'preview' ? 0 : '100%' }}
-                >
-                  <Preview />
-                </View>
-              </div>
-            </div>
-          </div>
+    <section
+      aria-label={viewer ? 'Preview' : 'Code and preview'}
+      data-testid="foldo-workbench"
+      className={classNames('relative min-w-0 flex-1 flex-col overflow-hidden bg-sheet', {
+        flex: layout !== 'chat' || Boolean(viewer),
+        'md:my-3 md:mr-3 md:rounded-[10px] md:border md:border-solid md:border-rule': layout !== 'workspace' || Boolean(viewer),
+        'm-3 rounded-[10px] border border-solid border-rule': layout === 'workspace' && !viewer,
+        hidden: layout === 'chat' && !viewer,
+        'lt-md:!hidden': layout === 'both' && !viewer,
+      })}
+    >
+      <div className={classNames('flex h-[48px] flex-none items-center gap-[10px] border-b border-rule px-[10px]', { 'lt-md:hidden': Boolean(viewer) })}>
+        <div role="tablist" aria-label="View" className="seg flex-none gap-0 lt-md:hidden">
+          {(['code', 'preview'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={view === v}
+              className={classNames('seg-item', { '!border-0': view !== v, 'text-ink2': Boolean(viewer) && view !== v })}
+              onClick={() => setView(v)}
+            >
+              {v === 'code' ? 'Code' : 'Preview'}
+            </button>
+          ))}
         </div>
-      </motion.div>
-    )
-  );
-});
-
-interface ViewProps extends HTMLMotionProps<'div'> {
-  children: JSX.Element;
-}
-
-const View = memo(({ children, ...props }: ViewProps) => {
-  return (
-    <motion.div className="absolute inset-0" transition={viewTransition} {...props}>
-      {children}
-    </motion.div>
+        <AddressBar readOnly={viewer} />
+        {viewer ? (
+          <>
+            {previews.length > 0 ? (
+              <span className="pill-live leading-[18px]">
+                <span className="pill-dot" />
+                Running
+              </span>
+            ) : (
+              <span className="pill-neutral leading-[18px]">Starting</span>
+            )}
+            <button
+              type="button"
+              aria-label="Full screen preview"
+              title="Full screen preview"
+              disabled={!previews.length}
+              onClick={() => {
+                setView('preview');
+                fullscreenPreview();
+              }}
+              className={`${toolButton} w-[32px] justify-center px-0`}
+            >
+              <SIcon.Expand />
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={`${toolButton} px-[10px] lt-md:hidden`}
+              data-testid="foldo-download-zip"
+              onClick={() => {
+                if (!downloadProjectZip(workbenchStore.files.get(), description.get() ?? 'foldo-project')) {
+                  toast.info('Nothing to download yet. Ask Foldo to build something first.');
+                }
+              }}
+            >
+              <SIcon.Download size={15} />
+              Download zip
+            </button>
+            {ownerTools && (
+              <button
+                type="button"
+                aria-label="Toggle Terminal"
+                title="Terminal (Ctrl+J)"
+                aria-pressed={showTerminal}
+                className={`${toolButton} w-[32px] justify-center px-0 aria-pressed:bg-wash lt-md:hidden`}
+                onClick={() => workbenchStore.toggleTerminal(!showTerminal)}
+              >
+                <Icon.Terminal />
+              </button>
+            )}
+          </>
+        )}
+      </div>
+      <div className="min-h-0 flex-1">
+        <PanelGroup direction="vertical">
+          <Panel minSize={20} defaultSize={showTerminal ? 100 - TERMINAL_SIZE : 100}>
+            <div className={classNames('h-full', { hidden: view !== 'code' })}>
+              <EditorPanel
+                editorDocument={currentDocument}
+                isStreaming={isStreaming}
+                selectedFile={selectedFile}
+                files={files}
+                unsavedFiles={unsavedFiles}
+                onFileSelect={onFileSelect}
+                onEditorScroll={onEditorScroll}
+                onEditorChange={onEditorChange}
+                onFileSave={onFileSave}
+                onFileReset={onFileReset}
+              />
+            </div>
+            <div className={classNames('h-full', { hidden: view !== 'preview' })}>
+              <Preview isStreaming={isStreaming} />
+            </div>
+          </Panel>
+          <PanelResizeHandle className={showTerminal ? 'h-px bg-rule' : 'hidden'} />
+          <Panel
+            ref={terminalRef}
+            defaultSize={showTerminal ? TERMINAL_SIZE : 0}
+            minSize={10}
+            collapsible
+            onCollapse={() => workbenchStore.toggleTerminal(false)}
+            onExpand={() => workbenchStore.toggleTerminal(true)}
+          >
+            {ownerTools && <TerminalPanel />}
+          </Panel>
+        </PanelGroup>
+      </div>
+      {viewer && <SharedSheet />}
+    </section>
   );
 });

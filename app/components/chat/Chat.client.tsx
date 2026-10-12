@@ -12,13 +12,14 @@ import { fixRequest, previewError, quota, requestFix } from '~/lib/stores/ui';
 import { PROMPT_KEY } from '~/components/landing/starters';
 import { chatStore } from '~/lib/stores/chat';
 import { activeTemplate, applyTemplate, prefetchSnapshots, templateStatus, type TemplateCard } from '~/lib/templates/client';
-import { description } from '~/lib/persistence';
+import { chatId, description } from '~/lib/persistence';
 import { beginReplay, endReplay } from '~/lib/runtime/action-runner';
 import { workbenchStore } from '~/lib/stores/workbench';
-import { fileModificationsToHTML } from '~/utils/diff';
+import { fileModificationsToHTML, modificationsRegex } from '~/utils/diff';
 import { cubicEasingFn } from '~/utils/easings';
 import { createScopedLogger, renderLogger } from '~/utils/logger';
 import { BaseChat } from './BaseChat';
+import { autoFixAfter, fixInFlight, STOPPED, streamingNow } from './studio-state';
 
 const logger = createScopedLogger('Chat');
 
@@ -51,7 +52,6 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
 
   const [chatStarted, setChatStarted] = useState(initialMessages.length > 0);
 
-  const { showChat } = useStore(chatStore);
 
   const [animationScope, animate] = useAnimate();
 
@@ -76,28 +76,66 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
         quota.set(Number(left));
       }
     },
+    // the failed message stays on screen until onError hands it back to the composer (see takeBackPrompt)
+    keepLastMessageOnError: true,
     onError: (error) => {
       logger.error('Request failed\n\n', error);
+      takeBackPrompt();
 
       // our API answers with short plain-text messages written for the user; anything else is a transport error
       const known = error.message.length < 240 && !/^[<{]/.test(error.message);
 
       toast.error(known ? error.message : 'Something went wrong on our side. Press send to try again.');
     },
-    onFinish: (message) => {
+    onFinish: () => {
       logger.debug('Finished streaming');
       builtAt.current = Date.now();
-
-      // the reply hit the length limit mid-build: files after the cut (and the dev server start) never arrive
-      if (workbenchStore.artifacts.get()[message.id]?.closed === false) {
-        toast.info('That reply was cut off before the app was finished. Send "continue" to finish it.', { autoClose: false });
-      }
+      // a reply cut off by the length limit gets the cut-off card under it (BaseChat)
     },
     initialMessages,
   });
 
   const latest = useRef(messages);
   latest.current = messages;
+
+  // Stop is remembered on the reply itself, so after a reload it reads as stopped, not cut off (no Continue offer)
+  function markStopped() {
+    const list = latest.current;
+    const last = list.at(-1);
+
+    if (last?.role === 'assistant' && last.content.trim() && !last.annotations?.includes(STOPPED)) {
+      setMessages([...list.slice(0, -1), { ...last, annotations: [...(last.annotations ?? []), STOPPED] }]);
+    }
+  }
+
+  /*
+   * A message that got no reply (an error, or Stop while Foldo was still planning) goes back into the composer and off
+   * the conversation, so the saved history matches the screen and a first message never leaves a project behind.
+   */
+  function takeBackPrompt() {
+    const list = [...latest.current];
+
+    while (list.at(-1)?.role === 'assistant' && !list.at(-1)?.content.trim()) {
+      list.pop();
+    }
+
+    const last = list.at(-1);
+
+    if (last?.role !== 'user') {
+      return; // the reply had started: keep what arrived
+    }
+
+    list.pop();
+    setMessages(list);
+    setInput(last.content.replace(modificationsRegex, '').trim());
+
+    if (list.length === 0) {
+      document.querySelectorAll('#intro, #examples').forEach((el) => el.removeAttribute('style'));
+      chatStore.setKey('started', false);
+      workbenchStore.showWorkbench.set(false);
+      setChatStarted(false);
+    }
+  }
 
   const { enhancingPrompt, promptEnhanced, enhancePrompt, resetEnhancer } = usePromptEnhancer();
   const { parsedMessages, parseMessages } = useMessageParser();
@@ -169,7 +207,8 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
       clearTimeout(saveTimer.current);
       saveTimer.current = undefined;
       save();
-    } else if (!saveTimer.current) {
+    } else if (!saveTimer.current && latest.current.at(-1)?.role === 'assistant' && latest.current.at(-1)?.content.trim()) {
+      // only once the reply has started: a message that fails before its first word is handed back, never saved
       saveTimer.current = setTimeout(() => {
         saveTimer.current = undefined;
         save();
@@ -189,6 +228,8 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
     stop();
     chatStore.setKey('aborted', true);
     workbenchStore.abortAllActions();
+    takeBackPrompt();
+    markStopped();
   };
 
   useEffect(() => {
@@ -214,10 +255,47 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
       animate('#intro', { opacity: 0, flex: 1 }, { duration: 0.2, ease: cubicEasingFn }),
     ]);
 
+    // the message was refused (or stopped) before the animation ended: stay on Home, with Home as it was
+    if (latest.current.length === 0) {
+      document.querySelectorAll('#intro, #examples').forEach((el) => el.removeAttribute('style'));
+      return;
+    }
+
     chatStore.setKey('started', true);
 
     setChatStarted(true);
   };
+
+  const wasLoading = useRef(false);
+
+  useEffect(() => {
+    streamingNow.set(isLoading);
+
+    // the auto-fix note belongs to the fix reply: it goes once that reply ends, whether it worked or not
+    if (wasLoading.current && !isLoading) {
+      autoFixAfter.set(undefined);
+    }
+
+    wasLoading.current = isLoading;
+  }, [isLoading]);
+
+  // the error banner says so while a "Fix this error" message is being answered
+  useEffect(() => {
+    fixInFlight.set(isLoading && (messages.findLast((m) => m.role === 'user')?.content.includes(FIX_PROMPT) ?? false));
+  }, [isLoading, messages.length]);
+
+  // Shared-Remix: the first save of a visitor's message makes their own copy
+  useEffect(() => {
+    if (!(loaderData as { shared?: boolean }).shared) {
+      return undefined;
+    }
+
+    return chatId.listen((id, old) => {
+      if (id && !old) {
+        toast.success('Remixed. This copy is yours, and the original stays as it was.');
+      }
+    });
+  }, []);
 
   // "Fix this error" buttons elsewhere in the UI land here
   const fix = useStore(fixRequest);
@@ -242,29 +320,39 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
    * so it can't loop.
    */
   const autoFixedFor = useRef<string>();
+  const fixAfterReply = useRef(false);
 
-  useEffect(
-    () =>
-      previewError.listen((error) => {
-        const last = latest.current.at(-1);
-        const asked = latest.current.findLast((m) => m.role === 'user')?.content ?? '';
+  const autoFix = (error: string | undefined) => {
+    const last = latest.current.at(-1);
+    const asked = latest.current.findLast((m) => m.role === 'user')?.content ?? '';
 
-        if (
-          !error ||
-          last?.role !== 'assistant' ||
-          Date.now() - builtAt.current > 180_000 ||
-          autoFixedFor.current === last.id ||
-          asked.includes(FIX_PROMPT)
-        ) {
-          return;
-        }
+    if (!error || last?.role !== 'assistant' || autoFixedFor.current === last.id || asked.includes(FIX_PROMPT)) {
+      return;
+    }
 
-        autoFixedFor.current = last.id;
-        toast.info('Your app hit an error after that build, so Foldo is fixing it.');
-        requestFix(error);
-      }),
-    [],
-  );
+    // the build's commands can fail before the reply has finished: fix it as soon as the reply is done
+    if (streamingNow.get()) {
+      fixAfterReply.current = true;
+      return;
+    }
+
+    if (Date.now() - builtAt.current > 180_000) {
+      return;
+    }
+
+    autoFixedFor.current = last.id;
+    autoFixAfter.set(last.id);
+    requestFix(error);
+  };
+
+  useEffect(() => previewError.listen(autoFix), []);
+
+  useEffect(() => {
+    if (!isLoading && fixAfterReply.current) {
+      fixAfterReply.current = false;
+      autoFix(previewError.get());
+    }
+  }, [isLoading]);
 
   // start a project from a template: instant working app, no AI call (and no tokens) until the team asks for changes
   const startTemplate = async (id: string) => {
@@ -355,7 +443,6 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
       ref={animationScope}
       textareaRef={textareaRef}
       input={input}
-      showChat={showChat}
       chatStarted={chatStarted}
       isStreaming={isLoading}
       enhancingPrompt={enhancingPrompt}

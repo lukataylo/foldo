@@ -1,6 +1,6 @@
 import { acceptCompletion, autocompletion, closeBrackets } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language';
+import { bracketMatching, indentOnInput, indentUnit } from '@codemirror/language';
 import { searchKeymap } from '@codemirror/search';
 import { Compartment, EditorSelection, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state';
 import {
@@ -346,15 +346,6 @@ function newEditorState(
       EditorState.readOnly.from(editableStateField, (editable) => !editable),
       highlightActiveLineGutter(),
       highlightActiveLine(),
-      foldGutter({
-        markerDOM: (open) => {
-          const icon = document.createElement('div');
-
-          icon.className = `fold-icon ${open ? 'i-ph-caret-down-bold' : 'i-ph-caret-right-bold'}`;
-
-          return icon;
-        },
-      }),
       ...extensions,
     ],
   });

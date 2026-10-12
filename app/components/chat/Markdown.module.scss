@@ -1,5 +1,5 @@
-$font-mono: ui-monospace, 'Fira Code', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-$code-font-size: 13px;
+$font-mono: 'JetBrains Mono', ui-monospace, 'Fira Code', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+$code-font-size: 12px;
 
 @mixin not-inside-actions {
   &:not(:has(:global(.actions)), :global(.actions *)) {
@@ -8,15 +8,15 @@ $code-font-size: 13px;
 }
 
 .MarkdownContent {
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--bolt-elements-textPrimary);
 
   > *:not(:last-child) {
-    margin-block-end: 16px;
+    margin-block-end: 12px;
   }
 
   :global(.artifact) {
-    margin: 1em 0;
+    margin: 12px 0;
 
     &:first-child {
       margin-block-start: 0;
@@ -69,9 +69,11 @@ $code-font-size: 13px;
   p {
     white-space: pre-wrap;
 
+    margin-block: 0;
+
     &:not(:last-of-type) {
       margin-block-start: 0;
-      margin-block-end: 16px;
+      margin-block-end: 12px;
     }
   }
 

@@ -100,7 +100,20 @@ export const reasoningEffortFor = (model: string): string | number => harness().
 export const describeReasoning = (r: string | number) => (typeof r === 'number' ? `high (${Math.round(r / 1000)}k thinking tokens)` : r);
 
 export function pauseState() {
-  return { paused: getSetting('paused') === '1', message: getSetting('pause_message') };
+  const paused = getSetting('paused') === '1';
+
+  return { paused, message: getSetting('pause_message'), since: paused ? Number(getSetting('paused_at')) || null : null };
+}
+
+// the organizer switch: remembers when a pause began (the studio shows "Since 9:42 pm"); re-saving keeps the time
+export function setPaused(on: boolean) {
+  if (on && getSetting('paused') !== '1') {
+    setSetting('paused_at', String(Date.now()));
+  } else if (!on) {
+    setSetting('paused_at', '');
+  }
+
+  setSetting('paused', on ? '1' : '');
 }
 
 export interface EventInfo {

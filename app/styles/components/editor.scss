@@ -114,9 +114,10 @@
 
 :root {
   --bolt-elements-editor-gutter-textColor: var(--pencil);
-  --bolt-elements-editor-gutter-activeLineTextColor: var(--bolt-elements-textPrimary);
+  --bolt-elements-editor-gutter-activeLineTextColor: var(--pencil);
   --bolt-elements-editor-foldGutter-textColorHover: var(--bolt-elements-textPrimary);
-  --bolt-elements-editor-activeLineBackgroundColor: rgb(50 53 63 / 5%);
+  --bolt-elements-editor-activeLineBackgroundColor: transparent;
+  --bolt-elements-editor-backgroundColor: var(--codebg);
   --bolt-elements-editor-tooltip-backgroundColorSelected: theme('colors.alpha.accent.20');
   --bolt-elements-editor-search-button-backgroundColor: theme('colors.gray.100');
   --bolt-elements-editor-search-button-backgroundColorHover: theme('colors.alpha.gray.10');

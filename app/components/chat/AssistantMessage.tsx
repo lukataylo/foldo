@@ -7,7 +7,7 @@ interface AssistantMessageProps {
 
 export const AssistantMessage = memo(({ content }: AssistantMessageProps) => {
   return (
-    <div className="overflow-hidden w-full">
+    <div className="w-full min-w-0 text-[14px] leading-[1.5]">
       <Markdown html>{content}</Markdown>
     </div>
   );

@@ -355,6 +355,7 @@ try {
   check(PV, '/gallery?n= is capped (a huge n still renders a normal page)', bigPage.status === 200 && (bigPage.text.match(/<iframe/g) ?? []).length <= 61);
   const sharePage = await anon.req(`/p/${shareA.shareId}`);
   check(P2, 'public share page loads without login', sharePage.status === 200);
+  check(P2, 'share page names the team that built it, and leaks no owner id', sharePage.text.includes('Team Alpha') && !/"owner_id"|"user_id"/.test(sharePage.text));
   check(P2, 'share page has absolute link-preview tags', sharePage.text.includes(`property="og:image" content="${BASE}/og.jpg"`) && sharePage.text.includes(`property="og:url" content="${BASE}/p/${shareA.shareId}"`) && sharePage.text.includes('property="og:title" content="Alpha app"'));
   const forgedHost = await anon.req(`/p/${shareA.shareId}`, { headers: { 'x-forwarded-host': 'evil.example"><script>x</script>', 'x-forwarded-proto': 'javascript' } });
   check(P2, 'forged forwarded headers cannot inject into link-preview tags', forgedHost.status === 200 && !forgedHost.text.includes('evil.example"') && !forgedHost.text.includes('<script>x') && !forgedHost.text.includes('javascript://'), forgedHost.text.match(/og:url" content="[^"]*"/)?.[0]);
@@ -373,7 +374,11 @@ try {
   const hijack = await B.req('/api/projects', { method: 'PUT', body: { id: idA, description: 'PWNED', messages: [{ role: 'user', content: 'x' }] } });
   const aAfter = new DatabaseSync(DB).prepare('SELECT description, user_id FROM projects WHERE id = ?').get(idA);
   check(P3, "PUT with A's id can't overwrite A's project", aAfter.description === 'Alpha app', JSON.stringify(aAfter));
-  check(P3, 'the hijack attempt just created a separate project for B', hijack.status === 200 && hijack.json().id !== idA);
+  check(P3, "the hijack attempt is a 404 and creates nothing for B", hijack.status === 404 && (await B.req('/api/projects')).json().length === 0, `${hijack.status}`);
+  const gone = await B.save('Soon deleted');
+  await B.req('/api/projects', { method: 'DELETE', body: { id: gone } });
+  const ghost = await B.req('/api/projects', { method: 'PUT', body: { id: gone, description: 'Soon deleted', messages: [{ role: 'user', content: 'x' }] } });
+  check(P3, 'autosave of a project deleted in another tab is a 404, not a silent re-create', ghost.status === 404 && (await B.req('/api/projects')).json().length === 0, `${ghost.status}`);
   check(P3, "cannot delete A's project", (await B.req('/api/projects', { method: 'DELETE', body: { id: idA } })).status === 404);
   check(P3, "cannot unshare/re-share A's project", (await B.req('/api/projects', { method: 'POST', body: { id: idA, share: false } })).status === 404);
   check(P3, 'project list only contains own projects', (await B.req('/api/projects')).json().every((p) => p.id !== idA));
@@ -552,6 +557,11 @@ try {
   const paused = await F.chat('hi', { provider: 'custom' });
   check(P6B, 'pause switch blocks new builds with the organizer message', paused.status === 503 && /Fixing Wi-Fi/.test(paused.text));
   check(P6B, 'teams see a banner while paused', (await F.req('/')).text.includes('Fixing Wi-Fi'));
+  check(P6B, 'the pause remembers when it started', /"since":\d{13}/.test((await F.req('/')).text));
+  const live = (await F.req('/api/status')).json();
+  check(P6B, 'open studios poll the pause: /api/status has the state, message, start and messages left', live.paused === true && /Fixing Wi-Fi/.test(live.message) && live.since > 0 && typeof live.remaining === 'number', JSON.stringify(live));
+  const statusAnon = (await new Client().req('/api/status')).status;
+  check(P6B, '/api/status needs a signed-in team', statusAnon === 401, String(statusAnon));
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-pause', pause_message: '' } });
   check(P6B, 'unpausing restores service', (await F.chat('hi again', { provider: 'custom' })).status === 200);
   await ADM.req('/admin', { method: 'POST', form: { intent: 'pause-on', pause_message: 'Lunch break, back at 1' } });
@@ -676,6 +686,17 @@ try {
   await new Promise((r) => setTimeout(r, 800));
   check(P11, 'Stop in the browser closes the call to the AI provider', llmSeen.closedEarly === 1, llmSeen.closedEarly);
   check(P11, 'after Stop the team can send again right away', (await L2.chat('hello')).status === 200);
+
+  // Stop while Foldo is still planning (before the first word): that message is not counted
+  const beforePlan = Number((await L2.chat('hello')).headers.get('x-foldo-remaining'));
+  const acPlan = new AbortController();
+  const planning = fetch(`${BASE}/api/chat`, { method: 'POST', signal: acPlan.signal, headers: { 'content-type': 'application/json', cookie: L2.cookie, 'x-forwarded-for': L2.ip }, body: JSON.stringify({ messages: [{ role: 'user', content: 'SLOW plan it' }] }) }).catch(() => undefined);
+  await new Promise((r) => setTimeout(r, 400));
+  acPlan.abort();
+  await planning;
+  await new Promise((r) => setTimeout(r, 1800));
+  const afterPlan = Number((await L2.chat('hello')).headers.get('x-foldo-remaining'));
+  check(P11, 'Stop before the first word is refunded', afterPlan === beforePlan - 1, `${beforePlan} -> ${afterPlan}`);
 
   const file = (body) => `<boltArtifact id="x" title="X"><boltAction type="file" filePath="src/App.jsx">${body}</boltAction></boltArtifact>`;
   const bulky = 'x'.repeat(60_000);

@@ -124,12 +124,15 @@ async function chatAction({ request }: ActionFunctionArgs) {
   if (spent !== 'ok') {
     release();
 
-    return text(
-      spent === 'global'
-        ? "The event's AI budget for today is used up. Ask an organizer if you need more."
-        : `You've used all ${dailyLimit()} messages for tonight. Ask an organizer if you need more.`,
-      429,
-    );
+    if (spent === 'global') {
+      return text("The event's AI budget for today is used up. Ask an organizer if you need more.", 429);
+    }
+
+    // the header lets the studio swap the composer for the quota card straight away
+    return new Response(`You've used all ${dailyLimit()} messages for tonight. Ask an organizer if you need more.`, {
+      status: 429,
+      headers: { 'X-Foldo-Remaining': '0' },
+    });
   }
 
   let served = primary;
@@ -293,6 +296,11 @@ async function chatAction({ request }: ActionFunctionArgs) {
       const patience = primary.model === harness().main ? Math.max(FIRST_TOKEN_MS, harness().firstTokenMs) : FIRST_TOKEN_MS;
       aiStream = await attempt(primary, fallback ? patience : Math.max(patience, LAST_RESORT_MS));
     } catch (error) {
+      // the team pressed Stop before the first word: not the provider's fault, and nothing to fail over to
+      if (upstream.signal.aborted) {
+        throw error;
+      }
+
       recordProviderError(primary.id);
 
       if (!fallback) {
@@ -320,8 +328,13 @@ async function chatAction({ request }: ActionFunctionArgs) {
       },
     });
   } catch (error) {
-    console.error(`[chat] ${served.id} failed:`, (error as Error)?.message);
-    recordProviderError(served.id);
+    const stopped = upstream.signal.aborted;
+
+    if (!stopped) {
+      console.error(`[chat] ${served.id} failed:`, (error as Error)?.message);
+      recordProviderError(served.id);
+    }
+
     recordRequest({ user: user.id.slice(0, 8), primary: primary.id, ok: false, ms: Date.now() - t0, failover: false });
 
     release();

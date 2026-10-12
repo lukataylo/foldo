@@ -6,8 +6,16 @@ import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
 import { previewError } from '~/lib/stores/ui';
 import type { ActionCallbackData } from './message-parser';
+import { keepPackDependencies } from './package-merge';
 
 const logger = createScopedLogger('ActionRunner');
+
+// imported lazily: the templates client imports the workbench store, which imports this file
+const templatePackage = async () => {
+  const tpl = await import('~/lib/templates/client');
+
+  return tpl.activeTemplate.get() ? tpl.templatePackageJson : undefined;
+};
 
 // a dev server never exits, so its failures never mark the command failed
 export const isServerCommand = (command: string) =>
@@ -320,10 +328,16 @@ export class ActionRunner {
     };
 
     if (server) {
+      const shownBefore = previewError.get();
       const settled = new Promise<null>((resolve) => setTimeout(() => resolve(null), DEV_SERVER_SETTLE_MS));
       const early = await Promise.race([process.exit, settled]);
 
       if (early === null) {
+        // a dev server that came up cleanly makes an older error (a failed install, the last crash) out of date
+        if (previewError.get() === shownBefore) {
+          previewError.set(undefined);
+        }
+
         process.exit.then((exitCode) => {
           if (devServer === handle) {
             devServer = undefined;
@@ -409,8 +423,18 @@ export class ActionRunner {
       }
     }
 
+    let content = action.content;
+
+    if (/^(\.\/)?package\.json$/.test(action.filePath)) {
+      const pack = await templatePackage();
+
+      if (pack) {
+        content = keepPackDependencies(pack, content);
+      }
+    }
+
     try {
-      await webcontainer.fs.writeFile(action.filePath, action.content);
+      await webcontainer.fs.writeFile(action.filePath, content);
       logger.debug(`File written ${action.filePath}`);
     } catch (error) {
       // shown as failed instead of a green tick on a file that isn't there

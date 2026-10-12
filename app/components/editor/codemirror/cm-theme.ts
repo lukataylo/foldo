@@ -1,6 +1,8 @@
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { Compartment, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode';
+import { tags as t } from '@lezer/highlight';
+import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 import type { Theme } from '~/types/theme.js';
 import type { EditorSettings } from './CodeMirrorEditor.js';
 
@@ -25,20 +27,24 @@ function getEditorTheme(settings: EditorSettings) {
     },
     '&.cm-editor': {
       height: '100%',
-      background: 'var(--cm-backgroundColor)',
+      background: 'var(--cm-backgroundColor) !important',
       color: 'var(--cm-textColor)',
+    },
+    '.cm-content': {
+      padding: '14px 0',
     },
     '.cm-cursor': {
       borderLeft: 'var(--cm-cursor-width) solid var(--cm-cursor-backgroundColor)',
     },
     '.cm-scroller': {
-      lineHeight: '1.5',
+      lineHeight: '22px',
+      fontFamily: "'JetBrains Mono', ui-monospace, Menlo, monospace",
       '&:focus-visible': {
         outline: 'none',
       },
     },
     '.cm-line': {
-      padding: '0 0 0 4px',
+      padding: '0',
     },
     '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
       backgroundColor: 'var(--cm-selection-backgroundColorFocused) !important',
@@ -55,15 +61,22 @@ function getEditorTheme(settings: EditorSettings) {
       background: 'var(--cm-activeLineBackgroundColor)',
     },
     '.cm-gutters': {
-      background: 'var(--cm-gutter-backgroundColor)',
+      background: 'var(--cm-gutter-backgroundColor) !important',
       borderRight: 0,
       color: 'var(--cm-gutter-textColor)',
     },
     '.cm-gutter': {
       '&.cm-lineNumbers': {
-        fontFamily: 'Roboto Mono, monospace',
+        fontFamily: "'JetBrains Mono', ui-monospace, Menlo, monospace",
         fontSize: settings.gutterFontSize ?? settings.fontSize ?? '12px',
-        minWidth: '40px',
+        // Build-Streaming board: one 52px column, numbers right-aligned 18px before the code
+        width: '52px',
+        minWidth: '52px',
+        '& .cm-gutterElement': {
+          boxSizing: 'border-box',
+          padding: '0 18px 0 0',
+          textAlign: 'right',
+        },
       },
       '& .cm-activeLineGutter': {
         background: 'transparent',
@@ -183,8 +196,36 @@ function getEditorTheme(settings: EditorSettings) {
   });
 }
 
+// Paper code colours (Build-Streaming board): keywords plum, strings green, functions blue, tags rust, attributes amber
+const paperHighlight = HighlightStyle.define([
+  { tag: [t.keyword, t.controlKeyword, t.moduleKeyword, t.operatorKeyword, t.definitionKeyword, t.null, t.bool, t.self], color: '#7A3E9D' },
+  { tag: [t.string, t.special(t.string), t.regexp, t.character], color: '#1F7A4D' },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.className, t.typeName], color: '#2B5C9E' },
+  { tag: [t.tagName, t.angleBracket], color: '#9A3412' },
+  { tag: [t.attributeName, t.propertyName], color: '#8A5A00' },
+  { tag: [t.number, t.integer, t.float], color: '#B42318' },
+  { tag: [t.comment, t.lineComment, t.blockComment], color: '#6B6457', fontStyle: 'italic' },
+  { tag: t.heading, color: '#16140F', fontWeight: '600' },
+  { tag: t.link, color: '#2B5C9E', textDecoration: 'underline' },
+]);
+
+const paperTheme = [
+  EditorView.theme(
+    {
+      '&': { backgroundColor: '#F6F3EC', color: '#16140F' },
+      '.cm-gutters': { backgroundColor: '#F6F3EC', color: '#6B6457' },
+      '&.cm-focused .cm-activeLine': { backgroundColor: '#EFEAE0', boxShadow: 'inset 3px 0 0 #16140F' },
+      '&.cm-focused .cm-activeLineGutter': { color: '#16140F', fontWeight: '500' },
+      '.cm-cursor': { borderLeftColor: '#16140F' },
+      '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'rgba(255,194,26,.35) !important' },
+    },
+    { dark: false },
+  ),
+  syntaxHighlighting(paperHighlight),
+];
+
 function getLightTheme() {
-  return vscodeLight;
+  return paperTheme;
 }
 
 function getDarkTheme() {

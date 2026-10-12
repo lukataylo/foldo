@@ -38,7 +38,7 @@ export function ModelPicker() {
           // preference just won't persist
         }
       }}
-      className="ml-1 rounded-md border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 px-2 py-1 text-xs text-bolt-elements-textSecondary outline-none hover:text-bolt-elements-textPrimary"
+      className="h-[36px] cursor-pointer rounded-[6px] border border-solid border-rule bg-sheet px-[10px] font-mono text-[12px] text-ink outline-none hover:bg-wash focus-visible:shadow-[0_0_0_2px_#FBF8F1,0_0_0_4px_#16140F]"
     >
       {models.map((m) => (
         <option key={m.id} value={m.id}>

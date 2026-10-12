@@ -25,6 +25,12 @@ export async function action({ request }: ActionFunctionArgs) {
   const owned = body.id && db.prepare('SELECT id FROM projects WHERE id = ? AND user_id = ?').get(body.id, user.id);
 
   if (request.method === 'PUT') {
+    // an id that isn't this team's project (deleted in another tab, or someone else's) is never re-created as a copy;
+    // new projects come from a PUT without an id
+    if (body.id && !owned) {
+      return json({ error: 'not found' }, 404);
+    }
+
     if (!Array.isArray(body.messages) || JSON.stringify(body.messages).length > MAX_BYTES) {
       return json({ error: 'bad messages' }, 400);
     }

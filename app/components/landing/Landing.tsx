@@ -410,7 +410,10 @@ function RunYourEvent() {
             </>
           }
         />
-        <ul className="m-0 grid list-none gap-x-8 gap-y-6 p-0 md:grid-cols-2 lg:grid-cols-3 lg:gap-y-10">
+        <div className="-mt-2 md:hidden">
+          <Lead>Hackathons, classrooms and workshops. Everyone builds in the browser, and nobody installs a thing.</Lead>
+        </div>
+        <ul className="m-0 grid list-none gap-x-8 gap-y-5 p-0 md:grid-cols-2 md:gap-y-6 lg:grid-cols-3 lg:gap-y-10">
           {EVENT_FEATURES.map((f, i) => (
             <li key={f.title} className={`flex flex-col gap-2 border-t border-solid pt-4 lg:pt-5 ${i === 0 ? 'border-ink' : 'border-rule'}`}>
               <span aria-hidden="true" className="font-mono text-[12px] text-pencil">
@@ -421,10 +424,7 @@ function RunYourEvent() {
             </li>
           ))}
         </ul>
-        <div className="flex flex-col gap-3 md:hidden">
-          <Lead>Hackathons, classrooms and workshops. Everyone builds in the browser, and nobody installs a thing.</Lead>
-          <div className="flex">{cta}</div>
-        </div>
+        <div className="flex md:hidden">{cta}</div>
       </div>
     </section>
   );

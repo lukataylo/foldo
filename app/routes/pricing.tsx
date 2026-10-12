@@ -100,7 +100,7 @@ function Notify() {
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? 'notify-error' : 'notify-help'}
           onInput={() => setError('')}
-          className="input min-w-0 flex-1"
+          className="input w-full min-w-0 sm:flex-1"
         />
         <button type="submit" className="btn-secondary btn-lg shrink-0" aria-busy={busy || undefined} disabled={busy}>
           {busy && <Icon.Spinner />}
@@ -148,7 +148,7 @@ export default function Pricing() {
         />
       </section>
 
-      <div className="grid items-start gap-6 lg:grid-cols-3" data-testid="foldo-pricing">
+      <div className="grid gap-6 lg:grid-cols-3" data-testid="foldo-pricing">
         <section aria-labelledby="plan-free" className={card}>
           <PlanHead
             id="plan-free"

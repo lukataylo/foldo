@@ -54,6 +54,8 @@ db.exec(`
   -- gallery thumbnails drawn per team per day (the per-team cap; never part of a team's message quota)
   CREATE TABLE IF NOT EXISTS preview_usage (day TEXT NOT NULL, user_id TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, user_id));
   CREATE TABLE IF NOT EXISTS likes (project_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (project_id, user_id));
+  -- "Get notified" about Foldo Pro (/pricing); admins download it as CSV
+  CREATE TABLE IF NOT EXISTS waitlist (email TEXT PRIMARY KEY, created INTEGER NOT NULL);
 `);
 
 // additive migrations for databases created before these columns existed

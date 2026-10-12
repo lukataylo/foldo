@@ -32,7 +32,9 @@ import {
   defaultProviderId,
   fallbackProviderId,
   encrypt,
+  eventMode,
   getSetting,
+  legalInfo,
   globalLimit,
   HARNESSES,
   harnessId,
@@ -58,6 +60,7 @@ import { snapshot } from '~/lib/.server/metrics';
 import { autoBackupsPaused, listBackups, runBackup } from '~/lib/.server/backup';
 import { db, today } from '~/lib/.server/db';
 import { getModel } from '~/lib/.server/llm/model';
+import { normalizeEmail } from '~/lib/email';
 import { previewsToday, queuePreview } from '~/lib/.server/previews';
 import { iconProps } from '~/lib/templates/client';
 
@@ -171,11 +174,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       announcement: getSetting('announcement'),
       invite_code: inviteCode(),
       signups_open: signupsOpen(),
+      event_mode: eventMode(),
       per_user_limit: perTeam,
       global_limit: globalLimit(),
     },
     users,
     gallery,
+    legal: legalInfo(),
+    waitlist: (db.prepare('SELECT COUNT(*) AS n FROM waitlist').get() as { n: number }).n,
   });
 }
 
@@ -321,7 +327,26 @@ export async function action({ request }: ActionFunctionArgs) {
     setSetting('per_user_limit', s('per_user_limit'));
     setSetting('global_limit', s('global_limit'));
 
+    // the console form always sends it; scripts that leave it out keep the current mode
+    if (f.has('event_mode')) {
+      setSetting('event_mode', f.get('event_mode') ? '1' : '');
+    }
+
     return json({ ok: 'Settings saved.' });
+  }
+
+  if (intent === 'save-legal') {
+    const email = s('contact_email');
+
+    if (email && !normalizeEmail(email)) {
+      return json({ error: 'Contact email must be a valid email address.' }, 400);
+    }
+
+    setSetting('legal_name', s('legal_name').slice(0, 120));
+    setSetting('contact_email', email ? normalizeEmail(email)! : '');
+    setSetting('legal_country', s('legal_country').slice(0, 80));
+
+    return json({ ok: 'Company details saved.' });
   }
 
   if (intent === 'save-limits') {
@@ -609,6 +634,7 @@ export default function Admin() {
         <Emergency d={d} busy={busy} />
         <Models d={d} busy={busy} post={post} />
         <EventSettings d={d} busy={busy} />
+        <CompanySettings d={d} busy={busy} />
         <Teams d={d} busy={busy} temp={result?.temp} />
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(440px,100%),1fr))] items-start gap-6">
           <Gallery d={d} busy={busy} />
@@ -1114,14 +1140,33 @@ function Models({ d, busy, post }: { d: any; busy: Busy; post: (f: Record<string
 function EventSettings({ d, busy }: { d: any; busy: Busy }) {
   const st = d.settings;
   const [signups, setSignups] = useState<boolean>(st.signups_open);
+  const [eventOn, setEventOn] = useState<boolean>(st.event_mode);
 
   return (
     <section id="event" aria-labelledby="a-event" className={cx(cardClass, 'gap-4')}>
       <SectionHead id="a-event" title="Event & limits">
         <span className="text-[13px] text-pencil">Changes apply to the next message each team sends.</span>
       </SectionHead>
-      <Form method="post" preventScrollReset onReset={() => setSignups(st.signups_open)} className="grid grid-cols-[repeat(auto-fit,minmax(min(260px,100%),1fr))] gap-x-5 gap-y-4">
+      <Form
+        method="post"
+        preventScrollReset
+        onReset={() => {
+          setSignups(st.signups_open);
+          setEventOn(st.event_mode);
+        }}
+        className="grid grid-cols-[repeat(auto-fit,minmax(min(260px,100%),1fr))] gap-x-5 gap-y-4"
+      >
         <input type="hidden" name="signups_open" value={signups ? 'on' : ''} />
+        <input type="hidden" name="event_mode" value={eventOn ? 'on' : ''} />
+        <div className="col-span-full flex items-center justify-between gap-4 rounded-[10px] border border-rule2 bg-paper px-4 py-3" data-testid="foldo-admin-event-mode">
+          <div className="flex min-w-0 flex-col gap-[2px]">
+            <span id="a-evmode-l" className="input-label">
+              Event mode
+            </span>
+            <span className="input-help">On shows the event bar, tracks, team wording and the code of conduct. Off is the everyday platform.</span>
+          </div>
+          <Switch on={eventOn} label="a-evmode-l" onClick={() => setEventOn(!eventOn)} />
+        </div>
         <div className="flex flex-col gap-[6px]">
           <label htmlFor="a-ev-name" className="input-label">
             Event name
@@ -1180,6 +1225,56 @@ function EventSettings({ d, busy }: { d: any; busy: Busy }) {
           <button name="intent" value="save-settings" className="btn-primary btn-lg" aria-busy={busy('save-settings')} disabled={busy('save-settings')}>
             {busy('save-settings') && <Icon.Spinner />}
             Save settings
+          </button>
+        </div>
+      </Form>
+    </section>
+  );
+}
+
+// who runs Foldo, shown on /privacy, /terms and /pricing; blank fields render as marked placeholders there
+function CompanySettings({ d, busy }: { d: any; busy: Busy }) {
+  const legal = d.legal as { name: string; email: string; country: string };
+
+  return (
+    <section id="company" aria-labelledby="a-company" className={cx(cardClass, 'gap-4')}>
+      <SectionHead id="a-company" title="Company & contact">
+        <span className="text-[13px] text-pencil">Shown on Pricing, Privacy and Terms. Blank shows a placeholder.</span>
+      </SectionHead>
+      <Form method="post" preventScrollReset className="grid grid-cols-[repeat(auto-fit,minmax(min(260px,100%),1fr))] gap-x-5 gap-y-4">
+        <div className="flex flex-col gap-[6px]">
+          <label htmlFor="a-legal-name" className="input-label">
+            Legal name
+          </label>
+          <input id="a-legal-name" name="legal_name" className="input" defaultValue={legal.name} maxLength={120} placeholder="Foldo Ltd" />
+        </div>
+        <div className="flex flex-col gap-[6px]">
+          <label htmlFor="a-legal-email" className="input-label">
+            Contact email
+          </label>
+          <input id="a-legal-email" name="contact_email" type="email" className="input" defaultValue={legal.email} maxLength={254} placeholder="hello@example.com" />
+        </div>
+        <div className="flex flex-col gap-[6px]">
+          <label htmlFor="a-legal-country" className="input-label">
+            Governing law (country)
+          </label>
+          <input id="a-legal-country" name="legal_country" className="input" defaultValue={legal.country} maxLength={80} placeholder="England and Wales" />
+        </div>
+        <div className="col-span-full flex flex-wrap items-center justify-between gap-[10px] border-t border-rule2 pt-[14px]">
+          <p className="m-0 text-[13px] text-ink2" data-testid="foldo-admin-waitlist">
+            Pro waitlist: <span className="font-mono">{n(d.waitlist)}</span> {d.waitlist === 1 ? 'email' : 'emails'}
+            {d.waitlist > 0 && (
+              <>
+                {' · '}
+                <a href="/api/admin-waitlist" download className="font-medium text-ink underline underline-offset-3">
+                  Download CSV
+                </a>
+              </>
+            )}
+          </p>
+          <button name="intent" value="save-legal" className="btn-primary btn-lg" aria-busy={busy('save-legal')} disabled={busy('save-legal')}>
+            {busy('save-legal') && <Icon.Spinner />}
+            Save details
           </button>
         </div>
       </Form>

@@ -380,7 +380,9 @@ try {
   const xssPage = await anon.req(`/p/${xssShare.shareId}`);
   check(P2, 'a hostile project title is escaped in share page meta', xssPage.status === 200 && !xssPage.text.includes('<script>alert(1)'));
   await A.req('/api/projects', { method: 'POST', body: { id: xssId, share: false } });
-  check(P2, 'a revoked share link 404s', (await anon.req(`/p/${xssShare.shareId}`)).status === 404);
+  const revoked = await anon.req(`/p/${xssShare.shareId}`);
+  check(P2, 'a revoked share link 404s', revoked.status === 404);
+  check(P2, 'the 404 page has a plain head (no fallback document, so no gap above the page)', !/<head>.*<main/s.test(revoked.text.split('<div id="root"')[0]) && revoked.text.includes('<title>Page not found · Foldo</title>'));
 
   // ============ Persona 3: malicious teammate B ============
   const B = new Client();

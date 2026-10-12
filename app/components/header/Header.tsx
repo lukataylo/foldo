@@ -84,7 +84,7 @@ export function Header() {
         <a href="/" aria-label="Foldo home" className="flex flex-none">
           <img src="/foldo-mark.svg" alt="" width={24} height={24} className="block" />
         </a>
-        <span aria-hidden="true" className="h-[20px] w-px flex-none bg-rule" />
+        <span aria-hidden="true" className="h-[20px] w-px flex-none bg-rule lt-md:hidden" />
         {viewing ? (
           <h1 className="m-0 min-w-0 truncate font-serif text-[21px] font-normal leading-none" data-testid="foldo-project-title">
             {title || 'Shared project'}
@@ -97,9 +97,12 @@ export function Header() {
           </ClientOnly>
         )}
         {viewing ? (
-          data.sharedInfo && <span className="whitespace-nowrap text-[12px] text-pencil">by {data.sharedInfo.owner}</span>
+          data.sharedInfo && <span className="whitespace-nowrap text-[12px] text-pencil lt-md:hidden">by {data.sharedInfo.owner}</span>
         ) : (
-          <ClientOnly>{() => <SaveStatus />}</ClientOnly>
+          // phones: no room beside the Chat / Preview switch; the offline strip under the header says the same
+          <span className="contents lt-md:hidden">
+            <ClientOnly>{() => <SaveStatus />}</ClientOnly>
+          </span>
         )}
       </div>
       <div className="flex flex-none items-center gap-[10px]">

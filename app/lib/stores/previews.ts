@@ -28,6 +28,16 @@ export class PreviewsStore {
       if (message.type === 'PREVIEW_UNCAUGHT_EXCEPTION' || message.type === 'PREVIEW_UNHANDLED_REJECTION') {
         const detail = message as { message?: string; stack?: string };
 
+        /*
+         * WebContainer's own preview script (obfuscated, `_0x…` frames) sometimes throws while a dev server is swapped
+         * during a replay ("Failed to construct 'URL'"): that is not the team's app, so no "Your app hit an error".
+         */
+        const firstFrame = detail.stack?.split('\n').find((line) => /^\s*at /.test(line)) ?? '';
+
+        if (/\b_0x[0-9a-f]{4,}\b/.test(firstFrame)) {
+          return;
+        }
+
         previewError.set([detail.message, detail.stack?.split('\n').slice(0, 4).join('\n')].filter(Boolean).join('\n'));
       }
     });

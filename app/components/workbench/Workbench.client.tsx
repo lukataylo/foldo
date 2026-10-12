@@ -166,7 +166,9 @@ export const Workbench = memo(({ chatStarted, isStreaming, layout, viewer }: Wor
           <>
             <button
               type="button"
-              className={`${toolButton} px-[10px] lt-md:hidden`}
+              aria-label="Download zip"
+              title="Download zip"
+              className={`${toolButton} px-[10px] lt-md:hidden lt-lg:w-[32px] lt-lg:justify-center lt-lg:px-0`}
               data-testid="foldo-download-zip"
               onClick={() => {
                 if (!downloadProjectZip(workbenchStore.files.get(), description.get() ?? 'foldo-project')) {
@@ -175,7 +177,8 @@ export const Workbench = memo(({ chatStarted, isStreaming, layout, viewer }: Wor
               }}
             >
               <SIcon.Download size={15} />
-              Download zip
+              {/* a narrow workspace (tablets) keeps the address bar readable: icon only */}
+              <span className="lt-lg:hidden">Download zip</span>
             </button>
             {ownerTools && (
               <button

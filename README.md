@@ -544,7 +544,7 @@ Two one-page guides for participants, ready to print or share (A4 PDF):
 
 | | |
 |---|---|
-| <a href="docs/How-to-vibe-code.pdf"><img src="docs/How-to-vibe-code.png" alt="Field guide No. 1: How to vibe code" width="280"></a> | <a href="docs/How-to-win-the-hackathon.pdf"><img src="docs/How-to-win-the-hackathon.png" alt="Field guide No. 2: How to win the hackathon" width="280"></a> |
+| <a href="docs/How-to-vibe-code.pdf"><img src="docs/How-to-vibe-code.png" alt="Field guide: How to vibe code" width="280"></a> | <a href="docs/How-to-win-the-hackathon.pdf"><img src="docs/How-to-win-the-hackathon.png" alt="Field guide: How to win the hackathon" width="280"></a> |
 | **[How to vibe code](docs/How-to-vibe-code.pdf)**: five principles, a vague-vs-clear prompt, what to do when it breaks, and the first half hour. | **[How to win the hackathon](docs/How-to-win-the-hackathon.pdf)**: six rules, the 2-minute demo script, and a timeline to judging. |
 
 ---

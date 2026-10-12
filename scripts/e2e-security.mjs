@@ -222,7 +222,7 @@ try {
   const PL = 'platform visitor';
   const V0 = new Client();
   const pricing = await V0.req('/pricing');
-  check(PL, 'pricing shows the real daily allowance from settings, with no invented prices', pricing.text.includes('3 AI messages a day') && !/[$€£]\s?\d/.test(pricing.text), /\d+ AI messages a day/.exec(pricing.text)?.[0]);
+  check(PL, 'pricing shows the real daily allowance from settings and Pro\'s sample price, with checkout coming soon', pricing.text.includes('3 AI messages a day') && pricing.text.includes('£12') && pricing.text.includes('Checkout is coming soon') && !pricing.text.includes('[CONTACT EMAIL]'), /\d+ AI messages a day/.exec(pricing.text)?.[0]);
   check(PL, 'pricing has Pro (coming soon) and an events section', pricing.text.includes('Coming soon') && pricing.text.includes('id="events"'));
   const privacyOff = await V0.req('/privacy');
   const termsOff = await V0.req('/terms');

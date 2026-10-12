@@ -3,10 +3,13 @@ import { useFetcher, useLoaderData } from '@remix-run/react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { PageShell } from '~/components/PageShell';
 import { SiteFooter } from '~/components/landing/MarketingNav';
-import { ContactEmail, type LegalData } from '~/components/landing/legal';
+import type { LegalData } from '~/components/landing/legal';
 import { Icon } from '~/components/ui/icons';
 import { getUser, shell } from '~/lib/.server/auth';
 import { legalInfo, perUserLimit } from '~/lib/.server/config';
+
+// a sample price for Pro, shown while checkout is not open yet
+const PRO_PRICE = '£12';
 import { normalizeEmail } from '~/lib/email';
 
 export const meta = () => [
@@ -114,7 +117,7 @@ function Notify() {
         </p>
       ) : (
         <span id="notify-help" className="input-help">
-          One email when Pro is ready. Nothing else.
+          Checkout is coming soon. One email when it opens, nothing else.
         </span>
       )}
     </fetcher.Form>
@@ -123,9 +126,8 @@ function Notify() {
 
 export default function Pricing() {
   const data = useLoaderData<typeof loader>() as unknown as PricingData;
-  const { legal, perDay } = data;
+  const { perDay } = data;
   const signedIn = Boolean(data.email);
-  const mail = legal.email ? `mailto:${legal.email}?subject=${encodeURIComponent('Foldo for events')}` : '';
 
   return (
     <PageShell data={data} active="pricing" mainClassName="flex flex-col gap-12 pb-24 pt-8 md:gap-16 md:pt-12" footer={<SiteFooter compact />}>
@@ -182,9 +184,21 @@ export default function Pricing() {
             id="plan-pro"
             tag={<span className="pill-muted self-start">Coming soon</span>}
             title="Pro"
-            blurb="For people who build with Foldo every day. We’re still shaping it, and nothing will cost money without a clear price first."
+            blurb="For people who build with Foldo every day. Free stays free."
           />
-          <div className="border-t border-solid border-rule2 pt-5">
+          <p className="m-0 flex items-baseline gap-2" data-testid="foldo-pricing-pro-price">
+            <span className="font-serif text-[48px] leading-none tracking-[-.01em] text-ink">{PRO_PRICE}</span>
+            <span className="text-[15px] text-pencil">per month</span>
+          </p>
+          <ul className="m-0 flex list-none flex-col gap-[10px] border-t border-solid border-rule2 p-0 pt-5">
+            <Feature>
+              <strong className="font-semibold text-ink">{`${perDay * 10} AI messages a day`}</strong>
+            </Feature>
+            <Feature>Priority on the strongest AI models</Feature>
+            <Feature>Private share links with a password</Feature>
+            <Feature>Everything in Free</Feature>
+          </ul>
+          <div className="mt-auto">
             <Notify />
           </div>
         </section>
@@ -204,15 +218,6 @@ export default function Pricing() {
             <Feature>A public gallery with likes</Feature>
             <Feature>An admin console with pause and backups</Feature>
           </ul>
-          {mail ? (
-            <a href={mail} className="btn-secondary btn-lg mt-auto" data-testid="foldo-pricing-contact">
-              Talk to us <Icon.ArrowRight />
-            </a>
-          ) : (
-            <p className="m-0 mt-auto text-[15px] text-ink2" data-testid="foldo-pricing-contact">
-              Email <ContactEmail legal={legal} /> to plan your event.
-            </p>
-          )}
         </section>
       </div>
     </PageShell>

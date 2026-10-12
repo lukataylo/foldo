@@ -162,7 +162,7 @@ function Step({ action, row, update }: { action: ActionState; row: Row; update: 
           </pre>
           <button
             type="button"
-            className="btn-primary btn-sm"
+            className="btn-secondary btn-sm"
             onClick={() => requestFix(action.type === 'shell' ? `The command "${action.content.trim()}" failed:\n${action.error}` : action.error)}
           >
             <SIcon.Wrench size={15} /> Fix this error

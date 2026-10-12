@@ -374,7 +374,11 @@ try {
   const hijack = await B.req('/api/projects', { method: 'PUT', body: { id: idA, description: 'PWNED', messages: [{ role: 'user', content: 'x' }] } });
   const aAfter = new DatabaseSync(DB).prepare('SELECT description, user_id FROM projects WHERE id = ?').get(idA);
   check(P3, "PUT with A's id can't overwrite A's project", aAfter.description === 'Alpha app', JSON.stringify(aAfter));
-  check(P3, 'the hijack attempt just created a separate project for B', hijack.status === 200 && hijack.json().id !== idA);
+  check(P3, "the hijack attempt is a 404 and creates nothing for B", hijack.status === 404 && (await B.req('/api/projects')).json().length === 0, `${hijack.status}`);
+  const gone = await B.save('Soon deleted');
+  await B.req('/api/projects', { method: 'DELETE', body: { id: gone } });
+  const ghost = await B.req('/api/projects', { method: 'PUT', body: { id: gone, description: 'Soon deleted', messages: [{ role: 'user', content: 'x' }] } });
+  check(P3, 'autosave of a project deleted in another tab is a 404, not a silent re-create', ghost.status === 404 && (await B.req('/api/projects')).json().length === 0, `${ghost.status}`);
   check(P3, "cannot delete A's project", (await B.req('/api/projects', { method: 'DELETE', body: { id: idA } })).status === 404);
   check(P3, "cannot unshare/re-share A's project", (await B.req('/api/projects', { method: 'POST', body: { id: idA, share: false } })).status === 404);
   check(P3, 'project list only contains own projects', (await B.req('/api/projects')).json().every((p) => p.id !== idA));
@@ -682,6 +686,17 @@ try {
   await new Promise((r) => setTimeout(r, 800));
   check(P11, 'Stop in the browser closes the call to the AI provider', llmSeen.closedEarly === 1, llmSeen.closedEarly);
   check(P11, 'after Stop the team can send again right away', (await L2.chat('hello')).status === 200);
+
+  // Stop while Foldo is still planning (before the first word): that message is not counted
+  const beforePlan = Number((await L2.chat('hello')).headers.get('x-foldo-remaining'));
+  const acPlan = new AbortController();
+  const planning = fetch(`${BASE}/api/chat`, { method: 'POST', signal: acPlan.signal, headers: { 'content-type': 'application/json', cookie: L2.cookie, 'x-forwarded-for': L2.ip }, body: JSON.stringify({ messages: [{ role: 'user', content: 'SLOW plan it' }] }) }).catch(() => undefined);
+  await new Promise((r) => setTimeout(r, 400));
+  acPlan.abort();
+  await planning;
+  await new Promise((r) => setTimeout(r, 1800));
+  const afterPlan = Number((await L2.chat('hello')).headers.get('x-foldo-remaining'));
+  check(P11, 'Stop before the first word is refunded', afterPlan === beforePlan - 1, `${beforePlan} -> ${afterPlan}`);
 
   const file = (body) => `<boltArtifact id="x" title="X"><boltAction type="file" filePath="src/App.jsx">${body}</boltAction></boltArtifact>`;
   const bulky = 'x'.repeat(60_000);

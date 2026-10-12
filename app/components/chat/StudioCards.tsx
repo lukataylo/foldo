@@ -34,7 +34,7 @@ export function CutOffCard({ left, onContinue, blocked }: { left?: number; onCon
           title={blocked}
           aria-describedby="foldo-cutoff-note"
           onClick={onContinue}
-          className="btn-primary btn-sm"
+          className="btn-primary btn-sm disabled:!text-pencil"
         >
           Continue <Icon.ArrowRight size={14} />
         </button>
@@ -139,6 +139,19 @@ export function RemixCard() {
         <p className="m-0 text-[15px] text-ink2">Send a message to remix it into your own copy. The original stays exactly as it is.</p>
       </div>
     </article>
+  );
+}
+
+// the owner opened their own share link: no remix, just the way back to the studio
+export function OwnerCard({ projectId }: { projectId: string }) {
+  return (
+    <div role="status" data-testid="foldo-owner-card" className="flex flex-col items-start gap-3 rounded-[12px] border border-rule bg-sheet p-5">
+      <h2 className="m-0 font-serif text-[28px] font-normal leading-[1.05]">This is your project</h2>
+      <p className="m-0 text-[14px] text-ink2">This is the link others see. Open it in the studio to keep building; your changes show here after they save.</p>
+      <a href={`/chat/${projectId}`} className="btn-primary btn-md no-underline">
+        Open in studio <Icon.ArrowRight />
+      </a>
+    </div>
   );
 }
 

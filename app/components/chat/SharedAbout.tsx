@@ -8,13 +8,14 @@ import { modificationsRegex } from '~/utils/diff';
 import { SIcon } from './studio-icons';
 import { trackArt } from './TemplateIntro';
 
-export interface SharedInfo {
+interface SharedInfo {
   shareId: string;
   owner: string;
   listed: boolean;
   likes: number;
   liked: boolean;
   mine: boolean;
+  projectId?: string;
 }
 
 interface SharedData {
@@ -35,7 +36,7 @@ interface Prompt {
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // one line per prompt for the "Prompt history": what the team asked, and what the reply did with it
-export function promptHistory(messages: Message[] = []): Prompt[] {
+function promptHistory(messages: Message[] = []): Prompt[] {
   const prompts: Prompt[] = [];
   let built = false;
 

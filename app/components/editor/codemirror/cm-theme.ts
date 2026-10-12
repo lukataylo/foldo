@@ -44,7 +44,7 @@ function getEditorTheme(settings: EditorSettings) {
       },
     },
     '.cm-line': {
-      padding: '0 0 0 4px',
+      padding: '0',
     },
     '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
       backgroundColor: 'var(--cm-selection-backgroundColorFocused) !important',
@@ -69,7 +69,14 @@ function getEditorTheme(settings: EditorSettings) {
       '&.cm-lineNumbers': {
         fontFamily: "'JetBrains Mono', ui-monospace, Menlo, monospace",
         fontSize: settings.gutterFontSize ?? settings.fontSize ?? '12px',
-        minWidth: '40px',
+        // Build-Streaming board: one 52px column, numbers right-aligned 18px before the code
+        width: '52px',
+        minWidth: '52px',
+        '& .cm-gutterElement': {
+          boxSizing: 'border-box',
+          padding: '0 18px 0 0',
+          textAlign: 'right',
+        },
       },
       '& .cm-activeLineGutter': {
         background: 'transparent',
@@ -207,7 +214,6 @@ const paperTheme = [
     {
       '&': { backgroundColor: '#F6F3EC', color: '#16140F' },
       '.cm-gutters': { backgroundColor: '#F6F3EC', color: '#6B6457' },
-      '.cm-gutterElement': { paddingRight: '18px !important' },
       '&.cm-focused .cm-activeLine': { backgroundColor: '#EFEAE0', boxShadow: 'inset 3px 0 0 #16140F' },
       '&.cm-focused .cm-activeLineGutter': { color: '#16140F', fontWeight: '500' },
       '.cm-cursor': { borderLeftColor: '#16140F' },

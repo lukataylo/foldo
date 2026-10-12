@@ -15,8 +15,8 @@ import { classNames } from '~/utils/classNames';
 import { Composer } from './Composer';
 import { Messages } from './Messages.client';
 import { SharedAbout, useSharedMeta } from './SharedAbout';
-import { CutOffCard, OriginalConversation, PausedCard, QuotaCard, RemixCard, RemixNote, UsedUpBar } from './StudioCards';
-import { cutOffShown, useLayout, useOnline, usePause } from './studio-state';
+import { CutOffCard, OriginalConversation, OwnerCard, PausedCard, QuotaCard, RemixCard, RemixNote, UsedUpBar } from './StudioCards';
+import { cutOffShown, STOPPED, useLayout, useOnline, usePause } from './studio-state';
 
 interface BaseChatProps {
   textareaRef?: React.RefObject<HTMLTextAreaElement> | undefined;
@@ -42,6 +42,7 @@ interface LoaderBits {
   template?: string;
   messages?: Message[];
   paused?: { paused: boolean; message: string; since?: number | null };
+  sharedInfo?: { projectId?: string };
 }
 
 export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
@@ -77,7 +78,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     const lastMessage = messages.at(-1);
     const { aborted } = useStore(chatStore);
     // a reply the team stopped on purpose is not "cut off"
-    const cutOff = chatStarted && !isStreaming && !aborted && lastMessage?.role === 'assistant' && artifacts[lastMessage.id]?.closed === false;
+    const cutOff = chatStarted && !isStreaming && !aborted && !lastMessage?.annotations?.includes(STOPPED) && lastMessage?.role === 'assistant' && artifacts[lastMessage.id]?.closed === false;
 
     useEffect(() => cutOffShown.set(Boolean(cutOff)), [cutOff]);
 
@@ -114,6 +115,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
 
     const viewer = Boolean(data.shared) && !data.email;
     const remixing = Boolean(data.shared) && Boolean(data.email) && !id;
+    const ownProject = remixing ? data.sharedInfo?.projectId : undefined;
     const original = data.messages?.length ?? 0;
     const paused = pause?.paused;
 
@@ -141,7 +143,9 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
 
     let composer: React.ReactNode;
 
-    if (paused && !isStreaming) {
+    if (ownProject) {
+      composer = null;
+    } else if (paused && !isStreaming) {
       composer = <PausedCard since={pause?.since} />;
     } else if (left === 0 && !isStreaming) {
       composer = (
@@ -193,7 +197,13 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                     >
                       {conversation(messages.slice(0, original), false)}
                     </OriginalConversation>
-                    {messages.length <= original ? <RemixCard /> : conversation(messages.slice(original))}
+                    {ownProject ? (
+                      <OwnerCard projectId={ownProject} />
+                    ) : messages.length <= original ? (
+                      <RemixCard />
+                    ) : (
+                      conversation(messages.slice(original))
+                    )}
                   </>
                 ) : (
                   conversation(messages)

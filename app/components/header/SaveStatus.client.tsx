@@ -4,7 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import { SIcon } from '~/components/chat/studio-icons';
 import { clock, useOnline } from '~/components/chat/studio-state';
 import { Icon } from '~/components/ui/icons';
-import { lastSaved, saveState } from '~/lib/persistence';
+import { lastSaved, projectGone, saveState } from '~/lib/persistence';
+
+// kept so the browser holds the popover's picture in its cache before the line drops
+let offlineArt: HTMLImageElement | undefined;
 
 /*
  * Next to the project name: "Saved" / "Saving…", or a Reconnecting pill while offline or a save is retrying. The pill
@@ -18,10 +21,24 @@ export function SaveStatus() {
   const [open, setOpen] = useState(false);
   const shownOnce = useRef(false);
   const wrap = useRef<HTMLSpanElement>(null);
+  const gone = useStore(projectGone);
   const trouble = !isOnline || state === 'retrying' || state === 'failed';
+  const [announce, setAnnounce] = useState('');
+  const previous = useRef(state);
+
+  // screen readers hear the outcome of a save (and a failure), not every "Saving…"
+  useEffect(() => {
+    if (state === 'saved' && previous.current !== 'saved') {
+      setAnnounce('Saved');
+    } else if (state === 'failed' && previous.current !== 'failed') {
+      setAnnounce('Not saved');
+    }
+
+    previous.current = state;
+  }, [state]);
 
   useEffect(() => {
-    if (trouble && !shownOnce.current) {
+    if (trouble && !shownOnce.current && !gone) {
       shownOnce.current = true;
       setOpen(true);
     }
@@ -32,9 +49,11 @@ export function SaveStatus() {
     }
   }, [trouble]);
 
-  // the popover's picture has to be in the cache before the line drops
   useEffect(() => {
-    new Image().src = '/art/offline.webp';
+    if (!offlineArt) {
+      offlineArt = new Image();
+      offlineArt.src = '/art/offline.webp';
+    }
   }, []);
 
   useEffect(() => {
@@ -58,11 +77,18 @@ export function SaveStatus() {
     };
   }, [open]);
 
+  const live = (
+    <span role="status" className="sr-only">
+      {announce}
+    </span>
+  );
+
   if (!trouble) {
     return (
-      <span data-testid="foldo-save-status" role="status" className="inline-flex flex-none items-center gap-1 whitespace-nowrap text-[12px] text-pencil">
+      <span data-testid="foldo-save-status" className="inline-flex flex-none items-center gap-1 whitespace-nowrap text-[12px] text-pencil">
         {state === 'saving' ? <SIcon.Arc /> : <Icon.Check size={14} strokeWidth={1.5} />}
         {state === 'saving' ? 'Saving…' : 'Saved'}
+        {live}
       </span>
     );
   }
@@ -73,13 +99,14 @@ export function SaveStatus() {
         type="button"
         data-testid="foldo-save-status"
         aria-expanded={open}
-        aria-controls="foldo-save-pop"
+        aria-controls={open ? 'foldo-save-pop' : undefined}
         onClick={() => setOpen(!open)}
-        className="inline-flex h-[24px] items-center gap-[5px] whitespace-nowrap rounded-full border border-warning-border bg-warning-bg px-[9px] text-[12px] font-medium text-warning"
+        className="inline-flex h-[24px] items-center gap-[5px] whitespace-nowrap rounded-full leading-[18px] border border-warning-border bg-warning-bg px-[9px] text-[12px] font-medium text-warning"
       >
         <SIcon.Arc size={13} />
         {state === 'failed' && isOnline ? 'Not saved' : 'Reconnecting…'}
       </button>
+      {live}
       {open && (
         <div
           id="foldo-save-pop"

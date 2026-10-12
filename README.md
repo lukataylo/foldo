@@ -115,9 +115,10 @@ that asked for it, or in the tab of whoever opens a share link.
    the chat. `<boltArtifact>` blocks become a card in the workbench, and each `<boltAction type="file" filePath="…">` or
    `<boltAction type="shell">` becomes an action.
 7. **Running (`runtime/action-runner.ts`).** All replies share one action queue. File actions are written with
-   `webcontainer.fs.writeFile`. In a template project a `package.json` from the model is merged over the pack's own
-   (`runtime/package-merge.ts`): the reply's scripts and versions win, but nothing the pack installed is dropped, so a
-   partial `package.json` can't prune React or the Vite plugin. Shell actions run in the WebContainer shell with a
+   `webcontainer.fs.writeFile`. In a template project a `package.json` from the model is checked against the pack's original
+   one (`runtime/package-merge.ts`): any pack package or script the reply left out is put back, so a partial
+   `package.json` can't prune React or the Vite plugin. Everything else is the reply's: it can change versions and remove
+   packages it added, so a bad package can always be taken out again. Shell actions run in the WebContainer shell with a
    5-minute timeout and a check for prompts waiting on input. A dev server (`npm run dev` and similar) runs beside the
    queue, and starting a new one stops the old one.
 8. **Preview.** When the dev server opens a port, the WebContainer reports it and the workbench shows it in the preview
@@ -132,9 +133,13 @@ A project is its chat. The conversation is saved; no file snapshot is stored.
   seconds while one streams. Saves are serialised, so the first one can't create two projects. Failed saves retry after
   1, 3, 8 and 15 seconds, so a server restart or a Wi-Fi blip loses nothing. The header shows *Saved*, *Saving*,
   *Reconnecting* or *Not saved*, with a "Try now" option. The first save assigns an id and the URL becomes
-  `/chat/<id>` without a navigation. A project is capped at 5 MB of messages.
+  `/chat/<id>` without a navigation; a `PUT` with an id the team doesn't own (a project deleted in another tab) is a 404,
+  and the studio offers **Save a copy** instead of re-creating it quietly. A message that gets no reply (refused, failed,
+  or stopped before the first word) goes back into the composer and is never saved; Stop on a reply that had started is
+  remembered, so a reload doesn't offer Continue. A project is capped at 5 MB of messages.
 - **Naming.** A project is named after its first artifact's title, or its first prompt. A team can rename it in the
-  studio header or on `/projects`. That sets `projects.renamed`, and autosave then keeps the team's name.
+  studio header (click the name; Enter saves, Esc cancels) or on `/projects`. That sets `projects.renamed`, and autosave
+  then keeps the team's name. A share link opened by its owner shows **Open in studio** instead of the remix prompt.
 - **Reopening.** `/chat/<id>` loads the messages, and the browser replays every reply's actions into a fresh
   WebContainer. Between `beginReplay()` and `endReplay()` only the last bare `npm install` runs, and only the last dev
   server starts, after every file is written. A template project first re-applies its template, then replays the chat
@@ -244,7 +249,7 @@ Each gallery card shows a small wireframe of the app's main screen, drawn by the
 - **Settings** (`/settings`): rename the team, change the password, or delete the account with all its projects and
   likes.
 - **Daily quota.** Each chat message or prompt enhancement costs one message from the team's daily limit. The day is a
-  UTC date. A global daily cap protects the token budget. Failed generations are refunded. Organizers can grant extra
+  UTC date. A global daily cap protects the token budget. Failed generations, and Stop before the first word, are refunded. Organizers can grant extra
   messages for today (up to 1,000 a day per team) or reset today's count. Both are stored as per-day offsets in
   `settings`, so the usage table and spend figures stay truthful.
 - **Concurrency.** Builds per login (default 2, as teams share a login) and a global ceiling of
@@ -632,9 +637,9 @@ It hit the token limit after `max_segments` continuations, or the provider went 
 Raise `max_tokens` or `max_segments` in `/admin` if this is common.
 
 **A template app died with "Cannot find module '@vitejs/plugin-react'".**
-This was a model reply rewriting `package.json` without the pack's packages. Template projects now merge such a reply
-over the pack's `package.json`. If it still happens, the reply ran an install that removed packages; ask the model to
-restore them, or start from the template again.
+This was a model reply rewriting `package.json` without the pack's packages. Template projects now put the pack's
+packages back into such a reply before it is written. If it still happens, something else removed them (a shell
+`npm uninstall`); ask the model to restore them, or start from the template again.
 
 **Saving shows "Reconnecting".**
 The server is restarting or the network dropped. The browser keeps retrying, and the work stays on screen. Nothing is

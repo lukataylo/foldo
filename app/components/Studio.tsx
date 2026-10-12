@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react';
 import { useLoaderData } from '@remix-run/react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import { ClientOnly } from 'remix-utils/client-only';
 import { AppHeader, type ShellData } from '~/components/PageShell';
@@ -12,7 +12,7 @@ import { EventBar } from '~/components/header/EventBar';
 import { Header } from '~/components/header/Header';
 import { copyText } from '~/components/share/ShareDialog';
 import { Icon } from '~/components/ui/icons';
-import { chatId, retrySaveNow, saveState, seedProjectStores, type ProjectLoaderData } from '~/lib/persistence';
+import { chatId, projectGone, retrySaveNow, saveAsCopy, saveState, seedProjectStores, type ProjectLoaderData } from '~/lib/persistence';
 import { chatStore } from '~/lib/stores/chat';
 import { quota } from '~/lib/stores/ui';
 import { workbenchStore } from '~/lib/stores/workbench';
@@ -22,6 +22,7 @@ export interface StudioData extends ShellData {
   url?: string;
   paused?: { paused: boolean; message: string; since?: number | null };
   messages?: unknown[];
+  sharedInfo?: { mine?: boolean };
 }
 
 const PAUSE_COPY = 'The organizers have paused new builds for a moment. Hang tight.';
@@ -55,9 +56,10 @@ export function Studio() {
           <AppHeader data={data} active="build" />
         </>
       )}
-      {data.shared ? <SharedBanner signedIn={Boolean(data.email)} url={data.url} /> : null}
+      {data.shared ? <SharedBanner signedIn={Boolean(data.email)} url={data.url} mine={data.sharedInfo?.mine} /> : null}
       {pause?.paused ? <PausedStrip message={pause.message} since={pause.since} /> : null}
       {started ? <ClientOnly>{() => <OfflineStrip />}</ClientOnly> : null}
+      {started ? <ClientOnly>{() => <GoneStrip />}</ClientOnly> : null}
       <ClientOnly fallback={<BaseChat chatStarted={started} />}>{() => <Chat />}</ClientOnly>
     </div>
   );
@@ -87,6 +89,7 @@ function PausedStrip({ message, since }: { message: string; since?: number | nul
 function OfflineStrip() {
   const isOnline = useOnline();
   const state = useStore(saveState);
+  const gone = useStore(projectGone);
 
   useEffect(
     () =>
@@ -98,7 +101,7 @@ function OfflineStrip() {
     [],
   );
 
-  if (isOnline && state !== 'retrying' && state !== 'failed') {
+  if (gone || (isOnline && state !== 'retrying' && state !== 'failed')) {
     return null;
   }
 
@@ -129,8 +132,43 @@ function OfflineStrip() {
   );
 }
 
+// the open project was deleted elsewhere (another tab, another device): keep the work by saving it as a new project
+function GoneStrip() {
+  const gone = useStore(projectGone);
+  const [busy, setBusy] = useState(false);
+
+  if (!gone) {
+    return null;
+  }
+
+  return (
+    <div
+      role="alert"
+      data-testid="foldo-gone-strip"
+      className="flex min-h-[44px] flex-none items-center gap-[10px] border-b border-warning-border bg-warning-bg px-[22px] py-2 text-[14px]"
+    >
+      <Icon.Warning className="flex-none text-warning" />
+      <span className="whitespace-nowrap font-semibold text-ink">This project was deleted.</span>
+      <span className="min-w-0 truncate text-ink2">Your work is still on screen. Save a copy?</span>
+      <button
+        type="button"
+        aria-busy={busy || undefined}
+        disabled={busy}
+        className="btn-dark btn-sm ml-auto"
+        onClick={async () => {
+          setBusy(true);
+          await saveAsCopy();
+          setBusy(false);
+        }}
+      >
+        Save a copy
+      </button>
+    </div>
+  );
+}
+
 // Shared-Viewer (signed out: Ink strip) and Shared-Remix (signed in: Wash strip); gone once the visitor has remixed it
-function SharedBanner({ signedIn, url }: { signedIn: boolean; url?: string }) {
+function SharedBanner({ signedIn, url, mine }: { signedIn: boolean; url?: string; mine?: boolean }) {
   const remixed = useStore(chatId);
 
   if (remixed) {
@@ -154,7 +192,7 @@ function SharedBanner({ signedIn, url }: { signedIn: boolean; url?: string }) {
         <SIcon.Eye size={18} />
         <span className="min-w-0 truncate text-[14px]">
           <strong className="font-semibold">You’re viewing a shared project.</strong>{' '}
-          <span className="text-ink2">Send a message to remix it into your own copy.</span>
+          <span className="text-ink2">{mine ? 'This is your project’s share link.' : 'Send a message to remix it into your own copy.'}</span>
         </span>
         <button
           type="button"

@@ -101,18 +101,19 @@ export const describeReasoning = (r: string | number) => (typeof r === 'number' 
 
 export function pauseState() {
   const paused = getSetting('paused') === '1';
-  let since = Number(getSetting('paused_at')) || null;
 
-  // remember when the pause began (the studio shows "Since 9:42 pm"), whichever way it was switched on
-  if (paused && !since) {
-    since = Date.now();
-    setSetting('paused_at', String(since));
-  } else if (!paused && since) {
+  return { paused, message: getSetting('pause_message'), since: paused ? Number(getSetting('paused_at')) || null : null };
+}
+
+// the organizer switch: remembers when a pause began (the studio shows "Since 9:42 pm"); re-saving keeps the time
+export function setPaused(on: boolean) {
+  if (on && getSetting('paused') !== '1') {
+    setSetting('paused_at', String(Date.now()));
+  } else if (!on) {
     setSetting('paused_at', '');
-    since = null;
   }
 
-  return { paused, message: getSetting('pause_message'), since };
+  setSetting('paused', on ? '1' : '');
 }
 
 export interface EventInfo {

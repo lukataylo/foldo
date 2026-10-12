@@ -141,6 +141,14 @@ function storeMessages(messages: Message[]) {
     saveState.set('saving');
     const res = await putWithRetry({ id: chatId.get(), description: description.get(), messages, template: activeTemplate.get() });
 
+    if (res?.status === 404) {
+      // deleted elsewhere: say so and offer a copy, instead of quietly re-creating it
+      saveState.set('failed');
+      projectGone.set(true);
+
+      return;
+    }
+
     if (!res || !res.ok) {
       saveState.set('failed');
       toast.error(res?.status === 401 ? 'Please sign in again to save your project. Your work is still on screen.' : SAVE_FAILED, {
@@ -157,6 +165,7 @@ function storeMessages(messages: Message[]) {
 
     saveState.set('saved');
     lastSaved.set(Date.now());
+    toast.dismiss('save-failed');
 
     const { id } = (await res.json()) as { id: string };
 
@@ -171,11 +180,27 @@ function storeMessages(messages: Message[]) {
   return saving;
 }
 
+// the open project was deleted (in another tab or on another device); the studio offers to save a copy
+export const projectGone = atom(false);
+
+export function saveAsCopy() {
+  if (!unsaved) {
+    return Promise.resolve();
+  }
+
+  projectGone.set(false);
+  chatId.set(undefined);
+  shareId.set(null);
+  listed.set(false);
+
+  return storeMessages(unsaved);
+}
+
 // "Try now" (and coming back online): retry a waiting save at once, or save again after one that gave up
 export function retrySaveNow() {
   if (wake) {
     wake();
-  } else if (saveState.get() === 'failed' && unsaved) {
+  } else if (saveState.get() === 'failed' && unsaved && !projectGone.get()) {
     storeMessages(unsaved);
   }
 }

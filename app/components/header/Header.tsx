@@ -5,7 +5,7 @@ import { cutOffShown } from '~/components/chat/studio-state';
 import { Icon } from '~/components/ui/icons';
 import { chatId, description } from '~/lib/persistence';
 import { menuOpen, previewError, quota } from '~/lib/stores/ui';
-import { HeaderActionButtons } from './HeaderActionButtons.client';
+import { HeaderActionButtons, PhoneViewSwitch } from './HeaderActionButtons.client';
 import { ProjectTitle } from './ProjectTitle.client';
 import { SaveStatus } from './SaveStatus.client';
 import { ShareButton } from './ShareButton.client';
@@ -55,7 +55,7 @@ export function Header() {
           >
             Sign in
           </a>
-          <a href="/login?mode=register" className="btn-secondary btn-sm h-[36px] px-3 text-[14px] md:h-[34px] md:px-[14px] md:text-[13px]">
+          <a href="/login?mode=register" className="btn-secondary btn-sm h-[36px] rounded-[8px] px-3 text-[14px] md:h-[34px] md:px-[14px] md:text-[13px]">
             Sign up free
           </a>
         </nav>
@@ -101,11 +101,12 @@ export function Header() {
       </div>
       <div className="flex flex-none items-center gap-[10px]">
         {left === 0 && (
-          <span className="pill-warning lt-md:hidden" data-testid="foldo-quota-pill">
+          <span className="pill-warning leading-[18px] lt-md:hidden" data-testid="foldo-quota-pill">
             <span className="pill-dot" />0 messages left today
           </span>
         )}
         <ClientOnly>{() => <HeaderActionButtons />}</ClientOnly>
+        <ClientOnly>{() => <PhoneViewSwitch />}</ClientOnly>
         <ClientOnly>{() => <ShareButton tone={shareTone} />}</ClientOnly>
         <UserMenu email={email} name={name} admin={admin} remaining={remaining} limit={limit} variant="avatar" />
       </div>

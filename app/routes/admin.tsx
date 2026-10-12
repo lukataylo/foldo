@@ -51,6 +51,7 @@ import {
   REASONING_LEVELS,
   reasoningEffort,
   signupsOpen,
+  setPaused,
 } from '~/lib/.server/config';
 import { isAdminRow, testNote } from '~/lib/.server/admin';
 import { snapshot } from '~/lib/.server/metrics';
@@ -361,14 +362,14 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (intent === 'save-pause') {
-    setSetting('paused', f.get('paused') ? '1' : '');
+    setPaused(Boolean(f.get('paused')));
     setSetting('pause_message', s('pause_message').slice(0, 200));
 
     return json({ ok: f.get('paused') ? 'New builds are paused.' : 'Builds are running again.' });
   }
 
   if (intent === 'pause-on') {
-    setSetting('paused', '1');
+    setPaused(true);
     setSetting('pause_message', s('pause_message').slice(0, 200));
 
     return json({ ok: 'New builds are paused.' });

@@ -1,22 +1,30 @@
 import { useStore } from '@nanostores/react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
+import { SIcon } from '~/components/chat/studio-icons';
 import { Icon } from '~/components/ui/icons';
-import { chatId, description, lastSaved, saveState } from '~/lib/persistence';
+import { chatId, description } from '~/lib/persistence';
 
 const MAX = 80;
 const FAILED = "Couldn't rename. Try again.";
 
 /*
  * The project name in the studio header, click to rename (owners only). Enter or blur saves, Esc cancels, an empty name
- * reverts. The new name also goes into the description store, so the next autosave keeps it.
+ * reverts. The new name also goes into the description store, so the next autosave keeps it. A rename has its own
+ * pending state: it never touches the autosave status next to it.
  */
 export function ProjectTitle({ fallback }: { fallback?: string }) {
   const id = useStore(chatId);
   const title = useStore(description) ?? fallback ?? '';
   const [draft, setDraft] = useState<string | undefined>(undefined);
+  const [pending, setPending] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const done = useRef(false);
+  const name = title || 'New project';
+
+  useEffect(() => {
+    document.title = `${name} · Foldo`;
+  }, [name]);
 
   const start = () => {
     done.current = false;
@@ -46,13 +54,13 @@ export function ProjectTitle({ fallback }: { fallback?: string }) {
       return;
     }
 
-    saveState.set('saving');
+    setPending(true);
 
     try {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({ id, rename: next }),
+        body: JSON.stringify({ id, rename: next }),
       });
       const body = res.ok ? ((await res.json()) as { ok?: boolean; description?: string }) : undefined;
 
@@ -63,13 +71,11 @@ body: JSON.stringify({ id, rename: next }),
       if (body.description) {
         description.set(body.description);
       }
-
-      saveState.set('saved');
-      lastSaved.set(Date.now());
     } catch {
       description.set(previous);
-      saveState.set('saved');
       toast.error(FAILED);
+    } finally {
+      setPending(false);
     }
   };
 
@@ -97,19 +103,27 @@ body: JSON.stringify({ id, rename: next }),
     );
   }
 
+  // the hover chip (Wash + pencil) is drawn outside the layout box, so the save status stays 10px after the name
   return (
-    <h1 className="m-0 flex min-w-0">
+    <div className="group relative flex min-w-0 items-center" aria-busy={pending || undefined}>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute -inset-y-[4px] -left-[6px] -right-[26px] z-1 rounded-[6px] bg-wash opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+      />
+      <h1 className="relative z-2 m-0 min-w-0 truncate font-serif text-[21px] font-normal leading-none" data-testid="foldo-project-title">
+        {name}
+      </h1>
+      <span aria-hidden="true" className="pointer-events-none absolute -right-[21px] z-2 text-pencil opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+        {pending ? <SIcon.Arc size={14} /> : <Icon.Pencil size={14} />}
+      </span>
       <button
         type="button"
+        aria-label="Rename project"
         title="Rename project"
-        aria-label={`${title || 'New project'}, rename`}
-        data-testid="foldo-project-title"
+        data-testid="foldo-project-rename"
         onClick={start}
-        className="group inline-flex h-[32px] min-w-0 items-center gap-[6px] rounded-[6px] border-0 bg-transparent px-[6px] -ml-[6px] font-serif text-[21px] font-normal leading-none text-ink outline-none hover:bg-wash focus-visible:shadow-[0_0_0_2px_#16140F]"
-      >
-        <span className="truncate">{title || 'New project'}</span>
-        <Icon.Pencil size={14} className="flex-none text-pencil opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
-      </button>
-    </h1>
+        className="absolute -inset-y-[4px] -left-[6px] -right-[26px] z-3 cursor-text rounded-[6px] border-0 bg-transparent p-0 outline-none focus-visible:shadow-[0_0_0_2px_#16140F]"
+      />
+    </div>
   );
 }

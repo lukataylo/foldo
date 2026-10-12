@@ -11,7 +11,11 @@ import { keepPackDependencies } from './package-merge';
 const logger = createScopedLogger('ActionRunner');
 
 // imported lazily: the templates client imports the workbench store, which imports this file
-const isTemplateProject = async () => Boolean((await import('~/lib/templates/client')).activeTemplate.get());
+const templatePackage = async () => {
+  const tpl = await import('~/lib/templates/client');
+
+  return tpl.activeTemplate.get() ? tpl.templatePackageJson : undefined;
+};
 
 // a dev server never exits, so its failures never mark the command failed
 export const isServerCommand = (command: string) =>
@@ -324,10 +328,16 @@ export class ActionRunner {
     };
 
     if (server) {
+      const shownBefore = previewError.get();
       const settled = new Promise<null>((resolve) => setTimeout(() => resolve(null), DEV_SERVER_SETTLE_MS));
       const early = await Promise.race([process.exit, settled]);
 
       if (early === null) {
+        // a dev server that came up cleanly makes an older error (a failed install, the last crash) out of date
+        if (previewError.get() === shownBefore) {
+          previewError.set(undefined);
+        }
+
         process.exit.then((exitCode) => {
           if (devServer === handle) {
             devServer = undefined;
@@ -415,11 +425,11 @@ export class ActionRunner {
 
     let content = action.content;
 
-    if (/^(\.\/)?package\.json$/.test(action.filePath) && (await isTemplateProject())) {
-      try {
-        content = keepPackDependencies(await webcontainer.fs.readFile('package.json', 'utf-8'), content);
-      } catch {
-        // no package.json yet: write the reply's
+    if (/^(\.\/)?package\.json$/.test(action.filePath)) {
+      const pack = await templatePackage();
+
+      if (pack) {
+        content = keepPackDependencies(pack, content);
       }
     }
 

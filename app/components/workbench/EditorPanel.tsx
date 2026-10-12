@@ -96,7 +96,7 @@ export const EditorPanel = memo(
               </span>
             )}
             {beingWritten && (
-              <span className="inline-flex h-[24px] flex-none items-center gap-[6px] rounded-full border border-rule bg-wash px-[9px] text-[12px] font-medium text-ink2">
+              <span className="inline-flex h-[24px] flex-none items-center gap-[6px] rounded-full leading-[18px] border border-rule bg-wash px-[9px] text-[12px] font-medium text-ink2">
                 <Spin /> Foldo is writing this file
               </span>
             )}

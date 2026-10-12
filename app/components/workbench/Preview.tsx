@@ -8,6 +8,7 @@ import { Icon } from '~/components/ui/icons';
 import { chatId } from '~/lib/persistence';
 import { previewError, requestFix } from '~/lib/stores/ui';
 import { workbenchStore } from '~/lib/stores/workbench';
+import { previewLoaded } from './actions';
 import { Booting } from './Booting';
 import { PortDropdown } from './PortDropdown';
 
@@ -32,7 +33,7 @@ function useActivePreview() {
   );
 }
 
-export const reloadPreview = () => reloads.set(reloads.get() + 1);
+const reloadPreview = () => reloads.set(reloads.get() + 1);
 
 export function fullscreenPreview() {
   iframe?.requestFullscreen?.().catch(() => undefined);
@@ -72,7 +73,7 @@ export function AddressBar({ readOnly }: { readOnly?: boolean }) {
         title="Reload preview"
         disabled={!active}
         onClick={reloadPreview}
-        className="inline-flex h-[24px] w-[24px] flex-none items-center justify-center rounded-[4px] border-0 bg-transparent p-0 text-pencil enabled:hover:bg-wash enabled:hover:text-ink"
+        className="inline-flex h-[24px] w-[24px] flex-none items-center justify-center rounded-0 border-0 bg-transparent p-0 text-pencil enabled:hover:bg-wash enabled:hover:text-ink"
       >
         <Icon.Refresh size={14} />
       </button>
@@ -138,12 +139,21 @@ export const Preview = memo(({ isStreaming }: { isStreaming?: boolean }) => {
     }
   }, [reload]);
 
+  const loaded = useStore(previewLoaded);
+  const base = active?.baseUrl;
+
+  // a newly opened port shows the booting panel until the app has actually painted once
+  useEffect(() => {
+    previewLoaded.set(false);
+  }, [base]);
+
   const frame = active ? (
     <iframe
       ref={ref}
       title="App preview"
       className="block h-full w-full border-none bg-white"
       src={src}
+      onLoad={() => previewLoaded.set(true)}
       // generated apps love "copy link" buttons, which throw without clipboard permission in a cross-origin frame
       allow="clipboard-read; clipboard-write; fullscreen"
     />
@@ -199,5 +209,14 @@ export const Preview = memo(({ isStreaming }: { isStreaming?: boolean }) => {
     );
   }
 
-  return <div className="relative h-full w-full">{frame ?? <Booting isStreaming={isStreaming} />}</div>;
+  return (
+    <div className="relative h-full w-full">
+      {frame}
+      {(!frame || !loaded) && (
+        <div className="absolute inset-0">
+          <Booting isStreaming={isStreaming} />
+        </div>
+      )}
+    </div>
+  );
 });

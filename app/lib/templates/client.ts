@@ -16,6 +16,9 @@ export interface TemplateCard {
 export const templateStatus = atom<string | undefined>(undefined);
 export const activeTemplate = atom<string | undefined>(undefined);
 
+// the applied template's original package.json (from its pack): replies that rewrite package.json are checked against it
+export let templatePackageJson: string | undefined;
+
 export const templateIcon = (icon?: string) => `/art/tpl-${icon || 'paper'}.webp`;
 
 // generated artwork (webp) when it exists, the hand-drawn SVG otherwise. The ref catches images that already failed to
@@ -70,6 +73,8 @@ export async function applyTemplate(id: string, title = 'template') {
       return r.json() as Promise<{ pack: string; files: Record<string, string> }>;
     }),
   ]);
+
+  templatePackageJson = spec.files['package.json'];
 
   const snapshot = snapshots[spec.pack];
   let hasPackages = false;

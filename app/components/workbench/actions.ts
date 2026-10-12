@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react';
+import { atom } from 'nanostores';
 import { useEffect, useState } from 'react';
 import type { ActionState } from '~/lib/runtime/action-runner';
 import { workbenchStore } from '~/lib/stores/workbench';
@@ -48,3 +49,6 @@ export function useFileActivity(isStreaming?: boolean) {
 
   return { writing, updated };
 }
+
+// the preview iframe has loaded the app at least once since its port opened (the booting panel stays until then)
+export const previewLoaded = atom(false);

@@ -123,9 +123,16 @@ export const Workbench = memo(({ chatStarted, isStreaming, layout, viewer }: Wor
       })}
     >
       <div className={classNames('flex h-[48px] flex-none items-center gap-[10px] border-b border-rule px-[10px]', { 'lt-md:hidden': Boolean(viewer) })}>
-        <div role="tablist" aria-label="View" className="seg flex-none">
+        <div role="tablist" aria-label="View" className="seg flex-none gap-0 lt-md:hidden">
           {(['code', 'preview'] as const).map((v) => (
-            <button key={v} type="button" role="tab" aria-selected={view === v} className="seg-item" onClick={() => setView(v)}>
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={view === v}
+              className={classNames('seg-item', { '!border-0': view !== v, 'text-ink2': Boolean(viewer) && view !== v })}
+              onClick={() => setView(v)}
+            >
               {v === 'code' ? 'Code' : 'Preview'}
             </button>
           ))}
@@ -134,12 +141,12 @@ export const Workbench = memo(({ chatStarted, isStreaming, layout, viewer }: Wor
         {viewer ? (
           <>
             {previews.length > 0 ? (
-              <span className="pill-live">
+              <span className="pill-live leading-[18px]">
                 <span className="pill-dot" />
                 Running
               </span>
             ) : (
-              <span className="pill-neutral">Starting</span>
+              <span className="pill-neutral leading-[18px]">Starting</span>
             )}
             <button
               type="button"
@@ -159,7 +166,7 @@ export const Workbench = memo(({ chatStarted, isStreaming, layout, viewer }: Wor
           <>
             <button
               type="button"
-              className={`${toolButton} px-[10px]`}
+              className={`${toolButton} px-[10px] lt-md:hidden`}
               data-testid="foldo-download-zip"
               onClick={() => {
                 if (!downloadProjectZip(workbenchStore.files.get(), description.get() ?? 'foldo-project')) {
@@ -176,7 +183,7 @@ export const Workbench = memo(({ chatStarted, isStreaming, layout, viewer }: Wor
                 aria-label="Toggle Terminal"
                 title="Terminal (Ctrl+J)"
                 aria-pressed={showTerminal}
-                className={`${toolButton} w-[32px] justify-center px-0 aria-pressed:bg-wash`}
+                className={`${toolButton} w-[32px] justify-center px-0 aria-pressed:bg-wash lt-md:hidden`}
                 onClick={() => workbenchStore.toggleTerminal(!showTerminal)}
               >
                 <Icon.Terminal />

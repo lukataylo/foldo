@@ -15,11 +15,11 @@ import { activeTemplate, applyTemplate, prefetchSnapshots, templateStatus, type 
 import { chatId, description } from '~/lib/persistence';
 import { beginReplay, endReplay } from '~/lib/runtime/action-runner';
 import { workbenchStore } from '~/lib/stores/workbench';
-import { fileModificationsToHTML } from '~/utils/diff';
+import { fileModificationsToHTML, modificationsRegex } from '~/utils/diff';
 import { cubicEasingFn } from '~/utils/easings';
 import { createScopedLogger, renderLogger } from '~/utils/logger';
 import { BaseChat } from './BaseChat';
-import { autoFixAfter, fixInFlight, streamingNow } from './studio-state';
+import { autoFixAfter, fixInFlight, STOPPED, streamingNow } from './studio-state';
 
 const logger = createScopedLogger('Chat');
 
@@ -76,8 +76,11 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
         quota.set(Number(left));
       }
     },
+    // the failed message stays on screen until onError hands it back to the composer (see takeBackPrompt)
+    keepLastMessageOnError: true,
     onError: (error) => {
       logger.error('Request failed\n\n', error);
+      takeBackPrompt();
 
       // our API answers with short plain-text messages written for the user; anything else is a transport error
       const known = error.message.length < 240 && !/^[<{]/.test(error.message);
@@ -94,6 +97,45 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
 
   const latest = useRef(messages);
   latest.current = messages;
+
+  // Stop is remembered on the reply itself, so after a reload it reads as stopped, not cut off (no Continue offer)
+  function markStopped() {
+    const list = latest.current;
+    const last = list.at(-1);
+
+    if (last?.role === 'assistant' && last.content.trim() && !last.annotations?.includes(STOPPED)) {
+      setMessages([...list.slice(0, -1), { ...last, annotations: [...(last.annotations ?? []), STOPPED] }]);
+    }
+  }
+
+  /*
+   * A message that got no reply (an error, or Stop while Foldo was still planning) goes back into the composer and off
+   * the conversation, so the saved history matches the screen and a first message never leaves a project behind.
+   */
+  function takeBackPrompt() {
+    const list = [...latest.current];
+
+    while (list.at(-1)?.role === 'assistant' && !list.at(-1)?.content.trim()) {
+      list.pop();
+    }
+
+    const last = list.at(-1);
+
+    if (last?.role !== 'user') {
+      return; // the reply had started: keep what arrived
+    }
+
+    list.pop();
+    setMessages(list);
+    setInput(last.content.replace(modificationsRegex, '').trim());
+
+    if (list.length === 0) {
+      document.querySelectorAll('#intro, #examples').forEach((el) => el.removeAttribute('style'));
+      chatStore.setKey('started', false);
+      workbenchStore.showWorkbench.set(false);
+      setChatStarted(false);
+    }
+  }
 
   const { enhancingPrompt, promptEnhanced, enhancePrompt, resetEnhancer } = usePromptEnhancer();
   const { parsedMessages, parseMessages } = useMessageParser();
@@ -165,7 +207,8 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
       clearTimeout(saveTimer.current);
       saveTimer.current = undefined;
       save();
-    } else if (!saveTimer.current) {
+    } else if (!saveTimer.current && latest.current.at(-1)?.role === 'assistant' && latest.current.at(-1)?.content.trim()) {
+      // only once the reply has started: a message that fails before its first word is handed back, never saved
       saveTimer.current = setTimeout(() => {
         saveTimer.current = undefined;
         save();
@@ -185,6 +228,8 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
     stop();
     chatStore.setKey('aborted', true);
     workbenchStore.abortAllActions();
+    takeBackPrompt();
+    markStopped();
   };
 
   useEffect(() => {
@@ -210,12 +255,29 @@ export const ChatImpl = memo(({ initialMessages, storeMessageHistory }: ChatProp
       animate('#intro', { opacity: 0, flex: 1 }, { duration: 0.2, ease: cubicEasingFn }),
     ]);
 
+    // the message was refused (or stopped) before the animation ended: stay on Home, with Home as it was
+    if (latest.current.length === 0) {
+      document.querySelectorAll('#intro, #examples').forEach((el) => el.removeAttribute('style'));
+      return;
+    }
+
     chatStore.setKey('started', true);
 
     setChatStarted(true);
   };
 
-  useEffect(() => streamingNow.set(isLoading), [isLoading]);
+  const wasLoading = useRef(false);
+
+  useEffect(() => {
+    streamingNow.set(isLoading);
+
+    // the auto-fix note belongs to the fix reply: it goes once that reply ends, whether it worked or not
+    if (wasLoading.current && !isLoading) {
+      autoFixAfter.set(undefined);
+    }
+
+    wasLoading.current = isLoading;
+  }, [isLoading]);
 
   // the error banner says so while a "Fix this error" message is being answered
   useEffect(() => {

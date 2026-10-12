@@ -68,6 +68,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       likes: row.likes as number,
       liked,
       mine: user?.id === row.owner,
+      // only the owner gets the project id (for "Open in studio")
+      projectId: user?.id === row.owner ? (row.id as string) : undefined,
     },
     description: row.description,
     template: row.template ?? undefined,

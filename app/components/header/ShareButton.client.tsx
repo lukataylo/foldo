@@ -23,10 +23,11 @@ export function ShareButton({ tone = 'primary' }: { tone?: 'primary' | 'secondar
         data-testid="foldo-canvas-topbar-share"
         data-shared={sid ? 'true' : undefined}
         onClick={() => setOpen(true)}
-        className={`${tone === 'primary' ? 'btn-primary' : 'btn-secondary'} btn-sm px-[14px]`}
+        aria-label="Share"
+        className={`${tone === 'primary' ? 'btn-primary' : 'btn-secondary'} btn-sm px-[14px] lt-md:px-[9px]`}
       >
         <SIcon.Upload size={15} />
-        Share
+        <span className="lt-md:hidden">Share</span>
       </button>
       <ShareDialog
         open={open}

@@ -27,6 +27,9 @@ export function setLayout(mode: LayoutMode) {
   workbenchStore.showWorkbench.set(mode !== 'chat');
 }
 
+// marks a reply the team stopped (kept in the saved messages; the model never sees annotations)
+export const STOPPED = 'foldo:stopped';
+
 // the assistant message whose build hit an error and is being fixed automatically (the info banner sits under it)
 export const autoFixAfter = atom<string | undefined>(undefined);
 
@@ -62,14 +65,14 @@ export function useOnline() {
 export const clock = (t: number) =>
   new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(/\s?([AP])M$/, (_, x) => ` ${x.toLowerCase()}m`);
 
-export interface PauseInfo {
+interface PauseInfo {
   paused: boolean;
   message: string;
   since?: number | null;
 }
 
 // the organizer pause as last polled (/api/status); undefined until the first poll, then it wins over the loader's copy
-export const livePause = atom<PauseInfo | undefined>(undefined);
+const livePause = atom<PauseInfo | undefined>(undefined);
 
 export function usePause(fromLoader?: PauseInfo) {
   return useStore(livePause) ?? fromLoader;
@@ -89,12 +92,19 @@ export function useStatusPoll(enabled: boolean, onRemaining: (left: number) => v
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
+    let inFlight = false;
 
+    // one tick at a time, and the next one is scheduled only here
     const tick = async () => {
+      if (inFlight || stopped) {
+        return;
+      }
+
+      inFlight = true;
       clearTimeout(timer);
 
-      if (document.visibilityState === 'visible' && navigator.onLine) {
-        try {
+      try {
+        if (document.visibilityState === 'visible' && navigator.onLine) {
           const res = await fetch('/api/status', { cache: 'no-store' });
 
           if (res.ok) {
@@ -103,17 +113,23 @@ export function useStatusPoll(enabled: boolean, onRemaining: (left: number) => v
             livePause.set({ paused: s.paused, message: s.message, since: s.since });
             onRemaining(s.remaining);
           }
-        } catch {
-          // offline or a server restart: the next tick tries again
         }
-      }
+      } catch {
+        // offline or a server restart: the next tick tries again
+      } finally {
+        inFlight = false;
 
-      if (!stopped) {
-        timer = setTimeout(tick, POLL_MS);
+        if (!stopped) {
+          timer = setTimeout(tick, POLL_MS);
+        }
       }
     };
 
-    const onVisible = () => document.visibilityState === 'visible' && tick();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void tick();
+      }
+    };
 
     timer = setTimeout(tick, POLL_MS);
     document.addEventListener('visibilitychange', onVisible);

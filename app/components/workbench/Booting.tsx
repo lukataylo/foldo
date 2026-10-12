@@ -6,7 +6,7 @@ import { isServerCommand, type ActionState } from '~/lib/runtime/action-runner';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { templateStatus } from '~/lib/templates/client';
 import { webcontainer, webcontainerContext } from '~/lib/webcontainer';
-import { useAllActions } from './actions';
+import { previewLoaded, useAllActions } from './actions';
 
 type StepState = 'done' | 'running' | 'queued' | 'failed';
 
@@ -29,7 +29,7 @@ function useSandboxReady() {
 }
 
 // the three setup steps, from the real sandbox, action runner and preview state
-export function useBootSteps() {
+function useBootSteps() {
   const sandbox = useSandboxReady();
   const actions = useAllActions();
   const previews = useStore(workbenchStore.previews);
@@ -40,7 +40,10 @@ export function useBootSteps() {
   const servers = shells.filter((a) => isServerCommand(a.content));
   const lastInstall = installs.at(-1);
   const lastServer = servers.at(-1);
-  const serving = previews.length > 0;
+  const loaded = useStore(previewLoaded);
+  // the port is open once the server listens; the step is done when the app has painted in the preview
+  const listening = previews.length > 0;
+  const serving = listening && loaded;
 
   let install: StepState;
 
@@ -52,7 +55,7 @@ export function useBootSteps() {
     install = 'running';
   } else if (lastInstall?.status === 'pending') {
     install = 'queued';
-  } else if (lastInstall || serving || lastServer?.status === 'running') {
+  } else if (lastInstall || listening || lastServer?.status === 'running') {
     install = 'done';
   } else {
     install = 'queued';
@@ -64,7 +67,7 @@ export function useBootSteps() {
     server = 'done';
   } else if (lastServer?.status === 'failed') {
     server = 'failed';
-  } else if (lastServer?.status === 'running' && lastServer.executed) {
+  } else if (listening || (lastServer?.status === 'running' && lastServer.executed)) {
     server = 'running';
   } else {
     server = 'queued';

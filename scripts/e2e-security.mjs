@@ -208,10 +208,48 @@ try {
   check(P1, 'landing page is public', (await anon.req('/')).status === 200);
   check(P1, '/healthz ok', (await anon.req('/healthz')).status === 200);
 
-  for (const [path, heading] of [['/privacy', 'What Foldo keeps, and why.'], ['/conduct', 'Play fair, build boldly.']]) {
+  for (const [path, heading] of [
+    ['/privacy', 'What Foldo keeps, and why.'],
+    ['/conduct', 'Play fair, build boldly.'],
+    ['/terms', 'The deal, in plain words.'],
+    ['/pricing', 'Free while in'],
+  ]) {
     const r = await anon.req(path);
     check(P1, `${path} is public`, r.status === 200 && r.text.includes(heading), String(r.status));
   }
+
+  // ============ Persona 1b: visitor to the platform (event mode off by default) ============
+  const PL = 'platform visitor';
+  const V0 = new Client();
+  const pricing = await V0.req('/pricing');
+  check(PL, 'pricing shows the real daily allowance from settings, with no invented prices', pricing.text.includes('3 AI messages a day') && !/[$€£]\s?\d/.test(pricing.text), /\d+ AI messages a day/.exec(pricing.text)?.[0]);
+  check(PL, 'pricing has Pro (coming soon) and an events section', pricing.text.includes('Coming soon') && pricing.text.includes('id="events"'));
+  const privacyOff = await V0.req('/privacy');
+  const termsOff = await V0.req('/terms');
+  check(PL, 'legal placeholders render while the company details are unset', privacyOff.text.includes('[COMPANY NAME]') && privacyOff.text.includes('[CONTACT EMAIL]') && termsOff.text.includes('[COUNTRY]'));
+  check(PL, 'privacy covers events, rights and an effective date', privacyOff.text.includes('If you join an event') && privacyOff.text.includes('Your rights') && privacyOff.text.includes('Effective'));
+  const landOff = await V0.req('/');
+  check(PL, 'landing (event mode off): starter templates, no track/event wording', landOff.text.includes('Pick a starter,') && !landOff.text.includes('Pick your track') && !landOff.text.includes('running on Foldo') && !landOff.text.includes('Made tonight') && !/team name/i.test(landOff.text), '');
+  check(PL, 'landing pitches Foldo for events and links pricing, terms and privacy', landOff.text.includes('Run your event') && landOff.text.includes('href="/pricing#events"') && landOff.text.includes('href="/terms"') && landOff.text.includes('href="/pricing"'));
+  check(PL, 'no code of conduct link while event mode is off', !landOff.text.includes('href="/conduct"'));
+  const signupOff = await V0.req('/login?mode=register');
+  check(PL, 'sign-up asks for "Your name" (not "Name or team")', signupOff.text.includes('Your name') && !signupOff.text.includes('Name or team') && signupOff.text.includes('href="/terms"'));
+
+  // the Pro waitlist: no account needed, validated, idempotent, throttled, same-origin only
+  const W = new Client();
+  const joined = await W.req('/api/waitlist', { method: 'POST', form: { email: '  Ada@Example.com ' } });
+  check(PL, 'waitlist accepts a valid email without signing in', joined.status === 200 && joined.json().ok === true, `${joined.status} ${joined.text}`);
+  const badMail = await W.req('/api/waitlist', { method: 'POST', form: { email: 'not-an-email' } });
+  check(PL, 'waitlist rejects an invalid email calmly', badMail.status === 400 && /valid email/.test(badMail.json().error), `${badMail.status} ${badMail.text}`);
+  const rejoined = await W.req('/api/waitlist', { method: 'POST', body: { email: 'ada@example.com' } });
+  const waitRows = new DatabaseSync(DB).prepare("SELECT COUNT(*) n FROM waitlist WHERE email = 'ada@example.com'").get().n;
+  check(PL, 'waitlist is idempotent: a repeat gets the same answer and no second row', rejoined.status === 200 && rejoined.text === joined.text && waitRows === 1, `${rejoined.status} rows=${waitRows}`);
+  check(PL, 'cross-origin waitlist POST is blocked', (await new Client().req('/api/waitlist', { method: 'POST', form: { email: 'x@example.com' }, headers: { origin: 'https://evil.example' } })).status === 403);
+  const flood = new Client();
+  const floods = [];
+  for (let i = 0; i < 7; i++) floods.push((await flood.req('/api/waitlist', { method: 'POST', form: { email: `f${i}@example.com` } })).status);
+  check(PL, 'waitlist is throttled per network', floods.slice(0, 5).every((s) => s === 200) && floods.at(-1) === 429, floods.join());
+  check(PL, 'waitlist CSV is not public', (await anon.req('/api/admin-waitlist')).status === 302);
 
   for (const p of ['/projects', '/settings', '/admin', '/chat/abc']) {
     const r = await anon.req(p);
@@ -438,7 +476,7 @@ try {
   check(P4, 'second parallel generation refused (1 at a time)', [r1.status, r2.status].sort().join() === '200,429', `${r1.status},${r2.status}`);
   await new Promise((r) => setTimeout(r, 300));
   const over = await C.chat('one more');
-  check(P4, 'daily quota enforced with a clear message', over.status === 429 && /messages for tonight/.test(over.text), `${over.status} ${over.text}`);
+  check(P4, 'daily quota enforced with a clear message', over.status === 429 && /messages for (tonight|today)/.test(over.text), `${over.status} ${over.text}`);
   check(P4, 'client-chosen unknown provider falls back to default (no 500)', (await A.chat('hi', { provider: '../../etc' })).status === 200);
 
   // ============ Persona 5: brute-forcer ============
@@ -483,9 +521,28 @@ try {
   check(P6, 'provider "Test" button works', test.status === 200 && /works \(/.test(test.text), test.status + ' ' + (/role="status"[^>]*>([^<]*)/.exec(test.text)?.[1] ?? ''));
   check(P6, 'bad base URL scheme rejected', (await ADM.req('/admin', { method: 'POST', form: { intent: 'save-provider', id: 'custom', base_url: 'javascript:alert(1)' } })).status === 400);
   check(P6, 'unknown provider id rejected', (await ADM.req('/admin', { method: 'POST', form: { intent: 'save-provider', id: 'evil' } })).status === 400);
-  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', event_name: 'Spring Hack 26', event_ends_at: '2099-01-01T00:00:00Z', announcement: 'Demos at 5pm', invite_code: 'hack26', signups_open: 'on', per_user_limit: '3', global_limit: '60' } });
-  const land = await anon.req('/');
+  // the event is configured but event mode is still off: the platform look, no event bar
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', event_name: 'Spring Hack 26', event_ends_at: '2099-01-01T00:00:00Z', announcement: 'Demos at 5pm', invite_code: 'hack26', signups_open: 'on', per_user_limit: '3', global_limit: '60', event_mode: '' } });
+  const landPlatform = await new Client().req('/');
+  check(P6, 'event mode off: no event bar even with an event configured', !landPlatform.text.includes('foldo-event-bar') && !landPlatform.text.includes('Demos at 5pm') && !landPlatform.text.includes('running on Foldo'));
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', event_name: 'Spring Hack 26', event_ends_at: '2099-01-01T00:00:00Z', announcement: 'Demos at 5pm', invite_code: 'hack26', signups_open: 'on', per_user_limit: '3', global_limit: '60', event_mode: 'on' } });
+  const visitor = new Client();
+  const land = await visitor.req('/');
   check(P6, 'event banner appears on the landing page', land.text.includes('Spring Hack 26') && land.text.includes('Demos at 5pm'));
+  check(P6, 'event mode on: the landing says the event runs on Foldo, with tracks and the conduct link', /Spring Hack 26(<!-- -->)? is running on Foldo/.test(land.text) && land.text.includes('Pick your track,') && land.text.includes('href="/conduct"'));
+  check(P6, 'event mode on: sign-up keeps the team wording', (await visitor.req('/login?mode=register')).text.includes('Name or team'));
+  check(P6, 'saving without the switch keeps event mode (scripts, older forms)', (await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', event_name: 'Spring Hack 26', event_ends_at: '2099-01-01T00:00:00Z', announcement: 'Demos at 5pm', invite_code: 'hack26', signups_open: 'on', per_user_limit: '3', global_limit: '60' } })).status === 200 && (await visitor.req('/')).text.includes('Pick your track,'));
+  // company details and the waitlist export (admin only)
+  check(P6, 'company details reject a bad contact email', (await ADM.req('/admin', { method: 'POST', form: { intent: 'save-legal', legal_name: 'Foldo Test Ltd', contact_email: 'nope', legal_country: 'Testland' } })).status === 400);
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-legal', legal_name: 'Foldo Test Ltd', contact_email: 'hello@foldo.test', legal_country: 'Testland' } });
+  const privacyNamed = (await anon.req('/privacy')).text;
+  check(P6, 'legal pages show the saved company details instead of placeholders', privacyNamed.includes('Foldo Test Ltd') && privacyNamed.includes('mailto:hello@foldo.test') && !privacyNamed.includes('[COMPANY NAME]') && (await anon.req('/terms')).text.includes('Testland'));
+  check(P6, 'pricing contact button mails the contact address', (await anon.req('/pricing')).text.includes('mailto:hello@foldo.test'));
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-legal', legal_name: '', contact_email: '', legal_country: '' } });
+  check(P6, 'admin sees the waitlist count', /Pro waitlist: <span[^>]*>6<\/span>/.test((await ADM.req('/admin')).text));
+  const csv = await ADM.req('/api/admin-waitlist');
+  check(P6, 'admin downloads the waitlist as CSV', csv.status === 200 && /text\/csv/.test(csv.headers.get('content-type')) && csv.text.startsWith('email,joined_utc') && csv.text.includes('"ada@example.com"'), `${csv.status} ${csv.text.slice(0, 60)}`);
+  check(P6, 'a signed-in non-admin cannot download the waitlist', (await A.req('/api/admin-waitlist')).status === 404);
   check(P6, 'invalid event date rejected', (await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', event_ends_at: 'soon' } })).status === 400);
   // moderation + account control
   const tempBefore = (await B.req('/api/projects')).status;
@@ -502,7 +559,7 @@ try {
   await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: idA } });
   check(P6, 'moderation: hiding removes it from the gallery, the share link keeps working', !(await anon.req('/gallery')).text.includes('Alpha app') && (await anon.req(`/p/${shareA.shareId}`)).status === 200);
   const relist = await A.req('/api/projects', { method: 'POST', body: { id: idA, share: true, listed: true } });
-  check(P6, 'a team cannot re-list a project organizers hid (calm 403)', relist.status === 403 && relist.json().hidden === true && /organizers removed this project/.test(relist.text), relist.status);
+  check(P6, 'a team cannot re-list a project organizers hid (calm 403)', relist.status === 403 && relist.json().hidden === true && /removed this project from the gallery/.test(relist.text), relist.status);
   check(P6, 'still out of the gallery after the re-list attempt', !(await anon.req('/gallery')).text.includes('Alpha app'));
   const unshared = await A.save('Never shared', 'x');
   check(P6, 'only shared projects can be hidden', (await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: unshared } })).status === 400);
@@ -571,7 +628,7 @@ try {
   await E.register('Team Echo', 'e@t.co');
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', signups_open: 'on', invite_code: 'hack26', per_user_limit: '10', global_limit: '5000' } });
   const trio = await Promise.all([E.chat('SLOW a', { provider: 'custom' }), new Promise((r) => setTimeout(r, 100)).then(() => E.chat('SLOW b', { provider: 'custom' })), new Promise((r) => setTimeout(r, 200)).then(() => E.chat('SLOW c', { provider: 'custom' }))]);
-  check(P6B, 'a shared login can run 2 builds at once; the 3rd is told to wait', trio.map((r) => r.status).sort().join() === '200,200,429' && /already has 2 builds running/.test(trio.find((r) => r.status === 429).text), trio.map((r) => r.status).join());
+  check(P6B, 'a shared login can run 2 builds at once; the 3rd is told to wait', trio.map((r) => r.status).sort().join() === '200,200,429' && /already ha(s|ve) 2 builds running/.test(trio.find((r) => r.status === 429).text), trio.map((r) => r.status).join());
   // pause switch
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-pause', paused: 'on', pause_message: 'Fixing Wi-Fi, back in 5 minutes' } });
   const paused = await F.chat('hi', { provider: 'custom' });
@@ -622,9 +679,9 @@ try {
   const badName = await D.req(SETTINGS_DATA, { method: 'POST', form: { intent: 'profile', name: ' x ' } });
   check(P7, 'a one-letter team name is refused', badName.status === 400 && badName.json().field === 'name');
   const taken = await D.req(SETTINGS_DATA, { method: 'POST', form: { intent: 'profile', name: 'team ALPHA' } });
-  check(P7, 'a team name another team uses is refused', taken.status === 400 && /Another team/.test(taken.json().error), taken.text);
+  check(P7, 'a team name another team uses is refused', taken.status === 400 && /already uses that name/.test(taken.json().error), taken.text);
   const dupSignup = await new Client().req('/login?_data=routes%2Flogin', { method: 'POST', form: { intent: 'register', name: 'TEAM alpha', email: 'dup-name@t.co', password: 'correct-horse-9', invite: 'hack26' } });
-  check(P7, 'sign-up with a team name another team uses is refused on the name field', dupSignup.status === 400 && dupSignup.json().field === 'name' && /Another team/.test(dupSignup.json().error), dupSignup.text);
+  check(P7, 'sign-up with a team name another team uses is refused on the name field', dupSignup.status === 400 && dupSignup.json().field === 'name' && /already uses that name/.test(dupSignup.json().error), dupSignup.text);
   const renamed = await D.req('/settings', { method: 'POST', form: { intent: 'profile', name: '  Team   Delta Prime ' } });
   check(P7, 'profile save updates the team name', renamed.status === 200 && (await D.req('/settings')).text.includes('Team Delta Prime'));
   const other = new Client();

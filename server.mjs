@@ -10,6 +10,12 @@ const MAX_BODY = 6_000_000;
 const app = express();
 app.disable('x-powered-by');
 
+// one canonical host: a session cookie only works on the host that set it, so www.foldo.dev would sign teams out of foldo.dev
+app.use((req, res, next) => {
+  const host = req.get('x-forwarded-host') || req.get('host') || '';
+  return host.startsWith('www.') ? res.redirect(308, `https://${host.slice(4)}${req.originalUrl}`) : next();
+});
+
 app.use((req, res, next) => {
   res.set({
     'X-Content-Type-Options': 'nosniff',

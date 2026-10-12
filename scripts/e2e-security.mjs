@@ -242,6 +242,8 @@ try {
     const r = await anon.req('/projects', { headers: { cookie: c } });
     check(P1, `garbled cookie ${c.slice(14)} -> sign-in redirect`, r.status === 302, String(r.status));
   }
+  const www = await fetch(BASE + '/p/abc?x=1', { headers: { 'x-forwarded-host': 'www.foldo.dev' }, redirect: 'manual' });
+  check(P1, 'www host -> 308 to the bare domain, same path', www.status === 308 && www.headers.get('location') === 'https://foldo.dev/p/abc?x=1', `${www.status} ${www.headers.get('location')}`);
   check(P1, 'garbled cookie on the landing page still renders', (await anon.req('/', { headers: { cookie: 'foldo_session=abc' } })).status === 200);
   const garbled = await new Client().req('/login', { method: 'POST', headers: { 'content-type': 'multipart/form-data; boundary=x' }, raw: 'garbage' });
   check(P1, 'malformed sign-in body is a 400', garbled.status === 400, `${garbled.status} ${garbled.text.slice(0, 80)}`);

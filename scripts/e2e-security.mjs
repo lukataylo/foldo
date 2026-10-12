@@ -576,6 +576,9 @@ try {
   await ADM.req('/admin', { method: 'POST', form: { intent: 'gallery-hide', id: idA } });
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', signups_open: '', invite_code: 'hack26', per_user_limit: '3', global_limit: '60' } });
   check(P6, 'closed sign-ups refuse new teams', (await new Client().register('Late', 'late@t.co')).status === 403);
+  // a console opened before sign-ups closed leaves the switch out of the form: saving it must not reopen them
+  await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', invite_code: 'hack26', per_user_limit: '3', global_limit: '60' } });
+  check(P6, 'saving without the sign-ups switch keeps sign-ups closed', (await new Client().register('Later', 'later@t.co')).status === 403);
   await ADM.req('/admin', { method: 'POST', form: { intent: 'save-settings', signups_open: 'on', per_user_limit: '3', global_limit: '5000' } });
 
   // ============ Persona 6b: event night (failover, pause, backup, limits, concurrency) ============

@@ -324,11 +324,14 @@ export async function action({ request }: ActionFunctionArgs) {
     storeSetting('event_ends_at', ends);
     setSetting('announcement', s('announcement').slice(0, 240));
     storeSetting('invite_code', s('invite_code').slice(0, 60));
-    setSetting('signups_open', f.get('signups_open') ? '1' : '0');
     setSetting('per_user_limit', s('per_user_limit'));
     setSetting('global_limit', s('global_limit'));
 
-    // the console form always sends it; scripts that leave it out keep the current mode
+    // both switches are sent only once touched, so a console opened before someone else flipped one never flips it back
+    if (f.has('signups_open')) {
+      setSetting('signups_open', f.get('signups_open') ? '1' : '0');
+    }
+
     if (f.has('event_mode')) {
       setSetting('event_mode', f.get('event_mode') ? '1' : '');
     }
@@ -1141,7 +1144,8 @@ function Models({ d, busy, post }: { d: any; busy: Busy; post: (f: Record<string
 
 function EventSettings({ d, busy }: { d: any; busy: Busy }) {
   const st = d.settings;
-  const [signups, setSignups] = useState<boolean>(st.signups_open);
+  const [signupsPick, setSignupsPick] = useState<boolean | null>(null);
+  const signups: boolean = signupsPick ?? st.signups_open;
   /*
    * null = untouched: the switch shows the live setting (the page revalidates every 10 s) and the form leaves event_mode
    * out, so saving the announcement from a console opened before another organizer flipped the mode never flips it back
@@ -1150,6 +1154,7 @@ function EventSettings({ d, busy }: { d: any; busy: Busy }) {
   const eventOn: boolean = eventPick ?? st.event_mode;
 
   useEffect(() => setEventPick(null), [st.event_mode]);
+  useEffect(() => setSignupsPick(null), [st.signups_open]);
 
   return (
     <section id="event" aria-labelledby="a-event" className={cx(cardClass, 'gap-4')}>
@@ -1160,12 +1165,12 @@ function EventSettings({ d, busy }: { d: any; busy: Busy }) {
         method="post"
         preventScrollReset
         onReset={() => {
-          setSignups(st.signups_open);
+          setSignupsPick(null);
           setEventPick(null);
         }}
         className="grid grid-cols-[repeat(auto-fit,minmax(min(260px,100%),1fr))] gap-x-5 gap-y-4"
       >
-        <input type="hidden" name="signups_open" value={signups ? 'on' : ''} />
+        {signupsPick !== null && <input type="hidden" name="signups_open" value={signupsPick ? 'on' : ''} />}
         {eventPick !== null && <input type="hidden" name="event_mode" value={eventPick ? 'on' : ''} />}
         <div className="col-span-full flex items-center justify-between gap-4 rounded-[10px] border border-rule2 bg-paper px-4 py-3" data-testid="foldo-admin-event-mode">
           <div className="flex min-w-0 flex-col gap-[2px]">
@@ -1219,7 +1224,7 @@ function EventSettings({ d, busy }: { d: any; busy: Busy }) {
           <span id="a-signups-l" className="input-label">
             Sign-ups open
           </span>
-          <Switch on={signups} label="a-signups-l" onClick={() => setSignups(!signups)} />
+          <Switch on={signups} label="a-signups-l" onClick={() => setSignupsPick(!signups)} />
         </div>
         <div className="col-span-full flex flex-col gap-[6px]">
           <label htmlFor="a-ev-ann" className="input-label">

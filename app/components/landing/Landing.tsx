@@ -373,7 +373,7 @@ function Closing({ inviteRequired }: { inviteRequired: boolean }) {
           <h2 id="closing-title" className="m-0 text-balance font-serif text-[44px] font-normal leading-[.95] tracking-[-.02em] md:text-[clamp(48px,6vw,88px)] md:leading-[.92]">
             Make something before the clock runs <em>out.</em>
           </h2>
-          <p className="m-0 max-w-[460px] text-pretty text-[16px] leading-[1.55] text-ink2 md:text-[18px]">
+          <p className="m-0 max-w-[460px] text-pretty text-[16px] leading-[1.5] text-ink2 md:text-[18px] lg:leading-[1.55]">
             {inviteRequired ? 'Sign up with your team name and the invite code from your organizer.' : 'Sign up with your team name.'}
             <span className="hidden md:inline"> Your first app can be running in a minute.</span>
           </p>
@@ -436,7 +436,7 @@ export function Landing() {
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-paper font-sans text-[16px] leading-[1.55] text-ink" data-testid="foldo-marketing-landing">
+    <div className="h-full overflow-y-auto bg-paper font-sans text-[16px] leading-[1.5] text-ink lg:leading-[1.55]" data-testid="foldo-marketing-landing">
       <EventBar event={event} variant="marketing" />
       <div className="bg-heroyellow">
         <SiteHeader tone="yellow" />

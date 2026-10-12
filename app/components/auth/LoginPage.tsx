@@ -296,7 +296,7 @@ export function LoginPage() {
           </button>
           {signup && (
             <p className="m-0 text-pretty text-[13px] text-pencil">
-              By creating an account you agree to the{' '}
+              By creating an account you agree to the event's{' '}
               <a href="/conduct" className="text-ink2 underline underline-offset-3">
                 code of conduct
               </a>{' '}
@@ -304,7 +304,7 @@ export function LoginPage() {
               <a href="/privacy" className="text-ink2 underline underline-offset-3">
                 privacy notice
               </a>
-              . Projects stay private until you share them.
+              .
             </p>
           )}
         </Form>

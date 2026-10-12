@@ -244,6 +244,12 @@ try {
   const rejoined = await W.req('/api/waitlist', { method: 'POST', body: { email: 'ada@example.com' } });
   const waitRows = new DatabaseSync(DB).prepare("SELECT COUNT(*) n FROM waitlist WHERE email = 'ada@example.com'").get().n;
   check(PL, 'waitlist is idempotent: a repeat gets the same answer and no second row', rejoined.status === 200 && rejoined.text === joined.text && waitRows === 1, `${rejoined.status} rows=${waitRows}`);
+  const W2 = new Client();
+  const formula = await W2.req('/api/waitlist', { method: 'POST', form: { email: '=HYPERLINK("http://evil.example")@example.com' } });
+  const mailtoHeader = await W2.req('/api/waitlist', { method: 'POST', form: { email: 'ada?cc=eve@example.com' } });
+  check(PL, 'waitlist refuses formula and mailto-header lookalikes', formula.status === 400 && mailtoHeader.status === 400, `${formula.status} ${mailtoHeader.status}`);
+  const huge = await W2.req('/api/waitlist', { method: 'POST', form: { email: `${'a'.repeat(5000)}@example.com` } });
+  check(PL, 'waitlist refuses an oversized body without reading it', huge.status === 413, String(huge.status));
   check(PL, 'cross-origin waitlist POST is blocked', (await new Client().req('/api/waitlist', { method: 'POST', form: { email: 'x@example.com' }, headers: { origin: 'https://evil.example' } })).status === 403);
   const flood = new Client();
   const floods = [];

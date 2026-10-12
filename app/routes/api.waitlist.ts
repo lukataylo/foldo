@@ -22,6 +22,11 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: 'Too many tries. Please wait a few minutes and try again.' }, 429);
   }
 
+  // one short field: anything bigger is not a real sign-up, so don't buffer it
+  if (Number(request.headers.get('content-length') ?? 0) > 2048) {
+    return json({ error: 'Enter a valid email address.' }, 413);
+  }
+
   const raw = (request.headers.get('content-type') ?? '').includes('application/json')
     ? ((await request.json().catch(() => null)) as { email?: unknown } | null)?.email
     : (await request.formData().catch(() => null))?.get('email');

@@ -6,6 +6,7 @@ describe('normalizeEmail', () => {
     expect(normalizeEmail('  Ada@Example.COM ')).toBe('ada@example.com');
     expect(normalizeEmail('first.last+tag@mail.example.co.uk')).toBe('first.last+tag@mail.example.co.uk');
     expect(normalizeEmail('a_b-c@sub-domain.example.io')).toBe('a_b-c@sub-domain.example.io');
+    expect(normalizeEmail("o'brien@example.ie")).toBe("o'brien@example.ie");
   });
 
   it('rejects things that are not one address', () => {
@@ -29,6 +30,12 @@ describe('normalizeEmail', () => {
       '<ada@example.com>',
       'ada@example.com, bob@example.com',
       'ada@example.com\nbcc:bob@example.com',
+      'ada?cc=eve@example.com',
+      'ada&body=hi@example.com',
+      '=hyperlink("x")@example.com',
+      '=1+2@example.com',
+      'a#b@example.com',
+      'a%40b@example.com',
     ]) {
       expect(normalizeEmail(bad), bad).toBeUndefined();
     }

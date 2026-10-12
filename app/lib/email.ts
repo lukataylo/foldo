@@ -1,8 +1,10 @@
 /*
- * Email checks shared by the browser and the server (waitlist). Deliberately plain: one @, no spaces or angle brackets,
+ * Email checks shared by the browser and the server (waitlist). Deliberately plain: one @, a conservative local part,
  * a dotted domain with a 2+ letter ending, and no empty labels. Returns the trimmed, lower-cased address, or undefined.
  */
-const SHAPE = /^[^\s@<>()[\]\\,;:"]+@([a-z0-9-]+\.)+[a-z]{2,}$/;
+// the local part is limited to the characters real addresses use: no ? & = # / %, so a stored address can't add headers
+// to a mailto: link (contact email) or hold a spreadsheet formula (the waitlist CSV also defuses a leading + or -)
+const SHAPE = /^[a-z0-9._+'-]+@([a-z0-9-]+\.)+[a-z]{2,}$/;
 
 export function normalizeEmail(raw: unknown): string | undefined {
   if (typeof raw !== 'string') {

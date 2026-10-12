@@ -7,6 +7,7 @@ import { SiteFooter } from './MarketingNav';
  * 3:2 illustration, then short numbered sections in a ~680px column.
  */
 export interface DocSection {
+  id?: string; // anchor (/privacy#events)
   title: string;
   body: ReactNode;
 }
@@ -17,6 +18,7 @@ export function DocPage({
   title,
   summary,
   updated,
+  dateLabel = 'Last updated',
   art,
   sections,
   testId,
@@ -26,6 +28,7 @@ export function DocPage({
   title: string;
   summary: string;
   updated: string;
+  dateLabel?: string;
   art: { src: string; alt: string };
   sections: DocSection[];
   testId: string;
@@ -37,7 +40,9 @@ export function DocPage({
           <span className="eyebrow">{eyebrow}</span>
           <h1 className="m-0 text-balance font-serif text-[56px] font-normal leading-[.94] tracking-[-.02em] md:text-[72px]">{title}</h1>
           <p className="m-0 text-pretty text-[18px] leading-[1.55] text-ink2 md:text-[20px]">{summary}</p>
-          <p className="m-0 font-mono text-[12px] text-pencil">Last updated {updated}</p>
+          <p className="m-0 font-mono text-[12px] text-pencil">
+            {dateLabel} {updated}
+          </p>
         </header>
         <img
           src={art.src}
@@ -48,7 +53,7 @@ export function DocPage({
         />
         <ol className="m-0 flex list-none flex-col gap-9 p-0">
           {sections.map((s, i) => (
-            <li key={s.title} className="flex flex-col gap-3 border-t border-solid border-rule pt-6">
+            <li key={s.title} id={s.id} className="flex scroll-mt-6 flex-col gap-3 border-t border-solid border-rule pt-6">
               <h2 className="m-0 flex items-baseline gap-3 font-serif text-[28px] font-normal leading-[1.1] md:text-[32px]">
                 <span aria-hidden="true" className="font-mono text-[13px] text-pencil">
                   {String(i + 1).padStart(2, '0')}

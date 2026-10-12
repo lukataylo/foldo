@@ -10,6 +10,7 @@ import {
 } from '~/lib/.server/auth';
 import {
   defaultMaxTokens,
+  eventMode,
   fallbackFor,
   harness,
   maxSegments,
@@ -54,9 +55,11 @@ async function chatAction({ request }: ActionFunctionArgs) {
   }
 
   const pause = pauseState();
+  // event wording ("team", "organizer", "tonight") only while event mode is on
+  const ev = eventMode();
 
   if (pause.paused) {
-    return text(pause.message || 'The organizers have paused new builds for a moment. Hang tight and try again soon.', 503);
+    return text(pause.message || `${ev ? 'The organizers have' : 'Foldo has'} paused new builds for a moment. Hang tight and try again soon.`, 503);
   }
 
   let body: { messages?: Messages; provider?: string; template?: string };
@@ -100,7 +103,7 @@ async function chatAction({ request }: ActionFunctionArgs) {
   const primary = resolveProvider(body.provider);
 
   if (!primary) {
-    return text("Foldo's AI isn't switched on yet. Please tell an organizer.", 503);
+    return text(ev ? "Foldo's AI isn't switched on yet. Please tell an organizer." : "Foldo's AI isn't switched on yet. Please try again later.", 503);
   }
 
   const limit = maxUserStreams();
@@ -109,14 +112,14 @@ async function chatAction({ request }: ActionFunctionArgs) {
   if (release === 'user') {
     return text(
       limit > 1
-        ? `Your team already has ${limit} builds running. Wait for one to finish, then press send again.`
+        ? `${ev ? 'Your team already has' : 'You already have'} ${limit} builds running. Wait for one to finish, then press send again.`
         : 'Foldo is still working on your last message. Wait for it to finish, then try again.',
       429,
     );
   }
 
   if (release === 'busy') {
-    return text('Lots of teams are building right now. Wait ten seconds, then press send again.', 503);
+    return text(`Lots of ${ev ? 'teams' : 'people'} are building right now. Wait ten seconds, then press send again.`, 503);
   }
 
   const spent = spendQuota(user.id, primary.id);
@@ -125,11 +128,16 @@ async function chatAction({ request }: ActionFunctionArgs) {
     release();
 
     if (spent === 'global') {
-      return text("The event's AI budget for today is used up. Ask an organizer if you need more.", 429);
+      return text(
+        ev ? "The event's AI budget for today is used up. Ask an organizer if you need more." : "Foldo's AI budget for today is used up. Please try again tomorrow.",
+        429,
+      );
     }
 
+    const out = ev ? 'for tonight. Ask an organizer if you need more.' : 'for today. They reset at midnight UTC.';
+
     // the header lets the studio swap the composer for the quota card straight away
-    return new Response(`You've used all ${dailyLimit()} messages for tonight. Ask an organizer if you need more.`, {
+    return new Response(`You've used all ${dailyLimit()} messages ${out}`, {
       status: 429,
       headers: { 'X-Foldo-Remaining': '0' },
     });

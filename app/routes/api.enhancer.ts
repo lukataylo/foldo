@@ -1,7 +1,7 @@
 import { type ActionFunctionArgs } from '@remix-run/node';
 import { StreamingTextResponse, parseStreamPart } from 'ai';
 import { getUser, refundQuota, spendQuota } from '~/lib/.server/auth';
-import { resolveProvider } from '~/lib/.server/config';
+import { eventMode, resolveProvider } from '~/lib/.server/config';
 import { streamText } from '~/lib/.server/llm/stream-text';
 import { stripIndents } from '~/utils/stripIndent';
 
@@ -28,7 +28,9 @@ async function enhancerAction({ request }: ActionFunctionArgs) {
   }
 
   if (spendQuota(user.id, provider.id) !== 'ok') {
-    return new Response("You've used all your messages for tonight. Ask an organizer if you need more.", { status: 429 });
+    const out = eventMode() ? 'for tonight. Ask an organizer if you need more.' : 'for today. They reset at midnight UTC.';
+
+    return new Response(`You've used all your messages ${out}`, { status: 429 });
   }
 
   try {

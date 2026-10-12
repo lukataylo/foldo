@@ -1,6 +1,7 @@
 import { useLoaderData } from '@remix-run/react';
 import type { ReactNode } from 'react';
 import { Icon } from '~/components/ui/icons';
+import { useEventMode } from '~/lib/hooks/useEventMode';
 import { clock } from './studio-state';
 import { SIcon } from './studio-icons';
 
@@ -46,6 +47,7 @@ export function CutOffCard({ left, onContinue, blocked }: { left?: number; onCon
 export function QuotaCard() {
   const { limit } = useLoaderData() as { limit?: number };
   const n = limit ?? 0;
+  const eventMode = useEventMode();
 
   return (
     <div role="status" data-testid="foldo-quota-card" className="flex items-center gap-4 rounded-[12px] border border-rule bg-sheet p-4">
@@ -58,7 +60,11 @@ export function QuotaCard() {
       />
       <div className="flex min-w-0 flex-1 flex-col gap-[6px]">
         <h2 className="m-0 font-serif text-[24px] font-normal leading-[1.1]">That’s all {n} messages for today.</h2>
-        <p className="m-0 text-[13px] text-ink2">You’ve used all {n} messages for tonight. Ask an organizer if you need more.</p>
+        <p className="m-0 text-[13px] text-ink2">
+          {eventMode
+            ? `You’ve used all ${n} messages for tonight. Ask an organizer if you need more.`
+            : `You’ve used all ${n} messages for today. They reset at midnight UTC.`}
+        </p>
         <p className="m-0 text-[13px] text-pencil">Your projects stay saved and your share links keep working.</p>
       </div>
     </div>
@@ -92,6 +98,8 @@ export function UsedUpBar() {
 }
 
 export function PausedCard({ since }: { since?: number | null }) {
+  const eventMode = useEventMode();
+
   return (
     <div role="status" data-testid="foldo-paused-card" className="overflow-hidden rounded-[14px] border border-rule bg-sheet">
       <img
@@ -105,7 +113,8 @@ export function PausedCard({ since }: { since?: number | null }) {
         <h2 className="m-0 font-serif text-[28px] font-normal leading-[1.05]">Builds are paused</h2>
         <p className="m-0 text-[14px] text-ink2">Your preview keeps running and your work is saved. You can keep exploring the code.</p>
         <span className="font-mono text-[12px] text-pencil">
-          Paused by organizers{since ? ` · ${clock(since)}` : ''}
+          {eventMode ? 'Paused by organizers' : 'Paused for maintenance'}
+          {since ? ` · ${clock(since)}` : ''}
         </span>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { json, redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node';
 import { LoginPage } from '~/components/auth/LoginPage';
-import { getEvent, inviteCode, signupsOpen } from '~/lib/.server/config';
+import { activeEvent, eventMode, inviteCode, signupsOpen } from '~/lib/.server/config';
 import { cleanName, teamNameError } from '~/lib/.server/names';
 import {
   clientIp,
@@ -25,8 +25,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     : json({
         inviteRequired: inviteCode() !== '',
         signupsOpen: signupsOpen(),
-        event: getEvent()?.name ?? '',
-        endsAt: getEvent()?.endsAt ?? null,
+        event: activeEvent()?.name ?? '',
+        endsAt: activeEvent()?.endsAt ?? null,
+        eventMode: eventMode(),
         next: next === '/' ? '' : next,
       });
 }
@@ -71,13 +72,15 @@ export async function action({ request }: ActionFunctionArgs) {
     const code = inviteCode();
 
     if (code && String(form.get('invite') ?? '').trim().toLowerCase() !== code.toLowerCase()) {
-      return json({ error: 'That invite code is not valid. Ask an organizer for the right one.', field: 'invite' }, 403);
+      const help = eventMode() ? 'Ask an organizer for the right one.' : 'Check it and try again.';
+
+      return json({ error: `That invite code is not valid. ${help}`, field: 'invite' }, 403);
     }
 
     const name = cleanName(form.get('name'), 40);
 
     if ([...name].length < 2) {
-      return json({ error: 'Add your name or team name (2+ characters).', field: 'name' }, 400);
+      return json({ error: eventMode() ? 'Add your name or team name (2+ characters).' : 'Add your name (2+ characters).', field: 'name' }, 400);
     }
 
     const nameError = teamNameError(name);
@@ -103,7 +106,7 @@ export async function action({ request }: ActionFunctionArgs) {
     user = await verifyLogin(email, password);
 
     if (user === 'disabled') {
-      return json({ error: 'This account has been disabled. Ask an organizer.' }, 403);
+      return json({ error: eventMode() ? 'This account has been disabled. Ask an organizer.' : 'This account has been disabled.' }, 403);
     }
 
     if (!user) {

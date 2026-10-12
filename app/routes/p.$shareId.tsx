@@ -1,6 +1,7 @@
 import { json, type LoaderFunctionArgs, type MetaFunction } from '@remix-run/node';
 import { Studio } from '~/components/Studio';
 import { getUser, shell } from '~/lib/.server/auth';
+import { eventMode } from '~/lib/.server/config';
 import { db } from '~/lib/.server/db';
 
 const PREVIEW_COPY = 'Open it, run it in your browser, then remix it into your own copy.';
@@ -63,7 +64,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     // for the viewer card: who built it, likes (listed projects only), and whether this visitor owns it
     sharedInfo: {
       shareId: params.shareId!,
-      owner: row.ownerName || 'A Foldo team',
+      owner: row.ownerName || (eventMode() ? 'A Foldo team' : 'A Foldo maker'),
       listed: Boolean(row.listed),
       likes: row.likes as number,
       liked,

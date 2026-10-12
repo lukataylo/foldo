@@ -7,6 +7,7 @@ import { Byline, LikeButton, Preview, ProjectCard, projectTitle, type GalleryIte
 import { TRACKS } from '~/components/landing/starters';
 import { Icon } from '~/components/ui/icons';
 import { getUser, shell } from '~/lib/.server/auth';
+import { useEventMode } from '~/lib/hooks/useEventMode';
 import { galleryCounts, galleryItems, projectSummary } from '~/lib/.server/gallery';
 import { classNames } from '~/utils/classNames';
 
@@ -69,7 +70,7 @@ function Featured({ item, summary, signedIn, now }: { item: GalleryItem; summary
       <div className="flex flex-col gap-[14px]">
         <span className="pill-live self-start">
           <span className="pill-dot" aria-hidden="true" />
-          Most liked this event
+          {useEventMode() ? 'Most liked this event' : 'Most liked'}
         </span>
         <h2 id="featured-title" className="m-0 font-serif text-[36px] font-normal leading-none tracking-[-.01em] md:text-[44px]">
           <a href={href} className="text-ink no-underline hover:underline">
@@ -90,6 +91,9 @@ function Featured({ item, summary, signedIn, now }: { item: GalleryItem; summary
 }
 
 function Empty({ filtered, onReset }: { filtered: boolean; onReset: () => void }) {
+  const eventMode = useEventMode();
+  const group = eventMode ? 'track' : 'category';
+
   return (
     <div className="flex flex-col items-center gap-5 rounded-[16px] border border-solid border-rule bg-sheet px-6 py-14 text-center" data-testid="foldo-gallery-empty">
       <img
@@ -100,10 +104,10 @@ function Empty({ filtered, onReset }: { filtered: boolean; onReset: () => void }
         className="h-auto w-[220px] rounded-[14px] border border-solid border-rule"
       />
       <div className="flex max-w-[420px] flex-col gap-2">
-        <h2 className="m-0 font-serif text-[32px] font-normal leading-none">{filtered ? 'Nothing in this track yet' : 'Nothing in the gallery yet'}</h2>
+        <h2 className="m-0 font-serif text-[32px] font-normal leading-none">{filtered ? `Nothing in this ${group} yet` : 'Nothing in the gallery yet'}</h2>
         <p className="m-0 text-pretty text-[16px] text-ink2">
           {filtered
-            ? 'No team has shared a project from this track. Try another track, or build the first one.'
+            ? `${eventMode ? 'No team' : 'Nobody'} has shared a project from this ${group}. Try another ${group}, or build the first one.`
             : 'Build something, open Share and turn on "Show in gallery". Be the first.'}
         </p>
       </div>
@@ -137,6 +141,7 @@ export default function Gallery() {
   const focusFrom = useRef<number | null>(null);
   const { sort, track, items, featured, counts, now } = d;
   const signedIn = Boolean(d.email);
+  const eventMode = useEventMode();
   const offset = featured ? 1 : 0;
   const total = (track ? counts[track] : counts.all) ?? 0;
   const remaining = total - offset - items.length;
@@ -201,7 +206,7 @@ export default function Gallery() {
             </span>
             <h1 className="m-0 font-serif text-[64px] font-normal leading-[.92] tracking-[-.02em] md:text-[88px]">Gallery</h1>
             <p className="m-0 max-w-[560px] text-pretty text-[18px] text-ink2">
-              Projects teams chose to show off. Run one, then like your <span className="marker">favourites.</span>
+              {eventMode ? 'Projects teams chose to show off.' : 'Projects people made with Foldo and chose to show off.'} Run one, then like your <span className="marker">favourites.</span>
             </p>
           </div>
           <div role="group" aria-label="Sort projects" className="inline-flex rounded-[7px] border border-solid border-rule bg-paper p-[2px]">
@@ -222,7 +227,7 @@ export default function Gallery() {
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-4 border-t border-solid border-rule pt-5">
-          <div role="group" aria-label="Filter by track" className="flex flex-wrap gap-2">
+          <div role="group" aria-label={eventMode ? 'Filter by track' : 'Filter by category'} className="flex flex-wrap gap-2">
             {chip('All', counts.all, null)}
             {TRACKS.map((t) => chip(t, counts[t] ?? 0, t))}
           </div>

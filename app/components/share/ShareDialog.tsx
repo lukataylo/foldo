@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import { renderSVG } from 'uqr';
 import { Dialog, DialogRoot } from '~/components/ui/Dialog';
 import { Icon } from '~/components/ui/icons';
+import { useEventMode } from '~/lib/hooks/useEventMode';
 import { classNames } from '~/utils/classNames';
 
 export interface ShareState {
@@ -164,6 +165,7 @@ interface ShareBodyProps extends Omit<ShareDialogProps, 'open' | 'onOpenChange'>
 function ShareBody({ projectId, title, state, onChange, step, setConfirmStop, busy, setBusy, onCloseClick }: ShareBodyProps) {
   const [copied, setCopied] = useState(false);
   const [showQr, setShowQr] = useState(false);
+  const eventMode = useEventMode();
   const root = useRef<HTMLDivElement>(null);
   const prevStep = useRef<Step | null>(null);
   const name = title?.trim() || 'Untitled project';
@@ -442,7 +444,7 @@ function ShareBody({ projectId, title, state, onChange, step, setConfirmStop, bu
             <span id="foldo-share-gallery-label" className="text-[14px] font-semibold text-ink">
               Show in the gallery
             </span>
-            <span className="text-[13px] text-pencil">Other teams can discover, run and like it.</span>
+            <span className="text-[13px] text-pencil">{eventMode ? 'Other teams' : 'Anyone'} can discover, run and like it.</span>
           </div>
           <button
             type="button"
@@ -564,6 +566,7 @@ function ShareTargets({ url, name, qr, onQr }: { url: string; name: string; qr: 
 }
 
 function QrPanel({ url, shortUrl, name }: { url: string; shortUrl: string; name: string }) {
+  const eventMode = useEventMode();
   // Ink on white regardless of theme: phone cameras read dark-on-light codes most reliably. The white tile is the quiet zone.
   const svg = useMemo(() => renderSVG(url, { border: 0, whiteColor: '#FFFFFF', blackColor: '#16140F' }), [url]);
 
@@ -589,7 +592,9 @@ function QrPanel({ url, shortUrl, name }: { url: string; shortUrl: string; name:
       <div className="flex min-w-0 flex-col gap-1">
         <span className="font-serif text-[21px] leading-[1.15] text-ink">Scan to open on a phone</span>
         <p className="m-0 text-[13px] text-ink2 [text-wrap:pretty]">
-          Put it on a slide or your demo screen so judges and teammates can try it instantly.
+          {eventMode
+            ? 'Put it on a slide or your demo screen so judges and teammates can try it instantly.'
+            : 'Put it on a slide or a screen so anyone in the room can try it instantly.'}
         </p>
         <button type="button" onClick={download} className="btn-secondary btn-sm mt-1.5 self-start rounded-[8px]">
           <DownloadIcon size={15} />

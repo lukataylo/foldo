@@ -1,6 +1,7 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node';
 import { randomBytes } from 'node:crypto';
 import { requireApiUser } from '~/lib/.server/auth';
+import { eventMode } from '~/lib/.server/config';
 import { db } from '~/lib/.server/db';
 import { cleanName } from '~/lib/.server/names';
 import { queuePreview } from '~/lib/.server/previews';
@@ -104,7 +105,9 @@ export async function action({ request }: ActionFunctionArgs) {
 
     // an organizer hid it from the gallery: sharing still works, listing doesn't
     if (body.listed && row?.hidden_at) {
-      return json({ error: 'The organizers removed this project from the gallery. Your share link still works.', hidden: true }, 403);
+      const who = eventMode() ? 'The organizers removed' : 'We removed';
+
+      return json({ error: `${who} this project from the gallery. Your share link still works.`, hidden: true }, 403);
     }
 
     const existing = row?.share_id;

@@ -39,11 +39,13 @@ export function AuthSplit({
   panel,
   eventName,
   closesAt,
+  eventMode = false,
   children,
 }: {
   panel: AuthPanel;
   eventName: string;
   closesAt: string;
+  eventMode?: boolean;
   children: ReactNode;
 }) {
   const p = PANELS[panel];
@@ -72,17 +74,19 @@ export function AuthSplit({
         {panel === 'welcome' && (
           <>
             <p className="relative m-0 max-w-[360px] text-balance font-serif text-[40px] leading-[1.02] tracking-[-.01em] text-ink">
-              One badge for you. One for whoever brings the coffee.
+              {eventMode ? 'One badge for you. One for whoever brings the coffee.' : 'One sentence in. One running app out.'}
             </p>
             <span className="relative font-mono text-[12px] text-ink opacity-75">
-              Free for every {eventName ? `${eventName} ` : ''}team.{closesAt ? ` Demo by ${closesAt}, sleep optional.` : ''}
+              {eventMode
+                ? `Free for every ${eventName ? `${eventName} ` : ''}team.${closesAt ? ` Demo by ${closesAt}, sleep optional.` : ''}`
+                : 'Free while in beta.'}
             </span>
           </>
         )}
         {panel === 'invite' && (
           <div className="relative flex max-w-[380px] flex-col gap-[6px]">
             <p className="m-0 font-serif text-[36px] leading-[1.05] text-ink">Hmm, that code didn't match.</p>
-            <p className="m-0 text-pretty text-[15px] text-ink2">Check for a missing letter or number, or ask at the help desk.</p>
+            <p className="m-0 text-pretty text-[15px] text-ink2">{eventMode ? 'Check for a missing letter or number, or ask at the help desk.' : 'Check for a missing letter or number.'}</p>
           </div>
         )}
         {panel === 'closed' && <span className="relative font-mono text-[12px] text-pencil">The rope is up, for now.</span>}

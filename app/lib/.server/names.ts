@@ -1,3 +1,4 @@
+import { eventMode } from './config';
 import { db } from './db';
 
 /*
@@ -27,7 +28,7 @@ export function teamNameError(name: string, exceptUserId?: string): string | und
   const others = db.prepare('SELECT name FROM users WHERE id != ?').all(exceptUserId ?? '') as { name: string }[];
 
   if (others.some((u) => u.name && fold(u.name) === fold(name))) {
-    return 'Another team already uses that name.';
+    return eventMode() ? 'Another team already uses that name.' : 'Someone already uses that name.';
   }
 
   return undefined;

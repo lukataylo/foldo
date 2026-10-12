@@ -12,6 +12,7 @@ import { EventBar } from '~/components/header/EventBar';
 import { Header } from '~/components/header/Header';
 import { copyText } from '~/components/share/ShareDialog';
 import { Icon } from '~/components/ui/icons';
+import { useEventMode } from '~/lib/hooks/useEventMode';
 import { chatId, projectGone, retrySaveNow, saveAsCopy, saveState, seedProjectStores, type ProjectLoaderData } from '~/lib/persistence';
 import { chatStore } from '~/lib/stores/chat';
 import { quota } from '~/lib/stores/ui';
@@ -25,7 +26,7 @@ export interface StudioData extends ShellData {
   sharedInfo?: { mine?: boolean; shareId?: string };
 }
 
-const PAUSE_COPY = 'The organizers have paused new builds for a moment. Hang tight.';
+const pauseCopy = (eventMode: boolean) => `${eventMode ? 'The organizers have' : 'Foldo has'} paused new builds for a moment. Hang tight.`;
 
 /*
  * The build screen. Signed in at `/` before the first message it is the Home board (event bar + app header + <Home/>);
@@ -67,6 +68,8 @@ export function Studio() {
 
 // Build-Paused: yellow strip under the header; message and start time come from the admin settings
 function PausedStrip({ message, since }: { message: string; since?: number | null }) {
+  const eventMode = useEventMode();
+
   return (
     <div
       role="status"
@@ -75,7 +78,7 @@ function PausedStrip({ message, since }: { message: string; since?: number | nul
     >
       <Icon.Pause className="flex-none text-warning" />
       <span className="whitespace-nowrap font-semibold text-ink">Builds paused</span>
-      <span className="min-w-0 text-ink2">{message || PAUSE_COPY}</span>
+      <span className="min-w-0 text-ink2">{message || pauseCopy(eventMode)}</span>
       {since ? (
         <span className="ml-auto whitespace-nowrap font-mono text-[12px] text-warning" suppressHydrationWarning>
           Since {clock(since)}

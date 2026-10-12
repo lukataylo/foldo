@@ -135,6 +135,28 @@ export function getEvent(): EventInfo | null {
   return { name, endsAt: Number.isNaN(ends) ? null : ends, announcement };
 }
 
+/*
+ * Event mode (admin switch, off by default): on, Foldo shows the event (event bar, tracks, team wording, conduct link);
+ * off, it is the plain platform. The single source of truth for both server copy and the shell data pages render from.
+ */
+export const eventMode = () => getSetting('event_mode') === '1';
+
+// the event bar data, only while event mode is on
+export const activeEvent = () => (eventMode() ? getEvent() : null);
+
+// who runs Foldo (privacy, terms, pricing contact); blank until the owner fills them in /admin
+export interface LegalInfo {
+  name: string;
+  email: string;
+  country: string;
+}
+
+export const legalInfo = (): LegalInfo => ({
+  name: getSetting('legal_name'),
+  email: getSetting('contact_email'),
+  country: getSetting('legal_country'),
+});
+
 export const adminEmails = () =>
   (process.env.ADMIN_EMAILS ?? '')
     .split(',')

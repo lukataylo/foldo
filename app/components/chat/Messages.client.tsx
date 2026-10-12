@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react';
 import type { Message } from 'ai';
 import React, { Fragment, type ReactNode } from 'react';
+import { useEventMode } from '~/lib/hooks/useEventMode';
 import { AssistantMessage } from './AssistantMessage';
 import { AutoFixBanner } from './StudioCards';
 import { TemplateIntro } from './TemplateIntro';
@@ -22,7 +23,7 @@ interface MessagesProps {
 const Planning = () => (
   <p className="m-0 flex items-start gap-2 text-ink2">
     <SIcon.Arc className="mt-[3px] text-ink" />
-    Planning your app. The first words can take up to a minute when lots of teams are building.
+    Planning your app. The first words can take up to a minute when lots of {useEventMode() ? 'teams' : 'people'} are building.
   </p>
 );
 

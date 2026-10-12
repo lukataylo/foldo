@@ -1,7 +1,7 @@
 import { createCookie, redirect } from '@remix-run/node';
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { adminEmails, getEvent, getSetting, globalLimit, perUserLimit, publicModels, setSetting } from './config';
+import { activeEvent, adminEmails, eventMode, getSetting, globalLimit, legalInfo, perUserLimit, publicModels, setSetting } from './config';
 import { templateIndex } from './templates';
 import { db, today } from './db';
 
@@ -352,7 +352,9 @@ export function shell(user?: User) {
     admin: user?.admin,
     remaining: user ? remainingQuota(user.id) : undefined,
     limit: user ? dailyLimit() + extraToday(user.id) : undefined,
-    event: getEvent(),
+    event: activeEvent(),
+    eventMode: eventMode(),
+    contactEmail: legalInfo().email,
     templates: templateIndex().templates.map(({ guide, ...rest }) => rest),
     ...publicModels(),
   };

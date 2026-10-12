@@ -15,6 +15,7 @@ export interface LoginData {
   signupsOpen: boolean;
   event: string;
   endsAt: number | null;
+  eventMode?: boolean; // event wording (team, organizer, conduct); off = the plain platform
   next: string; // same-origin path to return to after signing in ('' = home)
 }
 
@@ -22,12 +23,12 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const FIELDS: Field[] = ['name', 'email', 'password', 'invite'];
 
 // same rules as the action, checked before the round trip so mistakes show under the field right away
-function validate(form: FormData, signup: boolean, inviteRequired: boolean): Errors {
+function validate(form: FormData, signup: boolean, inviteRequired: boolean, eventMode: boolean): Errors {
   const errors: Errors = {};
   const get = (k: string) => String(form.get(k) ?? '').trim();
 
   if (signup && get('name').replace(/\s+/g, ' ').length < 2) {
-    errors.name = 'Add your name or team name (2+ characters).';
+    errors.name = eventMode ? 'Add your name or team name (2+ characters).' : 'Add your name (2+ characters).';
   }
 
   if (!EMAIL.test(get('email'))) {
@@ -39,7 +40,7 @@ function validate(form: FormData, signup: boolean, inviteRequired: boolean): Err
   }
 
   if (signup && inviteRequired && !get('invite')) {
-    errors.invite = 'Enter the invite code from your organizer.';
+    errors.invite = eventMode ? 'Enter the invite code from your organizer.' : 'Enter your invite code.';
   }
 
   return errors;
@@ -73,7 +74,7 @@ const field = 'input aria-[invalid=true]:shadow-[0_0_0_3px_rgba(180,35,24,.12)]'
 
 const withNext = (href: string, next: string) => (next ? `${href}${href.includes('?') ? '&' : '?'}next=${encodeURIComponent(next)}` : href);
 
-function SignupsClosed({ next }: { next: string }) {
+function SignupsClosed({ next, eventMode }: { next: string; eventMode: boolean }) {
   return (
     <div className="flex w-full max-w-[440px] flex-col gap-7" data-testid="foldo-signups-closed">
       <span className="pill-warning self-start">
@@ -93,7 +94,9 @@ function SignupsClosed({ next }: { next: string }) {
         </a>
       </div>
       <p className="m-0 text-pretty border-t border-solid border-rule pt-5 text-[14px] text-pencil">
-        Think this is a mistake? An organizer at the help desk can reopen sign-ups.
+        {eventMode
+          ? 'Think this is a mistake? An organizer at the help desk can reopen sign-ups.'
+          : 'New sign-ups open again soon. Check back in a little while.'}
       </p>
     </div>
   );
@@ -101,7 +104,7 @@ function SignupsClosed({ next }: { next: string }) {
 
 export function LoginPage() {
   const result = useActionData() as { error?: string; field?: string } | undefined;
-  const { inviteRequired, signupsOpen: open, event, endsAt, next } = useLoaderData() as LoginData;
+  const { inviteRequired, signupsOpen: open, event, endsAt, eventMode = false, next } = useLoaderData() as LoginData;
   const [params] = useSearchParams();
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle' && navigation.formMethod?.toUpperCase() === 'POST';
@@ -136,14 +139,14 @@ export function LoginPage() {
 
   if (signup && !open) {
     return (
-      <AuthSplit panel="closed" eventName={event} closesAt={closesAt}>
-        <SignupsClosed next={next} />
+      <AuthSplit panel="closed" eventName={event} closesAt={closesAt} eventMode={eventMode}>
+        <SignupsClosed next={next} eventMode={eventMode} />
       </AuthSplit>
     );
   }
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
-    const found = validate(new FormData(e.currentTarget), signup, inviteRequired);
+    const found = validate(new FormData(e.currentTarget), signup, inviteRequired, eventMode);
     const first = FIELDS.find((f) => found[f]);
 
     if (first) {
@@ -162,7 +165,7 @@ export function LoginPage() {
   };
 
   return (
-    <AuthSplit panel={signup && errors.invite && result?.field === 'invite' ? 'invite' : 'welcome'} eventName={event} closesAt={closesAt}>
+    <AuthSplit panel={signup && errors.invite && result?.field === 'invite' ? 'invite' : 'welcome'} eventName={event} closesAt={closesAt} eventMode={eventMode}>
       <div className="flex w-full max-w-[420px] flex-col gap-8">
         <div className="flex flex-col gap-3">
           <h1 className="m-0 font-serif text-[56px] font-normal leading-[.92] tracking-[-.02em] md:text-[72px]">
@@ -175,7 +178,7 @@ export function LoginPage() {
 
         <Form method="post" noValidate onSubmit={onSubmit} className="flex flex-col gap-[18px]" data-testid="foldo-auth-form">
           {signup && (
-            <Row id="name" label="Name or team" error={errors.name}>
+            <Row id="name" label={eventMode ? 'Name or team' : 'Your name'} error={errors.name}>
               <input
                 id="name"
                 name="name"
@@ -183,7 +186,7 @@ export function LoginPage() {
                 autoComplete="nickname"
                 maxLength={40}
                 required
-                placeholder="Team Dachshund"
+                placeholder={eventMode ? 'Team Dachshund' : 'Ada Lovelace'}
                 aria-invalid={Boolean(errors.name)}
                 aria-describedby={describedBy('name', errors.name)}
                 onInput={clear('name')}
@@ -259,7 +262,7 @@ export function LoginPage() {
               error={errors.invite}
               help={
                 <span id="invite-help" className="input-help">
-                  Your organizer shares this at the event.
+                  {eventMode ? 'Your organizer shares this at the event.' : 'Sign-up is invite-only for now.'}
                 </span>
               }
             >
@@ -271,7 +274,7 @@ export function LoginPage() {
                 autoCapitalize="off"
                 spellCheck={false}
                 required
-                placeholder="From your organizer"
+                placeholder={eventMode ? 'From your organizer' : 'Your invite code'}
                 aria-invalid={Boolean(errors.invite)}
                 aria-describedby={describedBy('invite', errors.invite, true)}
                 onInput={clear('invite')}
@@ -294,7 +297,20 @@ export function LoginPage() {
             {signup ? 'Create account' : 'Sign in'}
             {!busy && <Icon.ArrowRight />}
           </button>
-          {signup && (
+          {signup && !eventMode && (
+            <p className="m-0 text-pretty text-[13px] text-pencil">
+              By creating an account you agree to the{' '}
+              <a href="/terms" className="text-ink2 underline underline-offset-3">
+                terms of service
+              </a>{' '}
+              and{' '}
+              <a href="/privacy" className="text-ink2 underline underline-offset-3">
+                privacy policy
+              </a>
+              .
+            </p>
+          )}
+          {signup && eventMode && (
             <p className="m-0 text-pretty text-[13px] text-pencil">
               By creating an account you agree to the event's{' '}
               <a href="/conduct" className="text-ink2 underline underline-offset-3">

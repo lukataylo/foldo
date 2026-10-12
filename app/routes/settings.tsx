@@ -16,6 +16,7 @@ import {
 } from '~/lib/.server/auth';
 import { db } from '~/lib/.server/db';
 import { cleanName, teamNameError } from '~/lib/.server/names';
+import { useEventMode } from '~/lib/hooks/useEventMode';
 import { classNames } from '~/utils/classNames';
 
 export const meta = () => [{ title: 'Settings · Foldo' }];
@@ -192,15 +193,20 @@ function Busy({ busy, children, label }: { busy: boolean; children: ReactNode; l
 function ProfileForm({ name, email }: { name?: string; email?: string }) {
   const { fetcher, busy, errorFor, inlineOk } = useSettingsForm('profile');
   const error = errorFor('name');
+  const eventMode = useEventMode();
 
   return (
     <fetcher.Form method="post" noValidate aria-labelledby="profile-title">
       <input type="hidden" name="intent" value="profile" />
-      <Card id="profile" title="Profile" intro={<p className="m-0 text-[14px] text-pencil">How your team shows up across Foldo.</p>}>
+      <Card
+        id="profile"
+        title="Profile"
+        intro={<p className="m-0 text-[14px] text-pencil">{eventMode ? 'How your team shows up across Foldo.' : 'How you show up across Foldo.'}</p>}
+      >
         <div className="grid gap-5 px-6 pb-[22px] pt-4 [grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr))]">
           <div className="flex flex-col gap-[6px]">
             <label htmlFor="name" className="input-label">
-              Name or team
+              {eventMode ? 'Name or team' : 'Your name'}
             </label>
             <input
               id="name"
@@ -231,7 +237,7 @@ function ProfileForm({ name, email }: { name?: string; email?: string }) {
               <LockIcon className="pointer-events-none absolute right-[14px] top-[15px] text-pencil" />
             </div>
             <span id="email-help" className="input-help">
-              Your sign-in. Ask an organizer if it needs to change.
+              {eventMode ? 'Your sign-in. Ask an organizer if it needs to change.' : 'Your sign-in. It can’t be changed here.'}
             </span>
           </div>
         </div>

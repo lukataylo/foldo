@@ -1,6 +1,7 @@
 import { useLoaderData } from '@remix-run/react';
 import type { ReactNode } from 'react';
 import { Icon } from '~/components/ui/icons';
+import { useEventMode } from '~/lib/hooks/useEventMode';
 import { ProjectThumb } from './ProjectThumb';
 import { editedAgo, projectTag, projectTitle, PROMPT_PILL, TAG_PILL, type ProjectSummary, type TemplateInfo } from './projects';
 
@@ -119,6 +120,7 @@ function FirstRun({
   onStartTemplate?: (id: string) => void;
 }) {
   const tracks = TRACKS.filter((t) => t.img).map((t) => ({ ...t, start: inTrack(templates, t.track)[0] }));
+  const eventMode = useEventMode();
 
   return (
     <div className="w-full bg-paper text-[15px] leading-[1.5] text-ink" data-testid="foldo-home-first-run">
@@ -134,7 +136,9 @@ function FirstRun({
           <div className="flex max-w-[620px] flex-col gap-[14px]">
             <div id="intro" className="flex flex-col gap-[14px]">
               <Welcome name={name} />
-              <p className="m-0 text-[18px] text-ink [text-wrap:pretty]">Describe your first app, or start from a track below.</p>
+              <p className="m-0 text-[18px] text-ink [text-wrap:pretty]">
+                Describe your first app, or start from a {eventMode ? 'track' : 'template'} below.
+              </p>
             </div>
             <div className="mt-[14px]">{prompt}</div>
           </div>
@@ -150,7 +154,7 @@ function FirstRun({
 
       <div id="examples" className="container-app flex flex-col pb-24">
         <section aria-labelledby="tpl-title" className="mt-16 flex flex-col gap-7" data-testid="foldo-templates">
-          <SectionHead id="tpl-title" title="Start from your track" size={36}>
+          <SectionHead id="tpl-title" title={eventMode ? 'Start from your track' : 'Starter templates'} size={36}>
             {FREE_NOTE}
           </SectionHead>
           <div className="grid gap-8 [grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr))]">
@@ -244,6 +248,7 @@ function Returning({
   templates: TemplateInfo[];
   onStartTemplate?: (id: string) => void;
 }) {
+  const eventMode = useEventMode();
 
   return (
     <div className="container-app flex flex-col gap-14 pb-[72px] pt-12 text-[15px] leading-[1.5] text-ink" data-testid="foldo-home">
@@ -253,7 +258,7 @@ function Returning({
             What do you want to <span className="marker">build?</span>
           </h1>
           <p className="m-0 max-w-[460px] text-[17px] text-ink2 [text-wrap:pretty]">
-            Pick up a project below, start from your track, or describe a new idea.
+            Pick up a project below, start from {eventMode ? 'your track' : 'a template'}, or describe a new idea.
           </p>
         </div>
         <div>{prompt}</div>
@@ -279,7 +284,7 @@ function Returning({
         )}
 
         <section aria-labelledby="tpl-title" className="flex flex-col gap-6" data-testid="foldo-templates">
-          <SectionHead id="tpl-title" title="Start from your track" size={32}>
+          <SectionHead id="tpl-title" title={eventMode ? 'Start from your track' : 'Starter templates'} size={32}>
             {FREE_NOTE}
           </SectionHead>
           <div className="grid gap-6 [grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr))]">
@@ -304,7 +309,9 @@ function Returning({
                     ) : (
                       <AnyTrackArt />
                     )}
-                    <h3 className="m-0 font-mono text-[12px] font-medium uppercase tracking-[.08em] text-ink2">{t.track}</h3>
+                    <h3 className="m-0 font-mono text-[12px] font-medium uppercase tracking-[.08em] text-ink2">
+                      {!eventMode && t.track === 'Any track' ? 'Any idea' : t.track}
+                    </h3>
                   </div>
                   {items.map((tpl) => (
                     <button

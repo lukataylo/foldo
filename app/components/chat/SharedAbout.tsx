@@ -72,7 +72,7 @@ export function useSharedMeta() {
   const data = useLoaderData() as SharedData;
   const track = data.templates?.find((t) => t.id === data.template)?.track;
   const prompts = promptHistory(data.messages);
-  const owner = data.sharedInfo?.owner ?? 'A Foldo team';
+  const owner = data.sharedInfo?.owner ?? 'A Foldo maker';
   const parts = [owner, track && track !== 'Any track' ? track : undefined].filter(Boolean) as string[];
 
   return {

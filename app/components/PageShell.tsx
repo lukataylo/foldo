@@ -85,7 +85,7 @@ export function SiteHeader({ active, tone = 'paper' }: { active?: MarketingSecti
         <MobileNav active={active} tone={tone} />
       </div>
       <header className="container-marketing hidden h-[84px] items-center justify-between gap-4 md:flex">
-      <Logo size={32} textSize={30} className="gap-[10px] text-ink" />
+      <Logo size={32} textSize={30} className="gap-[10px] text-ink" reverse={tone === 'yellow'} />
       <nav aria-label="Main" className="flex items-center gap-[6px]">
         {MARKETING_NAV.map((n) => (
           <a

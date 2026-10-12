@@ -94,7 +94,7 @@ export function NavMenu({
 export function MobileNav({ active, tone = 'yellow' }: { active?: 'gallery' | 'pricing'; tone?: 'yellow' | 'paper' }) {
   return (
     <header className="flex h-[64px] items-center justify-between gap-3 px-4">
-      <Logo size={28} textSize={26} className="text-ink" />
+      <Logo size={28} textSize={26} className="text-ink" reverse={tone === 'yellow'} />
       <div className="flex items-center gap-2">
         <a href="/login" className="inline-flex min-h-[40px] items-center rounded-[6px] px-3 text-[14px] font-medium text-ink no-underline">
           Sign in

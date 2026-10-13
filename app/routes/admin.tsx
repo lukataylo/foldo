@@ -126,6 +126,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
     )
     .all() as any[];
 
+  // every team's project, newest first: organizers open them read-only for judging (shared or not)
+  const projects = db
+    .prepare(
+      `SELECT p.id, p.description, p.updated, p.share_id AS shareId, p.listed, u.name, u.email, u.role
+       FROM projects p JOIN users u ON u.id = p.user_id ORDER BY p.updated DESC LIMIT 2000`,
+    )
+    .all()
+    .filter((p: any) => !isAdminRow(p))
+    .map(({ role, email, ...p }: any) => ({ ...p, name: p.name || email.split('@')[0], shared: Boolean(p.shareId), listed: Boolean(p.listed) }));
+
   const backups = listBackups();
 
   return json({
@@ -180,6 +190,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       global_limit: globalLimit(),
     },
     users,
+    projects,
     gallery,
     legal: legalInfo(),
     waitlist: (db.prepare('SELECT COUNT(*) AS n FROM waitlist').get() as { n: number }).n,
@@ -623,6 +634,7 @@ export default function Admin() {
       </span>
     ) : undefined,
     teams: <span className="font-mono text-[12px] text-pencil">{d.stats.teams}</span>,
+    projects: <span className="font-mono text-[12px] text-pencil">{d.projects.length}</span>,
     gallery: <span className="font-mono text-[12px] text-pencil">{listed}</span>,
     backups: d.lastBackupAt ? <span className="font-mono text-[12px] text-pencil">{ago(d.lastBackupAt, d.now).replace(/ ago$/, '').replace(' min', 'm').replace(' h', 'h').replace(' d', 'd').replace('just now', 'now')}</span> : undefined,
   };
@@ -640,6 +652,7 @@ export default function Admin() {
         <EventSettings d={d} busy={busy} />
         <CompanySettings d={d} busy={busy} />
         <Teams d={d} busy={busy} temp={result?.temp} />
+        <Projects d={d} />
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(440px,100%),1fr))] items-start gap-6">
           <Gallery d={d} busy={busy} />
           <Backups d={d} busy={busy} post={post} />
@@ -1537,6 +1550,110 @@ function Teams({ d, busy, temp }: { d: any; busy: Busy; temp?: { email: string; 
     </section>
   );
 }
+
+function Projects({ d }: { d: any }) {
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(0);
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+
+    return (d.projects as any[]).filter((p) => !needle || `${p.name} ${p.description ?? ''}`.toLowerCase().includes(needle));
+  }, [d.projects, q]);
+
+  const pages = Math.max(1, Math.ceil(filtered.length / PROJECTS_PAGE));
+  const at = Math.min(page, pages - 1);
+  const rows = filtered.slice(at * PROJECTS_PAGE, at * PROJECTS_PAGE + PROJECTS_PAGE);
+
+  return (
+    <section id="projects" aria-labelledby="a-projects" className={cx(cardClass, 'gap-4')}>
+      <SectionHead
+        id="a-projects"
+        align="center"
+        title={
+          <>
+            Projects <span className="font-mono text-[14px] text-pencil">{d.projects.length}</span>
+          </>
+        }
+      >
+        <label className="relative">
+          <span className={srOnly}>Search projects</span>
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setPage(0);
+            }}
+            placeholder="Search projects or teams"
+            className="input h-[36px] w-[260px] text-[13px] lt-md:w-full"
+          />
+        </label>
+      </SectionHead>
+      <p className="m-0 text-[13px] text-pencil">Every team’s work, shared or not. Open runs it read-only; nothing changes for the team.</p>
+      <div className="overflow-x-auto rounded-[10px] border border-solid border-rule">
+        <table className="w-full min-w-[720px] border-collapse text-[13px]" data-testid="foldo-admin-projects">
+          <thead>
+            <tr className="bg-paper text-left">
+              <th scope="col" className={thClass}>Project</th>
+              <th scope="col" className={thClass}>Team</th>
+              <th scope="col" className={thClass}>Status</th>
+              <th scope="col" className={thClass}>Edited</th>
+              <th scope="col" className={cx(thClass, 'text-right')}>Open</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-[14px] py-6 text-center text-pencil">
+                  {q ? 'No project matches that search.' : 'No projects yet.'}
+                </td>
+              </tr>
+            )}
+            {rows.map((p: any, i: number) => (
+              <tr key={p.id} className={cx(i !== rows.length - 1 && 'border-b border-rule2')} data-testid="foldo-admin-project">
+                <th scope="row" className="max-w-[320px] truncate px-[14px] py-[10px] text-left font-semibold">
+                  {p.description || 'Untitled'}
+                </th>
+                <td className="px-[14px] py-[10px] text-ink2">{p.name}</td>
+                <td className="whitespace-nowrap px-[14px] py-[10px] text-ink2">{p.listed ? 'In the gallery' : p.shared ? 'Link shared' : 'Private'}</td>
+                <td className="whitespace-nowrap px-[14px] py-[10px] text-ink2">{ago(p.updated, d.now)}</td>
+                <td className="whitespace-nowrap px-[14px] py-2 text-right">
+                  <a
+                    href={`/admin/project/${p.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`Open ${p.description || 'Untitled'} by ${p.name}`}
+                    className={cx('btn-secondary no-underline', tableBtn)}
+                  >
+                    Open
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {pages > 1 && (
+        <div className="flex items-center justify-between text-[13px] text-pencil">
+          <span>
+            Showing {at * PROJECTS_PAGE + 1}–{at * PROJECTS_PAGE + rows.length} of {filtered.length} projects
+          </span>
+          <span className="flex gap-[6px]">
+            <button type="button" className={cx('btn-secondary', tableBtn)} disabled={at === 0} onClick={() => setPage(at - 1)}>
+              Previous
+            </button>
+            <button type="button" className={cx('btn-secondary', tableBtn)} disabled={at >= pages - 1} onClick={() => setPage(at + 1)}>
+              Next
+            </button>
+          </span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const PROJECTS_PAGE = 15;
 
 function Thumb({ g, templates }: { g: any; templates: { id: string; icon: string }[] }) {
   if (!g.listed) {

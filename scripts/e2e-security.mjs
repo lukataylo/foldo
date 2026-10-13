@@ -511,6 +511,11 @@ try {
   await ADM.register('Organizers', 'admin@t.co');
   const adminPage = await ADM.req('/admin');
   check(P6, 'admin can open /admin', adminPage.status === 200 && adminPage.text.includes('AI models'));
+  check(P6, 'admin lists every team project', adminPage.text.includes(`/admin/project/${idA}`));
+  const peek = await ADM.req(`/admin/project/${idA}`);
+  check(P6, 'admin opens a team project read-only', peek.status === 200 && peek.text.includes('"shared":true'));
+  check(P6, 'a team cannot open the admin project view', (await B.req(`/admin/project/${idA}`)).status === 404);
+  check(P6, 'admin project view 404s for an unknown id', (await ADM.req('/admin/project/nope')).status === 404);
   const SECRET_KEY = 'sk-mimo-SUPERSECRET-4242';
   const saved = await ADM.req('/admin', { method: 'POST', form: { intent: 'save-provider', id: 'mimo', key: SECRET_KEY, base_url: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2-flash', enabled: 'on' } });
   check(P6, 'admin saves a MiMo key', saved.status === 200, saved.text.slice(0, 100));

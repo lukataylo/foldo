@@ -95,6 +95,11 @@ export const SECTIONS = [
     ),
   },
   {
+    id: 'projects',
+    label: 'Projects',
+    icon: svg(<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />),
+  },
+  {
     id: 'gallery',
     label: 'Gallery',
     icon: svg(
